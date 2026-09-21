@@ -1,0 +1,15 @@
+if(NOT TARGET binaryninjaapi)
+    set(Jsoncpp_FOUND FALSE)
+    return()
+endif()
+
+if(NOT TARGET Jsoncpp_lib)
+    add_library(Jsoncpp_lib INTERFACE IMPORTED GLOBAL)
+    set_target_properties(Jsoncpp_lib PROPERTIES
+        INTERFACE_INCLUDE_DIRECTORIES "${BINJAD_JSONCPP_COMPAT_INCLUDE_DIR};${BINJAD_JSONCPP_INCLUDE_DIR}")
+endif()
+
+set(JSONCPP_INCLUDE_DIRS "${BINJAD_JSONCPP_COMPAT_INCLUDE_DIR};${BINJAD_JSONCPP_INCLUDE_DIR}")
+set(JSONCPP_LIBRARIES "")
+set(JSONCPP_FOUND TRUE)
+set(Jsoncpp_FOUND TRUE)

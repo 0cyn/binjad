@@ -1,0 +1,16 @@
+if(NOT TARGET binjad_zlib)
+    set(ZLIB_FOUND FALSE)
+    return()
+endif()
+
+if(NOT TARGET ZLIB::ZLIB)
+    add_library(ZLIB::ZLIB INTERFACE IMPORTED GLOBAL)
+    set_target_properties(ZLIB::ZLIB PROPERTIES
+        INTERFACE_INCLUDE_DIRECTORIES "${BINJAD_ZLIB_SOURCE_DIR}"
+        INTERFACE_LINK_LIBRARIES "$<BUILD_INTERFACE:binjad_zlib>")
+endif()
+
+set(ZLIB_INCLUDE_DIRS "${BINJAD_ZLIB_SOURCE_DIR}")
+set(ZLIB_LIBRARIES binjad_zlib)
+set(ZLIB_VERSION_STRING "1.3.1")
+set(ZLIB_FOUND TRUE)

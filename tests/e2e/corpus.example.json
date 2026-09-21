@@ -1,0 +1,20 @@
+[
+  {
+    "path": "ios/kernelcache.release.iphone",
+    "viewType": "KCView",
+    "image": "com.apple.driver.AppleMobileFileIntegrity",
+    "functionQuery": "amfi",
+    "timeout": 900
+  },
+  {
+    "path": "ios/dyld_shared_cache_arm64e",
+    "companions": [
+      "ios/dyld_shared_cache_arm64e.01",
+      "ios/dyld_shared_cache_arm64e.symbols"
+    ],
+    "viewType": "DSCView",
+    "image": "/System/Library/PrivateFrameworks/SpringBoardHome.framework/SpringBoardHome",
+    "functionQuery": "SBIcon",
+    "timeout": 900
+  }
+]

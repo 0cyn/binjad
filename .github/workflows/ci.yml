@@ -1,0 +1,52 @@
+name: build
+
+on:
+  push:
+    branches:
+      - stable
+      - dev
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux
+            runner: ubuntu-24.04
+            keychain: "OFF"
+          - name: macOS
+            runner: macos-26
+            keychain: "ON"
+
+    steps:
+      - name: Check out source and submodules
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          submodules: recursive
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends uuid-dev
+
+      - name: Configure stub-linked build
+        run: >-
+          cmake -S . -B build
+          -DCMAKE_BUILD_TYPE=Release
+          -DBINJAD_BUILD_TESTS=OFF
+          -DBINJAD_USE_KEYCHAIN=${{ matrix.keychain }}
+
+      - name: Build
+        run: cmake --build build --parallel 2
