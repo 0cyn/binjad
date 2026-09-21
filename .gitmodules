@@ -1,0 +1,24 @@
+[submodule "vendor/binaryninja-api"]
+	path = vendor/binaryninja-api
+	url = https://github.com/Vector35/binaryninja-api.git
+[submodule "vendor/drogon"]
+	path = vendor/drogon
+	url = https://github.com/drogonframework/drogon.git
+[submodule "vendor/protobuf"]
+	path = vendor/protobuf
+	url = https://github.com/protocolbuffers/protobuf.git
+[submodule "vendor/zlib"]
+	path = vendor/zlib
+	url = https://github.com/madler/zlib.git
+[submodule "vendor/abseil-cpp"]
+	path = vendor/abseil-cpp
+	url = https://github.com/abseil/abseil-cpp.git
+[submodule "vendor/googletest"]
+	path = vendor/googletest
+	url = https://github.com/google/googletest.git
+[submodule "vendor/argon2"]
+	path = vendor/argon2
+	url = https://github.com/P-H-C/phc-winner-argon2.git
+[submodule "vendor/debugger"]
+	path = vendor/debugger
+	url = https://github.com/Vector35/debugger.git
