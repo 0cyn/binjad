@@ -1,0 +1,389 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>binjad</title>
+  <link rel="stylesheet" href="{{PORTAL_PATH}}/app.css">
+  <script src="{{PORTAL_PATH}}/app.js" defer></script>
+</head>
+<body>
+  <div id="gate" class="gate">
+    <div class="gate-box">
+      <div class="brand"><b>bin</b>jad / control room</div>
+      <p class="lede">Commercial analysis service administration. Credentials stay in this browser tab.</p>
+
+      <section id="bootstrap" class="hidden">
+        <div class="notice">No portal administrator exists. Use the one-time local bootstrap credential.</div>
+        <label>
+          Bootstrap credential
+          <input id="boot-credential" type="password" autocomplete="off">
+        </label>
+        <div class="field-row">
+          <label>
+            Admin username
+            <input id="boot-user" autocomplete="username">
+          </label>
+          <label>
+            Password
+            <input id="boot-password" type="password" autocomplete="new-password">
+          </label>
+        </div>
+        <button class="primary" data-action="bootstrap">Initialize service</button>
+        <hr>
+      </section>
+
+      <div class="tabs">
+        <button id="basic-tab" class="on" data-action="login-tab" data-mode="basic">Account</button>
+        <button id="bearer-tab" data-action="login-tab" data-mode="bearer">Admin token</button>
+      </div>
+      <div id="basic-login">
+        <label>
+          Username
+          <input id="login-user" autocomplete="username">
+        </label>
+        <label>
+          Password
+          <input id="login-password" type="password" autocomplete="current-password">
+        </label>
+      </div>
+      <div id="bearer-login" class="hidden">
+        <label>
+          Bearer token
+          <input id="login-token" type="password" autocomplete="off">
+        </label>
+      </div>
+      <button class="primary" data-action="login">Enter control room</button>
+    </div>
+  </div>
+
+  <div id="app" class="shell hidden">
+    <header class="page-head">
+      <div class="header-brand">binjad</div>
+      <div class="header-session">
+        <span id="actor"></span>
+        <button class="header-button" data-action="logout">Log out</button>
+      </div>
+    </header>
+    <aside class="side">
+      <nav class="nav">
+        <details class="nav-group" open>
+          <summary>System</summary>
+          <div class="nav-items">
+            <button class="on" data-action="show-view" data-view="overview">Overview</button>
+            <button data-action="show-view" data-view="access">Access</button>
+            <button data-action="show-view" data-view="configuration">Configuration</button>
+          </div>
+        </details>
+        <button data-action="show-view" data-view="projects">Services: Projects</button>
+        <details class="nav-group">
+          <summary>MCP</summary>
+          <div class="nav-items">
+            <button data-action="show-view" data-view="enabled-tools">Enabled Tools</button>
+            <button data-action="show-view" data-view="context">Context View</button>
+            <button data-action="show-view" data-view="tools">Tool Calls</button>
+          </div>
+        </details>
+      </nav>
+    </aside>
+
+    <main class="main">
+      <header class="content-head">
+        <div>
+          <div class="breadcrumb" id="mode-line">System / local daemon</div>
+          <h1 id="view-title">Service overview</h1>
+        </div>
+        <div id="restart-badge" class="badge hidden">restart required</div>
+      </header>
+
+      <section id="overview" class="view">
+        <article class="block status-block">
+          <div class="block-head">
+            <h2>System status</h2>
+            <button class="quiet" data-action="refresh-all">Refresh</button>
+          </div>
+          <div class="table-wrap">
+            <table class="status-table">
+              <thead>
+                <tr>
+                  <th>Analysis sessions</th>
+                  <th>Open items</th>
+                  <th>Active analyses</th>
+                  <th>Queued analyses</th>
+                  <th>Allocated workers</th>
+                  <th>Worker budget</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td id="m-sessions">0</td>
+                  <td id="m-items">0</td>
+                  <td id="m-active">0</td>
+                  <td id="m-queued">0</td>
+                  <td id="m-workers">0</td>
+                  <td id="m-budget">0</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </article>
+        <div class="split">
+          <article class="block">
+            <div class="block-head"><h2>Runtime</h2></div>
+            <div id="runtime-list"></div>
+          </article>
+          <article class="block">
+            <div class="block-head"><h2>Service posture</h2></div>
+            <div class="row"><span>Transport</span><b>Streamable HTTP / loopback</b></div>
+            <div class="row"><span>Project backend</span><b id="project-backend">Local commercial</b></div>
+            <div class="row"><span>Configuration</span><b id="config-state">Active</b></div>
+          </article>
+        </div>
+      </section>
+
+      <section id="access" class="view hidden">
+        <div class="split">
+          <div class="stack">
+            <article class="block">
+              <div class="block-head"><h2>Create account</h2></div>
+              <label>Username <input id="account-name"></label>
+              <label>Password <input id="account-password" type="password"></label>
+              <label>
+                Role
+                <select id="account-role">
+                  <option value="portal-admin">Portal administrator</option>
+                  <option value="self-service">Self service</option>
+                </select>
+              </label>
+              <button class="primary" data-action="create-account">Create account</button>
+            </article>
+            <article class="block">
+              <div class="block-head"><h2>Issue bearer token</h2></div>
+              <label>Label <input id="token-label"></label>
+              <div class="field-row">
+                <label>
+                  Role
+                  <select id="token-role">
+                    <option value="admin">Admin</option>
+                    <option value="user">User</option>
+                  </select>
+                </label>
+                <label>TTL seconds <input id="token-ttl" type="number" min="0" placeholder="default"></label>
+              </div>
+              <button class="primary" data-action="issue-token">Issue token</button>
+              <div id="issued-token" class="hidden issued-token">
+                <div class="caption">Shown once</div>
+                <div class="token-box" id="token-secret"></div>
+                <button class="quiet top-gap" data-action="copy-token">Copy token</button>
+              </div>
+            </article>
+          </div>
+          <div class="stack">
+            <article class="block">
+              <div class="block-head">
+                <h2>Portal accounts</h2>
+                <button class="quiet" data-action="load-accounts">Reload</button>
+              </div>
+              <div id="accounts-list"></div>
+            </article>
+            <article class="block">
+              <div class="block-head">
+                <h2>Bearer tokens</h2>
+                <button class="quiet" data-action="load-tokens">Reload</button>
+              </div>
+              <div id="tokens-list"></div>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section id="projects" class="view hidden">
+        <article class="block">
+          <div class="block-head">
+            <div>
+              <h2>Local project catalog</h2>
+              <div class="meta">Projects are discovered from configured roots. Deletion requires confirmation and no open handles.</div>
+            </div>
+            <button class="quiet" data-action="load-projects">Reload</button>
+          </div>
+          <div id="projects-list"></div>
+        </article>
+      </section>
+
+      <section id="configuration" class="view hidden">
+        <div id="config-warning" class="notice hidden">Saved configuration differs from the running daemon. Restart the service to apply it.</div>
+        <article class="block">
+          <div class="block-head">
+            <div>
+              <h2>Daemon configuration</h2>
+              <div class="meta">Validated and atomically persisted. Changes are never hot-applied.</div>
+            </div>
+            <div class="actions">
+              <button class="quiet" data-action="load-config">Reload</button>
+              <button class="primary" data-action="save-config">Validate &amp; save</button>
+            </div>
+          </div>
+          <div class="config-grid">
+            <label>
+              Mode
+              <select id="cfg-mode">
+                <option value="local">Local / Commercial</option>
+                <option value="auto">Auto</option>
+                <option value="collaboration">Collaboration</option>
+              </select>
+            </label>
+            <label>Listener port <input id="cfg-port" type="number" min="1" max="65535"></label>
+            <label>CPU allocation % <input id="cfg-cpu" type="number" min="1" max="100"></label>
+            <label>
+              Fairness
+              <select id="cfg-fairness">
+                <option value="job">Job</option>
+                <option value="file">File</option>
+                <option value="analysis_session">Analysis session</option>
+                <option value="bearer_token">Bearer token</option>
+              </select>
+            </label>
+            <label>
+              Subdivision
+              <select id="cfg-subdivision">
+                <option value="serial">Serial</option>
+                <option value="equal">Equal</option>
+              </select>
+            </label>
+            <label>Session TTL seconds <input id="cfg-session-ttl" type="number" min="1"></label>
+            <label>Detach after seconds <input id="cfg-detach" type="number" min="0"></label>
+            <label>Cancellation grace seconds <input id="cfg-grace" type="number" min="1"></label>
+            <label>Default token TTL seconds <input id="cfg-token-ttl" type="number" min="0"></label>
+            <label>Upload limit bytes <input id="cfg-upload-max" type="number" min="1"></label>
+            <label>Memory threshold bytes <input id="cfg-upload-memory" type="number" min="0"></label>
+            <label>Upload URL TTL seconds <input id="cfg-upload-ttl" type="number" min="1"></label>
+            <label class="check"><input id="cfg-upload-auth" type="checkbox"> Require bearer header on upload requests</label>
+            <label>Project roots, one per line <textarea id="cfg-roots"></textarea></label>
+            <label>Default project root <input id="cfg-default-root"></label>
+            <label>Spool path <input id="cfg-spool"></label>
+          </div>
+          <div class="field-row">
+            <label class="check"><input id="cfg-infinite" type="checkbox"> Allow infinite bearer tokens</label>
+            <label class="check"><input id="cfg-arbitrary" type="checkbox"> Allow admin arbitrary-path opens</label>
+            <label class="check danger-setting"><input id="cfg-unauthenticated" type="checkbox"> Very dangerous unauthenticated portal</label>
+          </div>
+          <details class="advanced">
+            <summary>Advanced JSON</summary>
+            <p class="meta">The complete schema is authoritative. Guided controls are synchronized before save.</p>
+            <textarea id="config-json" class="raw" spellcheck="false"></textarea>
+          </details>
+        </article>
+      </section>
+
+      <section id="enabled-tools" class="view hidden">
+        <article class="block">
+          <div class="block-head">
+            <div>
+              <h2>Enabled tool packs</h2>
+              <div class="meta">Keep only the capabilities clients need in their MCP context. Changes apply after the daemon restarts.</div>
+            </div>
+            <button class="primary" data-action="save-config">Validate &amp; save</button>
+          </div>
+          <div id="enabled-tool-packs" class="tool-pack-list"></div>
+        </article>
+      </section>
+
+      <section id="context" class="view hidden">
+        <article class="block">
+          <div class="block-head">
+            <div>
+              <h2>Model context inspector</h2>
+              <div class="meta">Generated from the running daemon's authoritative MCP definitions and feature gates.</div>
+            </div>
+            <button class="quiet" data-action="load-context">Refresh</button>
+          </div>
+          <div class="context-controls">
+            <label>
+              MCP protocol
+              <select id="mcp-context-protocol" class="mcp-protocol">
+                <option value="2026-07-28">2026-07-28 (latest)</option>
+                <option value="2025-11-25">2025-11-25</option>
+                <option value="2025-06-18">2025-06-18</option>
+                <option value="2025-03-26">2025-03-26</option>
+              </select>
+            </label>
+            <label>
+              Bearer role
+              <select id="mcp-context-role" class="mcp-role">
+                <option value="admin">Admin</option>
+                <option value="user">User</option>
+              </select>
+            </label>
+            <label>
+              OpenCode namespace
+              <input id="mcp-client-name" value="binjad" maxlength="64">
+            </label>
+          </div>
+        </article>
+        <div id="context-summary" class="context-summary"></div>
+        <article class="block">
+          <div class="block-head">
+            <div>
+              <h2>Exact MCP wire context</h2>
+              <div class="meta">Byte-for-byte JSON-RPC payloads produced by binjad. Client-side model encoding is outside the MCP server boundary.</div>
+            </div>
+          </div>
+          <div id="mcp-wire-context" class="document-list"></div>
+        </article>
+        <article class="block">
+          <div class="block-head">
+            <div>
+              <h2>OpenCode-oriented projection</h2>
+              <div id="opencode-boundary" class="meta"></div>
+            </div>
+            <button class="quiet" data-action="copy-opencode-context">Copy JSON</button>
+          </div>
+          <pre id="opencode-context" class="code-document"></pre>
+        </article>
+      </section>
+
+      <section id="tools" class="view hidden">
+        <article class="block">
+          <div class="block-head">
+            <div>
+              <h2>Tool call reference</h2>
+              <div class="meta">Descriptions and input schemas are the same objects advertised through tools/list.</div>
+            </div>
+            <button class="quiet" data-action="load-tool-docs">Refresh</button>
+          </div>
+          <div class="tool-controls">
+            <label>
+              MCP protocol
+              <select id="mcp-tools-protocol" class="mcp-protocol">
+                <option value="2026-07-28">2026-07-28 (latest)</option>
+                <option value="2025-11-25">2025-11-25</option>
+                <option value="2025-06-18">2025-06-18</option>
+                <option value="2025-03-26">2025-03-26</option>
+              </select>
+            </label>
+            <label>
+              Bearer role
+              <select id="mcp-tools-role" class="mcp-role">
+                <option value="admin">Admin</option>
+                <option value="user">User</option>
+              </select>
+            </label>
+            <label>
+              Filter tools
+              <input id="tool-filter" type="search" placeholder="Name, category, or description">
+            </label>
+          </div>
+        </article>
+        <div id="tool-docs-summary" class="context-summary"></div>
+        <div id="tool-docs-list" class="tool-docs-list"></div>
+        <article class="block">
+          <div class="block-head"><h2>Failure contracts</h2></div>
+          <div id="failure-contracts" class="failure-contracts"></div>
+        </article>
+      </section>
+    </main>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+</body>
+</html>

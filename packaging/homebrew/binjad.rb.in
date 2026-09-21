@@ -1,0 +1,28 @@
+class Binjad < Formula
+  desc "Headless Binary Ninja MCP server"
+  homepage "@BINJAD_HOMEPAGE@"
+  url "@BINJAD_GIT_URL@",
+      tag: "v@BINJAD_VERSION@",
+      revision: "@BINJAD_GIT_REVISION@",
+      using: :git
+  version "@BINJAD_VERSION@"
+  license "@BINJAD_LICENSE@"
+
+  depends_on :macos => :sonoma
+  depends_on "cmake" => :build
+
+  def install
+    args = std_cmake_args + %W[
+      -DBINJAD_BUILD_TESTS=OFF
+      -DBN_INSTALL_DIR=/Applications/Binary\ Ninja.app
+      -DBINJAD_SERVICE_EXECUTABLE=#{opt_bin}/binjad
+    ]
+    system "cmake", "-S", ".", "-B", "build", *args
+    system "cmake", "--build", "build", "--parallel"
+    system "cmake", "--install", "build"
+  end
+
+  service do
+    name macos: "me.cynder.binjad"
+  end
+end

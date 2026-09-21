@@ -1,0 +1,1 @@
+It's easier to get LLMs to maintain a proper codebase with a large amount of tests.
