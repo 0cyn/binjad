@@ -1,0 +1,354 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="binjad-status-path" content="/healthz/status" data-configured-path="{{STATUS_PATH}}">
+  <title>binja'd</title>
+  <link rel="stylesheet" href="{{PORTAL_PATH}}/app.css">
+  <script src="{{PORTAL_PATH}}/app.js" defer></script>
+</head>
+<body>
+  <div id="gate" class="gate">
+    <div class="gate-box">
+      <div class="brand">binja'd</div>
+
+      <section id="setup" class="hidden">
+        <div class="notice">Create the account for this new binja'd service.</div>
+        <div class="field-row">
+          <label>
+            Username
+            <input id="setup-user" autocomplete="username">
+          </label>
+          <label>
+            Password
+            <input id="setup-password" type="password" autocomplete="new-password">
+          </label>
+        </div>
+        <button class="primary" data-action="setup">Create account</button>
+        <hr>
+      </section>
+
+      <form id="login-form">
+        <label>
+          Username
+          <input id="login-user" autocomplete="username">
+        </label>
+        <label>
+          Password
+          <input id="login-password" type="password" autocomplete="current-password">
+        </label>
+        <button class="primary" type="submit">Log in</button>
+      </form>
+    </div>
+  </div>
+
+  <div id="app" class="shell hidden">
+    <header class="page-head">
+      <div class="header-brand">
+        <img class="header-logo" src="{{PORTAL_PATH}}/binjad.png" alt="">
+        <span>binja'd</span>
+      </div>
+      <div class="header-session">
+        <span id="actor"></span>
+        <button class="header-button" data-action="logout">Log out</button>
+      </div>
+    </header>
+    <aside class="side">
+      <nav class="nav">
+        <details class="nav-group" open>
+          <summary>System</summary>
+          <div class="nav-items">
+            <button class="on" data-action="show-view" data-view="overview">Overview</button>
+            <button data-action="show-view" data-view="access">Access</button>
+            <button data-action="show-view" data-view="configuration">Configuration</button>
+          </div>
+        </details>
+        <details class="nav-group">
+          <summary>Services</summary>
+          <div class="nav-items">
+            <button data-action="show-view" data-view="projects">Projects</button>
+          </div>
+        </details>
+        <details class="nav-group">
+          <summary>MCP</summary>
+          <div class="nav-items">
+            <button data-action="show-view" data-view="enabled-tools">Enabled Tools</button>
+            <button data-action="show-view" data-view="context">Context View</button>
+            <button data-action="show-view" data-view="tools">Tool Calls</button>
+          </div>
+        </details>
+      </nav>
+    </aside>
+
+    <main class="main">
+      <header class="content-head">
+        <h1 id="view-title">Service overview</h1>
+        <div id="restart-badge" class="badge hidden">restart required</div>
+      </header>
+
+      <section id="overview" class="view">
+        <article class="block status-block">
+          <div class="block-head">
+            <h2>System status</h2>
+            <button class="quiet" data-action="refresh-all">Refresh</button>
+          </div>
+          <div class="table-wrap">
+            <table class="status-table">
+              <thead>
+                <tr>
+                  <th>Analysis sessions</th>
+                  <th>Open items</th>
+                  <th>Active analyses</th>
+                  <th>Queued analyses</th>
+                  <th>Allocated workers</th>
+                  <th>Worker budget</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td id="m-sessions">0</td>
+                  <td id="m-items">0</td>
+                  <td id="m-active">0</td>
+                  <td id="m-queued">0</td>
+                  <td id="m-workers">0</td>
+                  <td id="m-budget">0</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </article>
+        <div class="split">
+          <article class="block">
+            <div class="block-head"><h2>Runtime</h2></div>
+            <div id="runtime-list"></div>
+          </article>
+          <article id="memory-panel" class="block memory-panel">
+            <div class="block-head">
+              <div>
+                <h2>Memory usage</h2>
+                <div class="meta">Overseer and managed child processes</div>
+              </div>
+              <div class="memory-current">
+                <span>Current</span>
+                <b id="memory-current">—</b>
+              </div>
+            </div>
+            <div class="memory-chart-shell">
+              <svg id="memory-chart" class="memory-chart" viewBox="0 0 600 180"
+                   preserveAspectRatio="none" role="img"
+                   aria-labelledby="memory-chart-title memory-chart-description">
+                <title id="memory-chart-title">Managed process memory history</title>
+                <desc id="memory-chart-description">Waiting for the first memory sample.</desc>
+                <line class="memory-grid" x1="0" y1="10" x2="600" y2="10"></line>
+                <line class="memory-grid" x1="0" y1="90" x2="600" y2="90"></line>
+                <line class="memory-grid" x1="0" y1="170" x2="600" y2="170"></line>
+                <path id="memory-area" class="memory-area hidden"></path>
+                <path id="memory-line" class="memory-line hidden"></path>
+                <circle id="memory-point" class="memory-point hidden" r="4"></circle>
+              </svg>
+              <div class="memory-scale" aria-hidden="true">
+                <span id="memory-scale-high">—</span>
+                <span id="memory-scale-low">—</span>
+              </div>
+              <div id="memory-chart-empty" class="memory-chart-empty">Waiting for memory data</div>
+            </div>
+            <div class="memory-chart-foot">
+              <span>Last 5 minutes · 5-second samples</span>
+              <span id="memory-updated">Waiting for data</span>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section id="access" class="view hidden">
+        <div class="split">
+          <div class="stack">
+            <article class="block">
+              <div class="block-head"><h2>Account</h2></div>
+              <div class="row"><span>Username</span><b id="account-username"></b></div>
+              <label>New password <input id="account-password" type="password" autocomplete="new-password"></label>
+              <button class="primary" data-action="change-password">Change password</button>
+            </article>
+            <article class="block">
+              <div class="block-head"><h2>Create or rotate MCP token</h2></div>
+              <label>TTL seconds <input id="token-ttl" type="number" min="1" value="604800"></label>
+              <label class="check"><input id="token-never" type="checkbox"> Never expires</label>
+              <div class="meta">Creating a token atomically revokes the previous token and closes its sessions.</div>
+              <button class="primary" data-action="rotate-token">Create / Rotate token</button>
+              <div id="issued-token" class="hidden issued-token">
+                <div class="caption">Shown once</div>
+                <div class="token-box" id="token-secret"></div>
+                <button class="quiet top-gap" data-action="copy-token">Copy token</button>
+              </div>
+            </article>
+          </div>
+          <div class="stack">
+            <article class="block">
+              <div class="block-head">
+                <h2>MCP token</h2>
+              </div>
+              <div id="token-status"></div>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section id="projects" class="view hidden">
+        <article id="project-create" class="block hidden">
+          <div class="block-head"><h2>Create project</h2></div>
+          <div class="project-form">
+            <label>Name <input id="project-name" maxlength="255"></label>
+            <label>Project path <input id="project-path" placeholder="Optional path ending in .bnpr"></label>
+            <label>Description <input id="project-description"></label>
+          </div>
+          <div class="form-actions">
+            <button class="quiet" data-action="toggle-project-create">Cancel</button>
+            <button class="primary" data-action="create-project">Create</button>
+          </div>
+        </article>
+        <article class="block">
+          <div class="block-head">
+            <div>
+              <h2>Local project catalog</h2>
+              <div class="meta">Projects are stored in configured roots, see System/Configuration</div>
+            </div>
+            <button class="primary" data-action="toggle-project-create">Create Project</button>
+          </div>
+          <div id="projects-list"></div>
+        </article>
+      </section>
+
+      <section id="configuration" class="view hidden">
+        <div id="config-warning" class="notice hidden">Saved configuration differs from the running daemon. Restart the service to apply it.</div>
+        <article class="block">
+          <div class="block-head">
+            <h2>Configuration</h2>
+            <div class="actions">
+              <button class="quiet" data-action="load-config">Reload from disk</button>
+              <button class="primary" data-action="save-config">Save</button>
+            </div>
+          </div>
+          <div class="config-grid">
+            <label><span>Binary Ninja installation <span class="tooltip" tabindex="0" data-tooltip="The absolute Binary Ninja installation root. Leave this empty for /Applications/Binary Ninja.app on macOS or ~/binaryninja on Linux. Requires Save and a service restart.">?</span></span><input id="cfg-binary-ninja" placeholder="Use the platform default"></label>
+            <label><span>Listener port <span class="tooltip" tabindex="0" data-tooltip="The port binja'd listens on. Change this only if 8712 is already taken.">?</span></span><input id="cfg-port" type="number" min="1" max="65535"></label>
+            <label><span>CPU allocation % <span class="tooltip" tabindex="0" data-tooltip="How much of this computer's CPU binja'd is allowed to give Binary Ninja.">?</span></span><input id="cfg-cpu" type="number" min="1" max="100"></label>
+            <label>
+              <span>Fairness <span class="tooltip" tabindex="0" data-tooltip="Controls what gets a fair slice of the worker budget when several analyses are ready.">?</span></span>
+              <select id="cfg-fairness">
+                <option value="job">Job</option>
+                <option value="file">File</option>
+                <option value="analysis_session">Analysis session</option>
+                <option value="bearer_token">Bearer token</option>
+              </select>
+            </label>
+            <label>
+              <span>Subdivision <span class="tooltip" tabindex="0" data-tooltip="Controls whether files inside one fairness group run one at a time or split workers evenly.">?</span></span>
+              <select id="cfg-subdivision">
+                <option value="serial">Serial</option>
+                <option value="equal">Equal</option>
+              </select>
+            </label>
+            <label><span>Session TTL seconds <span class="tooltip" tabindex="0" data-tooltip="How long an inactive analysis session sticks around before binja'd closes it.">?</span></span><input id="cfg-session-ttl" type="number" min="1"></label>
+            <label><span>Detach after seconds <span class="tooltip" tabindex="0" data-tooltip="How long a request can run before binja'd hands it back as a background job. Set 0 to detach immediately.">?</span></span><input id="cfg-detach" type="number" min="0"></label>
+            <label><span>Cancellation grace seconds <span class="tooltip" tabindex="0" data-tooltip="How long binja'd waits for Binary Ninja to stop cleanly before killing and restarting its file process.">?</span></span><input id="cfg-grace" type="number" min="1"></label>
+            <label><span>Upload limit bytes <span class="tooltip" tabindex="0" data-tooltip="The largest single file the upload endpoint will accept, in bytes.">?</span></span><input id="cfg-upload-max" type="number" min="1"></label>
+            <label><span>Memory threshold bytes <span class="tooltip" tabindex="0" data-tooltip="Uploads at or below this size stay in memory. Larger uploads spill into the private spool.">?</span></span><input id="cfg-upload-memory" type="number" min="0"></label>
+            <label><span>Upload URL TTL seconds <span class="tooltip" tabindex="0" data-tooltip="How long a one-time upload URL stays usable if nobody finishes an upload.">?</span></span><input id="cfg-upload-ttl" type="number" min="1"></label>
+            <label class="check"><input id="cfg-upload-auth" type="checkbox"><span>Require Bearer Header w/ MCP token on file uploads <span class="tooltip" tabindex="0" data-tooltip="Makes uploads include the same MCP Bearer token as normal MCP calls. Leave this off when the upload URL itself should be the credential.">?</span></span></label>
+            <label><span>Project roots, one per line <span class="tooltip" tabindex="0" data-tooltip="Directories binja'd scans recursively for .bnpr and .bnpm projects when it starts.">?</span></span><textarea id="cfg-roots"></textarea></label>
+            <label><span>Default project root <span class="tooltip" tabindex="0" data-tooltip="Where new projects go when no absolute destination is provided. It must also appear in Project roots.">?</span></span><input id="cfg-default-root"></label>
+            <label><span>Spool path <span class="tooltip" tabindex="0" data-tooltip="Private scratch space for uploads and working files. Leave it empty to use the default beside this config.">?</span></span><input id="cfg-spool"></label>
+          </div>
+          <div class="field-row">
+            <label class="check"><input id="cfg-reduced-surface" type="checkbox"><span>Use reduced MCP tool surface <span class="tooltip" tabindex="0" data-tooltip="Advertises the 15 common project, file, analysis, save, and job lifecycle tools to modern clients, or 13 to legacy clients. Every other enabled tool stays available through bn_tools. Requires Save and a service restart.">?</span></span></label>
+            <label class="check"><input id="cfg-arbitrary" type="checkbox"><span>Tokens can request binaryninja open a local file directly from the MCP computer's disk without requiring uploads <span class="tooltip" tabindex="0" data-tooltip="Lets MCP tokens ask Binary Ninja to open a regular file straight from this computer. Turn it off if every file should come through a project or upload.">?</span></span></label>
+            <label class="check"><input id="cfg-project-registration" type="checkbox"><span>Allow local projects outside configured roots to be created or registered <span class="tooltip" tabindex="0" data-tooltip="Lets admin MCP tokens persist projects from arbitrary local paths. Leave this off unless an existing outside-root project must be adopted or a project must intentionally remain outside configured roots.">?</span></span></label>
+          </div>
+          <details class="advanced">
+            <summary>Advanced JSON <span class="tooltip" tabindex="0" data-tooltip="The complete config file. Guided controls above are written into this JSON when you save.">?</span></summary>
+            <p class="meta">The complete schema is authoritative. Guided controls are synchronized before save.</p>
+            <textarea id="config-json" class="raw" spellcheck="false"></textarea>
+          </details>
+        </article>
+      </section>
+
+      <section id="enabled-tools" class="view hidden">
+        <div class="section-note">Updates immediately on change</div>
+        <article class="block">
+          <div id="enabled-tool-packs" class="tool-pack-list"></div>
+        </article>
+      </section>
+
+      <section id="context" class="view hidden">
+        <article class="block">
+          <div class="block-head">
+            <h2>Model context inspector</h2>
+          </div>
+          <div class="context-controls">
+            <label>
+              MCP protocol
+              <select id="mcp-context-protocol" class="mcp-protocol">
+                <option value="2026-07-28">2026-07-28 (latest)</option>
+                <option value="2025-11-25">2025-11-25</option>
+                <option value="2025-06-18">2025-06-18</option>
+                <option value="2025-03-26">2025-03-26</option>
+              </select>
+            </label>
+            <label>
+              OpenCode namespace
+              <input id="mcp-client-name" value="binjad" maxlength="64">
+            </label>
+          </div>
+        </article>
+        <article class="block">
+          <div class="block-head">
+            <div>
+              <h2>Model view</h2>
+              <div class="meta">This is what a model sees as formatted by opencode</div>
+            </div>
+            <div class="document-actions">
+              <span id="model-context-size" class="document-size"></span>
+              <button class="quiet" data-action="copy-opencode-context">Copy JSON</button>
+            </div>
+          </div>
+          <pre id="opencode-context" class="code-document"></pre>
+        </article>
+      </section>
+
+      <section id="tools" class="view hidden">
+        <article class="block">
+          <div class="block-head">
+            <div>
+              <h2>Tool call reference</h2>
+              <div class="meta">these are the docs provided to model per toolcall</div>
+            </div>
+          </div>
+          <div class="tool-controls">
+            <label>
+              MCP protocol
+              <select id="mcp-tools-protocol" class="mcp-protocol">
+                <option value="2026-07-28">2026-07-28 (latest)</option>
+                <option value="2025-11-25">2025-11-25</option>
+                <option value="2025-06-18">2025-06-18</option>
+                <option value="2025-03-26">2025-03-26</option>
+              </select>
+            </label>
+            <label>
+              Filter tools
+              <input id="tool-filter" type="search" placeholder="Name, category, or description">
+            </label>
+          </div>
+        </article>
+        <div id="tool-docs-list" class="tool-docs-list"></div>
+        <article class="block">
+          <div class="block-head"><h2>Failure contracts</h2></div>
+          <div id="failure-contracts" class="failure-contracts"></div>
+        </article>
+      </section>
+    </main>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+</body>
+</html>

@@ -1,0 +1,323 @@
+syntax = "proto3";
+
+package binjad.ipc;
+
+enum ChildRole {
+  CHILD_ROLE_UNSPECIFIED = 0;
+  CHILD_ROLE_FILE = 1;
+  CHILD_ROLE_PROJECT = 2;
+}
+
+message Envelope {
+  uint32 protocol_version = 1;
+  uint64 request_id = 2;
+
+  oneof payload {
+    RegisterChild register_child = 10;
+    RegisterAccepted register_accepted = 11;
+    Command command = 12;
+    Reply reply = 13;
+    Event event = 14;
+  }
+}
+
+message RegisterChild {
+  ChildRole role = 1;
+}
+
+message RegisterAccepted {}
+
+message Command {
+  reserved 40 to 45;
+  oneof action {
+    OpenFile open_file = 1;
+    CloseFile close_file = 2;
+    SetWorkerCount set_worker_count = 3;
+    UpdateAnalysis update_analysis = 4;
+    GetAnalysisStatus get_analysis_status = 5;
+    AbortAnalysis abort_analysis = 6;
+    Shutdown shutdown = 7;
+    OpenBinaryView open_binary_view = 8;
+    SaveBinaryView save_binary_view = 9;
+    ScanLocalProjects scan_local_projects = 20;
+    ListLocalProjectFiles list_local_project_files = 21;
+    ExportLocalProjectFile export_local_project_file = 22;
+    CommitLocalProjectFile commit_local_project_file = 23;
+    CreateLocalProject create_local_project = 24;
+    UpdateLocalProject update_local_project = 25;
+    ListLocalProjectFolders list_local_project_folders = 26;
+    CreateLocalProjectFolder create_local_project_folder = 27;
+    UpdateLocalProjectFolder update_local_project_folder = 28;
+    DeleteLocalProjectFolder delete_local_project_folder = 29;
+    UpdateLocalProjectFile update_local_project_file = 30;
+    DeleteLocalProjectFile delete_local_project_file = 31;
+    DeleteLocalProject delete_local_project = 32;
+    ExecuteAnalysisTool execute_analysis_tool = 50;
+  }
+}
+
+message OpenFile {
+  string path = 1;
+  string options_json = 2;
+  reserved 3;
+  bool reuse_database = 4;
+}
+
+message CloseFile {
+  bool discard_uncommitted = 1;
+}
+
+message SetWorkerCount {
+  uint32 count = 1;
+}
+
+message UpdateAnalysis {
+  string view_type = 1;
+}
+message OpenBinaryView {
+  string view_type = 1;
+  string options_json = 2;
+  bool analyze = 3;
+}
+message GetAnalysisStatus {
+  string view_type = 1;
+}
+message AbortAnalysis {
+  string view_type = 1;
+}
+message SaveBinaryView {
+  string view_type = 1;
+  string destination = 2;
+  bool temporary_copy = 3;
+}
+message Shutdown {}
+
+message ScanLocalProjects {
+  repeated string roots = 1;
+  repeated string projects = 2;
+}
+
+message ListLocalProjectFiles {
+  string project_path = 1;
+}
+
+message ExportLocalProjectFile {
+  string project_path = 1;
+  string path = 2;
+  string destination = 3;
+}
+
+message CommitLocalProjectFile {
+  string project_path = 1;
+  string source_path = 2;
+  string path = 3;
+  bool replace_existing = 4;
+  bool create_folders = 5;
+  string description = 6;
+}
+
+message CreateLocalProject {
+  string path = 1;
+  string name = 2;
+  string description = 3;
+}
+
+message UpdateLocalProject {
+  string project_path = 1;
+  optional string name = 2;
+  optional string description = 3;
+}
+
+message ListLocalProjectFolders {
+  string project_path = 1;
+}
+
+message CreateLocalProjectFolder {
+  string project_path = 1;
+  string parent_id = 2;
+  string name = 3;
+  string description = 4;
+}
+
+message UpdateLocalProjectFolder {
+  string project_path = 1;
+  string id = 2;
+  optional string name = 3;
+  optional string description = 4;
+  optional string parent_id = 5;
+}
+
+message DeleteLocalProjectFolder {
+  string project_path = 1;
+  string id = 2;
+  bool recursive = 3;
+}
+
+message UpdateLocalProjectFile {
+  string project_path = 1;
+  string id = 2;
+  optional string name = 3;
+  optional string description = 4;
+  optional string folder_id = 5;
+}
+
+message DeleteLocalProjectFile {
+  string project_path = 1;
+  string id = 2;
+  bool delete = 3;
+}
+
+message DeleteLocalProject {
+  string project_path = 1;
+}
+
+message ExecuteAnalysisTool {
+  string view_type = 1;
+  string name = 2;
+  string arguments_json = 3;
+  string secondary_path = 4;
+  string diff_key = 5;
+}
+
+message Reply {
+  reserved 40 to 44;
+  bool success = 1;
+  string error = 2;
+
+  oneof result {
+    FileOpened file_opened = 10;
+    AnalysisStatus analysis_status = 11;
+    BinaryViewOpened binary_view_opened = 12;
+    BinaryViewSaved binary_view_saved = 13;
+    LocalProjectCatalog local_project_catalog = 20;
+    LocalProjectFiles local_project_files = 21;
+    LocalProjectFileExported local_project_file_exported = 22;
+    LocalProjectFileCommitted local_project_file_committed = 23;
+    LocalProject local_project = 24;
+    LocalProjectFolders local_project_folders = 25;
+    LocalProjectFolder local_project_folder = 26;
+    LocalProjectFile local_project_file = 27;
+    AnalysisToolResult analysis_tool_result = 50;
+  }
+}
+
+message FileOpened {
+  repeated BinaryViewCandidate candidates = 1;
+  bool database_backed = 2;
+  bool snapshot_applied = 3;
+}
+
+message BinaryViewCandidate {
+  string view_type = 1;
+  bool recommended = 2;
+  bool created = 3;
+  string load_settings_schema_json = 4;
+}
+
+message BinaryViewOpened {
+  string view_type = 1;
+  string architecture = 2;
+  string platform = 3;
+  bool database_backed = 4;
+  bool snapshot_applied = 5;
+  string effective_load_settings_json = 6;
+  uint64 start = 7;
+  uint64 end = 8;
+  uint64 entry_point = 9;
+}
+
+message BinaryViewSaved {
+  string path = 1;
+  bool created_database = 2;
+}
+
+message LocalProjectCatalog {
+  repeated LocalProject projects = 1;
+}
+
+message LocalProject {
+  string id = 1;
+  string path = 2;
+  string name = 3;
+  string description = 4;
+}
+
+message LocalProjectFiles {
+  repeated LocalProjectFile files = 1;
+}
+
+message LocalProjectFile {
+  string id = 1;
+  string path = 2;
+  string name = 3;
+  string description = 4;
+  int64 creation_timestamp = 5;
+  string folder_id = 6;
+  string backing_path = 7;
+}
+
+message LocalProjectFileExported {
+  string id = 1;
+  string path = 2;
+}
+
+message LocalProjectFileCommitted {
+  string id = 1;
+  string path = 2;
+}
+
+message LocalProjectFolders {
+  repeated LocalProjectFolder folders = 1;
+}
+
+message LocalProjectFolder {
+  string id = 1;
+  string parent_id = 2;
+  string path = 3;
+  string name = 4;
+  string description = 5;
+}
+
+message AnalysisToolResult {
+  string json = 1;
+}
+
+enum AnalysisState {
+  ANALYSIS_STATE_UNSPECIFIED = 0;
+  ANALYSIS_STATE_IDLE = 1;
+  ANALYSIS_STATE_RUNNING = 2;
+  ANALYSIS_STATE_COMPLETE = 3;
+  ANALYSIS_STATE_ABORTED = 4;
+  ANALYSIS_STATE_FAILED = 5;
+}
+
+message AnalysisStatus {
+  AnalysisState state = 1;
+  uint64 completed = 2;
+  uint64 total = 3;
+  uint32 worker_count = 4;
+  bool has_view = 5;
+  bool modified = 6;
+  bool analysis_changed = 7;
+}
+
+message Event {
+  uint64 originating_request_id = 10;
+
+  oneof detail {
+    Progress progress = 1;
+    AnalysisFinished analysis_finished = 2;
+  }
+}
+
+message Progress {
+  string phase = 1;
+  uint64 completed = 2;
+  uint64 total = 3;
+  string message = 4;
+}
+
+message AnalysisFinished {
+  AnalysisState state = 1;
+  string error = 2;
+}
