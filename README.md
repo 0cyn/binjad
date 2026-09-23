@@ -2,12 +2,11 @@
 
 <super>this readme was fully written by a human, u can read it! <3</super>
 
->  "Extract these two KDKs from their dmgs, add them to a project named 'KDKs', then use low cost subagents w/ binjad to
-> diff every file in them and report anything that looks like a vulnerability fix. Save your results to a markdown file 
-> within that project." 
+[install](#install)
 
 This is an **UNOFFICIAL** MCP for binaryninja Commercial that offers "a few" things the official doesn't, and fixes some of my gripes
-trying to work with the official one. It's designed for fully autonomous, parallel work, not guided analysis.
+trying to work with the official one. It's designed for fully autonomous parallel work with multiple agents, not 
+single agent guided analysis.
 
 It's built so you can run it on your local machine, permissively or limited, 
 or throw it on a compute server and work on remote projects with your agents running on a separate machine that never needs to run binaryninja. 
@@ -15,19 +14,29 @@ or throw it on a compute server and work on remote projects with your agents run
 It's also centered around Projects, which tends to force better organization and allows the daemon to keep track of
 everything. 
 
-> Beta release! This may break with different setups. Let me know in the Issues or bother me 
+> Beta release! This may break with different setups. Let me know in the Issues or bother me on messaging platforms if you have me. 
+> I want to know what use cases you have for this and what tools you need to do those things. 
 
 I am not an employee or affiliate of Vector 35 and this project is not associated with them in any way.
 
 ### big features
 
-* Project support 
+* Project support
+* Concurrent sessions (there is not an "active view" paradigm)
 * KernelCache, SharedCache, Debugger support
 * Diffing
-* Feature parity w/ official MCP; all of the toolcalls* are present too
-* \*Concurrent sessions (there is not an "active view" paradigm)
+* binaryninja:// url creation
+* Feature parity w/ official MCP; all of the toolcalls from the official are present too
 * Files are loaded in individual processes, so crashes do not destroy other unsaved work.
-* Support for local or remote MCP serving. (remote works via file uploads, agent must be able to POST to a dynamic URL.)
+* Project support is forced, so local LLM agents can work fully sandboxed. 
+
+>  "Extract these two KDKs from their dmgs, add them to a project named 'KDKs', then use Qwen subagents w/ binjad to
+> diff every file in them and report anything that looks like a vulnerability fix. Save your results to a markdown file
+> within that project, and generate binaryninja URL links to all mentioned functions. Present the contents of the file to
+> me afterwards"
+
+I've found Qwen 3.8 27b on a 4-bit quant to be very capable of everything this toolkit exposes. Docs have been tuned to 
+help lower-spec models through trickier things. 
 
 ### some other stuff 
 
@@ -39,6 +48,41 @@ I am not an employee or affiliate of Vector 35 and this project is not associate
 * ^ you can disable tools/plugin support you know your agents will not need to cut context even further
 * Web configuration API :thumbsup:
 
+### install 
+
+installation is currently done through homebrew. 
+
+keychain is gonna ask for your password because we store auth stuff in the system keychain. 
+
+macOS is the only supported platform at this time, with other OSes being in the pipeline
+(You may already find WIP code littered around. It's not a design limitation. ) 
+
+Please thumbs-up the [Windows Support]() or [Linux Support]() issues if you need it on these platforms. 
+
+```
+
+```
+
+### what prompted this
+
+i put this together primarily because agents trying to use the official one either couldn't, due to issues 
+as they deferred tasks or attempted concurrent work, or when they did successfully manage to use it, would frequently
+have issues with:
+
+* A crash in binja, a C++/Qt program (they do that, i still love u c++), wiping out hundreds of views
+* Hundreds of unsaved views existing in the first place with no incentive for models to clear them out 
+* Constantly focusing the UI ([watch it interrupt my demo several times](https://x.com/arm64e/status/2096729422468362312?s=20))
+* Frequently after sessions views would become unsavable with locking issues
+* Zero encouragement to the model to save analysis
+* On some common toolcalls, incredibly token-heavy output.
+
+in general i think the philosophy of having everything, even a headless instance, tied to UI state is not very 
+conducive to the types of work modern frontier/even consumer LLM kit can facilitate. 
+
+i am not using an MCP because i want to open a terminal and have it open a binaryview in an app and tell me what a function does. 
+i want to sit down, tell my 5090 to diff a bunch of things in a large dataset, tell me what it thinks changed between versions,
+and give me links to the interesting shit. 
+
 ### commercial
 
 Commercial licenses are allowed one active MCP token at a time, w/ all tokens being all-access. If you think that is 
@@ -47,25 +91,12 @@ dumb or whatever,
 * binaryninja's license has terms, and 
 * Ghidra is free and unlicensed; you have the ability to materialize infinite code w/o anyone being mad at you. 
 
-### enterprise (Collaboration Client)
-
-If you have an enterprise license and server for binaryninja, this project has WIP support for enterprise clients as well. 
-Feedback from people using Ultimate/Enterprise would be appreciated. 
-
-The general design model is that there are admin accounts that can manage the server and use invasive tools, 
-and self-serve accounts that just exist so engineers can issue an MCP token associated with their collaboration account.
-Additionally, you can configure load balancing per-user 
-
-The use case envisioned with this is throwing it on some huge compute server and allowing engineers to grab MCP tokens
-from that server and do bulk autonomous analysis/RE without requiring them to have adequate local compute, but doing
-it in a way that doesn't sacrifice provisioning, allow one guy to hog the entire server, etc. 
-
-If you're working w/ collaboration client, reach out on [This Issue](link) and let me know what magical use case 
-you're envisioning from this.
+There isn't really permission gating beyond globally disabling toolcalls that interact with local files, because if
+you need that for some reason you are probably violating the product's license. sry!
 
 ---
 
-### design notes
+### design schtuff
 
 ###### mandatory projects
 
@@ -75,17 +106,21 @@ and just by default keep things much more organized. When running on a server, i
 It also allows us to offer MCP tools to sandboxed agents that 
 
 > Caveat of this: Due to a binaryninja core limitation, if you are running the server locally, having a project in GUI open in any way holds 
-> a 'lock' on the project, which will result in certain toolcalls that modify projects to fail. 
+> a 'lock' on the project, which will result in certain toolcalls that modify projects to fail.
 
 ---
 
 ###### obviously
 
-there was _heavy_ llm assistance with the development of this, although there was also very heavy steering and spec-work beforehand; these things are still kinda bad at design and usability decisions. 
+there was _heavy_ llm assistance with the development of this, although there was also very heavy steering and spec-work beforehand; 
 
-
-I'm comfortable enough with the quality and design of it to ship to others, i've read through things and written parts myself, i've worked with the APIs involved for years,
+I'm comfortable enough with the quality and design of it to ship to others, i've deadass read through every file and written parts myself, i've worked with the APIs involved for years,
 but it should be treated like it was written by an LLM. 
+
+the workflow on this looked like about a week of sketching out a very stable MVP, and then 2-3 weeks of reading the code,
+remolding things to be a lot less insane, more performant, etc. I do think it's very important that you know
+exactly how the thing you're trying to make exist should be written or the entire thing is unsustainable :) and i've 
+been doing projects like this for long before LLMs. yap over
 
 #### security
 

@@ -35,6 +35,10 @@
     --warning: #f0bd60;
     --warning-background: #171002;
   }
+
+  .header-logo {
+    filter: invert(1);
+  }
 }
 
 * {
@@ -266,9 +270,18 @@ textarea {
 }
 
 .header-brand {
+  display: flex;
+  align-items: center;
+  gap: 9px;
   color: var(--accent);
   font-size: 21px;
   font-weight: 600;
+}
+
+.header-logo {
+  width: 30px;
+  height: 30px;
+  object-fit: contain;
 }
 
 .header-session {

@@ -129,7 +129,7 @@ void PortalRoutes::Register(drogon::HttpAppFramework& app)
             drogon::RequestStreamPtr&& stream, DrogonResponseCallback&& callback) {
             self->HandlePage(request, std::move(stream), std::move(callback));
         }, {drogon::Get});
-    for (const auto* asset : {"app.css", "app.js"})
+    for (const auto* asset : {"app.css", "app.js", "binjad.png"})
     {
         app.registerHandler(config_.http.portalPath + "/" + asset,
             [self](const drogon::HttpRequestPtr& request,

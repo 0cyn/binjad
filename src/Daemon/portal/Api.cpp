@@ -788,14 +788,15 @@ http::ImmediateResponse Api::Page() const
         position = response.body.find(marker, position + config_.http.portalPath.size()))
         response.body.replace(position, marker.size(), config_.http.portalPath);
     response.headers.emplace_back("Content-Security-Policy",
-        "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; "
-        "form-action 'self'; base-uri 'none'");
+        "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; "
+        "connect-src 'self'; form-action 'self'; base-uri 'none'");
     return response;
 }
 
 http::ImmediateResponse Api::Asset(std::string_view name) const
 {
-    if (name != "index.html" && name != "app.css" && name != "app.js")
+    if (name != "index.html" && name != "app.css" && name != "app.js" &&
+        name != "binjad.png")
         return Error(404, "not found");
     const std::filesystem::path candidates[]{
         std::filesystem::path(BINJAD_PORTAL_INSTALL_DIR) / name,
@@ -810,7 +811,8 @@ http::ImmediateResponse Api::Asset(std::string_view name) const
             std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>()};
         const auto contentType = name == "index.html" ? "text/html; charset=utf-8" :
             name == "app.css" ? "text/css; charset=utf-8" :
-                                "text/javascript; charset=utf-8";
+            name == "app.js" ? "text/javascript; charset=utf-8" :
+                               "image/png";
         return {200, contentType, contents, {{"Cache-Control", "no-store"}}};
     }
     return Error(500, "portal asset is unavailable");

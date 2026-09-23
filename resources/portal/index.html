@@ -3,14 +3,14 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>binjad</title>
+  <title>binja'd</title>
   <link rel="stylesheet" href="{{PORTAL_PATH}}/app.css">
   <script src="{{PORTAL_PATH}}/app.js" defer></script>
 </head>
 <body>
   <div id="gate" class="gate">
     <div class="gate-box">
-      <div class="brand"><b>bin</b>jad / control room</div>
+      <div class="brand">binja'd / control room</div>
       <p class="lede">Commercial analysis service administration. Credentials stay in this browser tab.</p>
 
       <section id="bootstrap" class="hidden">
@@ -59,7 +59,10 @@
 
   <div id="app" class="shell hidden">
     <header class="page-head">
-      <div class="header-brand">binjad</div>
+      <div class="header-brand">
+        <img class="header-logo" src="{{PORTAL_PATH}}/binjad.png" alt="">
+        <span>binja'd</span>
+      </div>
       <div class="header-session">
         <span id="actor"></span>
         <button class="header-button" data-action="logout">Log out</button>

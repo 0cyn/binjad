@@ -117,6 +117,7 @@ add_subdirectory(vendor/protobuf _deps/protobuf EXCLUDE_FROM_ALL)
 include(vendor/protobuf/cmake/protobuf-generate.cmake)
 
 set(BINJAD_PROTO_OUTPUT_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated/proto")
+file(MAKE_DIRECTORY "${BINJAD_PROTO_OUTPUT_DIR}")
 add_library(binjad_ipc_proto STATIC proto/ipc.proto)
 protobuf_generate(
     TARGET binjad_ipc_proto
@@ -168,37 +169,37 @@ file(APPEND "${BINJAD_FRIENDLY_WORDS_HEADER}" "}};\n}\n")
 
 if(APPLE)
     set(BINJAD_PLATFORM_PATH_SOURCE
-        src/platform/macos/logging.cpp
-        src/platform/macos/cpu.cpp
-        src/platform/macos/paths.cpp
-        src/platform/posix/private_files.cpp)
+        src/Shared/platform/macos/Logging.cpp
+        src/Daemon/platform/macos/Cpu.cpp
+        src/Daemon/platform/macos/Paths.cpp
+        src/Shared/platform/posix/PrivateFiles.cpp)
     set(BINJAD_PLATFORM_SECURITY_SOURCES
-        src/platform/macos/credential_store.cpp
-        src/platform/macos/random.cpp)
+        src/Daemon/platform/macos/CredentialStore.cpp
+        src/Daemon/platform/macos/Random.cpp)
 elseif(WIN32)
     set(BINJAD_PLATFORM_PATH_SOURCE
-        src/platform/unsupported/logging.cpp
-        src/platform/windows/cpu.cpp
-        src/platform/windows/paths.cpp)
+        src/Shared/platform/unsupported/Logging.cpp
+        src/Daemon/platform/windows/Cpu.cpp
+        src/Shared/platform/windows/Paths.cpp)
     set(BINJAD_PLATFORM_SECURITY_SOURCES
-        src/platform/unsupported/credential_store.cpp
-        src/platform/windows/random.cpp)
+        src/Daemon/platform/unsupported/CredentialStore.cpp
+        src/Daemon/platform/windows/Random.cpp)
 elseif(UNIX)
     set(BINJAD_PLATFORM_PATH_SOURCE
-        src/platform/unsupported/logging.cpp
-        src/platform/linux/cpu.cpp
-        src/platform/linux/paths.cpp
-        src/platform/posix/private_files.cpp)
+        src/Shared/platform/unsupported/Logging.cpp
+        src/Daemon/platform/linux/Cpu.cpp
+        src/Daemon/platform/linux/Paths.cpp
+        src/Shared/platform/posix/PrivateFiles.cpp)
     set(BINJAD_PLATFORM_SECURITY_SOURCES
-        src/platform/unsupported/credential_store.cpp
-        src/platform/linux/random.cpp)
+        src/Daemon/platform/unsupported/CredentialStore.cpp
+        src/Daemon/platform/linux/Random.cpp)
 else()
     message(FATAL_ERROR "binjad has no user-data path adapter for this platform")
 endif()
 
 add_library(binjad_foundation STATIC
-    src/config.cpp
-    src/mcp/protocol.cpp
+    src/Daemon/Config.cpp
+    src/Daemon/mcp/Protocol.cpp
     ${BINJAD_PLATFORM_PATH_SOURCE})
 target_include_directories(binjad_foundation
     PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include"
@@ -206,33 +207,33 @@ target_include_directories(binjad_foundation
 target_compile_features(binjad_foundation PUBLIC cxx_std_20)
 
 add_library(binjad_security STATIC
-    src/security/account_registry.cpp
-    src/security/bootstrap_credential.cpp
-    src/security/credential_store.cpp
-    src/security/credential_vault.cpp
-    src/security/crypto.cpp
-    src/security/integrity_file.cpp
-    src/security/password.cpp
-    src/security/random.cpp
-    src/security/token_authenticator.cpp
-    src/security/token_registry.cpp
-    src/reference/friendly_reference.cpp
-    src/portal/service.cpp
-    src/portal/api.cpp
-    src/project/local_project_registry.cpp
-    src/project/collaboration_project_registry.cpp
-    src/session/analysis_session_registry.cpp
-    src/session/job_registry.cpp
-    src/session/open_item_registry.cpp
-    src/session/subscription_registry.cpp
-    src/upload/upload_registry.cpp
+    src/Daemon/security/AccountRegistry.cpp
+    src/Daemon/security/BootstrapCredential.cpp
+    src/Daemon/security/CredentialStore.cpp
+    src/Daemon/security/CredentialVault.cpp
+    src/Daemon/security/Crypto.cpp
+    src/Daemon/security/IntegrityFile.cpp
+    src/Daemon/security/Password.cpp
+    src/Daemon/security/Random.cpp
+    src/Daemon/security/TokenAuthenticator.cpp
+    src/Daemon/security/TokenRegistry.cpp
+    src/Daemon/FriendlyReference.cpp
+    src/Daemon/portal/Service.cpp
+    src/Daemon/portal/Api.cpp
+    src/Daemon/project/LocalProjectRegistry.cpp
+    src/Daemon/project/CollaborationProjectRegistry.cpp
+    src/Daemon/session/AnalysisSessionRegistry.cpp
+    src/Daemon/session/JobRegistry.cpp
+    src/Daemon/session/OpenItemRegistry.cpp
+    src/Daemon/session/SubscriptionRegistry.cpp
+    src/Daemon/UploadRegistry.cpp
     ${BINJAD_PLATFORM_SECURITY_SOURCES})
 target_include_directories(binjad_security
     PUBLIC
         "${CMAKE_CURRENT_SOURCE_DIR}/include"
         "${CMAKE_CURRENT_BINARY_DIR}/generated/include"
     PRIVATE
-        "${CMAKE_CURRENT_SOURCE_DIR}/src/security"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/Daemon/security"
         "${BINJAD_BN_API_SOURCE_DIR}")
 target_compile_definitions(binjad_security PRIVATE
     BINJAD_PORTAL_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/resources/portal"
@@ -245,12 +246,18 @@ if(APPLE)
 endif()
 
 add_library(binjad_http STATIC
-    src/http/drogon_routes.cpp
-    src/http/mcp_admission.cpp
-    src/http/mcp_dispatcher.cpp
-    src/http/portal_routes.cpp
-    src/http/upload_routes.cpp
-    src/mcp/foundation.cpp)
+    src/Daemon/http/DrogonRoutes.cpp
+    src/Daemon/http/McpAdmission.cpp
+    src/Daemon/http/McpDispatcher.cpp
+    src/Daemon/http/PortalRoutes.cpp
+    src/Daemon/http/UploadRoutes.cpp
+    src/Daemon/mcp/Foundation.cpp
+    src/Daemon/mcp/ToolCall.cpp
+    src/Daemon/mcp/tools/Analysis.cpp
+    src/Daemon/mcp/tools/Diffing.cpp
+    src/Daemon/mcp/tools/KernelCache.cpp
+    src/Daemon/mcp/tools/Projects.cpp
+    src/Daemon/mcp/tools/SharedCache.cpp)
 target_include_directories(binjad_http PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
 target_link_libraries(binjad_http
     PUBLIC binjad_security Drogon::Drogon
@@ -261,8 +268,8 @@ if(WIN32)
 endif()
 
 add_library(binjad_runtime STATIC
-    src/ipc/envelope.cpp
-    src/process/role.cpp)
+    src/Shared/Envelope.cpp
+    src/Shared/Role.cpp)
 if(APPLE)
     find_program(BINJAD_MIG_EXECUTABLE mig REQUIRED)
     execute_process(
@@ -289,9 +296,9 @@ if(APPLE)
         VERBATIM)
 
     target_sources(binjad_runtime PRIVATE
-        src/platform/macos/mach_bootstrap.cpp
-        src/platform/macos/mach_channel.cpp
-        src/platform/macos/process_supervisor.cpp
+        src/Shared/platform/macos/MachBootstrap.cpp
+        src/Shared/platform/macos/MachChannel.cpp
+        src/Daemon/platform/macos/ProcessSupervisor.cpp
         "${BINJAD_MACH_EXC_SERVER_C}")
     target_include_directories(binjad_runtime PRIVATE "${BINJAD_MIG_OUTPUT_DIR}")
     find_library(BINJAD_BSM_LIBRARY bsm REQUIRED)
@@ -302,13 +309,13 @@ target_link_libraries(binjad_runtime PUBLIC binjad_ipc_proto)
 target_compile_features(binjad_runtime PUBLIC cxx_std_20)
 
 add_library(binjad_binaryninja STATIC
-    src/binary_ninja/language.cpp
-    src/binary_ninja/diff_tools.cpp
-    src/binary_ninja/runtime.cpp
-    src/binary_ninja/plugin_tools.cpp
-    src/binary_ninja/string_codec.cpp
-    src/worker/file_child.cpp
-    src/worker/project_child.cpp)
+    src/FileProcess/binary_ninja/Language.cpp
+    src/FileProcess/binary_ninja/DiffTools.cpp
+    src/Shared/Runtime.cpp
+    src/FileProcess/binary_ninja/PluginTools.cpp
+    src/FileProcess/binary_ninja/StringCodec.cpp
+    src/FileProcess/FileChild.cpp
+    src/ProjectProcess/ProjectChild.cpp)
 target_include_directories(binjad_binaryninja
     PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include"
     PRIVATE
@@ -319,10 +326,10 @@ target_link_libraries(binjad_binaryninja PUBLIC binjad_runtime binaryninjaapi PR
 target_compile_features(binjad_binaryninja PUBLIC cxx_std_20)
 
 add_library(binjad_overseer STATIC
-    src/overseer/analysis_scheduler.cpp
-    src/overseer/collaboration_child_manager.cpp
-    src/overseer/file_child_coordinator.cpp
-    src/overseer/project_child_coordinator.cpp)
+    src/Daemon/overseer/AnalysisScheduler.cpp
+    src/Daemon/overseer/CollaborationChildManager.cpp
+    src/Daemon/overseer/FileChildCoordinator.cpp
+    src/Daemon/overseer/ProjectChildCoordinator.cpp)
 target_include_directories(binjad_overseer
     PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include"
     PRIVATE "${BINJAD_BN_API_SOURCE_DIR}")
@@ -330,7 +337,7 @@ target_link_libraries(binjad_overseer PUBLIC binjad_runtime binjad_security)
 target_compile_features(binjad_overseer PUBLIC cxx_std_20)
 target_link_libraries(binjad_http PUBLIC binjad_overseer)
 
-add_executable(binjad src/main.cpp)
+add_executable(binjad src/Shared/Main.cpp)
 target_include_directories(binjad PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/include"
     "${CMAKE_CURRENT_BINARY_DIR}/generated/include")
@@ -421,35 +428,35 @@ if(BINJAD_BUILD_TESTS)
     include(GoogleTest)
 
     add_executable(binjad_foundation_tests
-        tests/analysis_scheduler_test.cpp
-        tests/account_registry_test.cpp
-        tests/analysis_session_registry_test.cpp
-        tests/bootstrap_credential_test.cpp
-        tests/config_test.cpp
-        tests/collaboration_manager_test.cpp
-        tests/drogon_routes_test.cpp
-        tests/friendly_reference_test.cpp
-        tests/file_child_coordinator_test.cpp
-        tests/http_admission_test.cpp
-        tests/job_registry_test.cpp
-        tests/local_project_test.cpp
-        tests/ipc_envelope_test.cpp
-        tests/mcp_protocol_test.cpp
-        tests/open_item_registry_test.cpp
-        tests/mcp_dispatcher_test.cpp
-        tests/mcp_foundation_test.cpp
-        tests/portal_service_test.cpp
-        tests/portal_api_test.cpp
-        tests/process_role_test.cpp
-        tests/security_test.cpp)
-    target_sources(binjad_foundation_tests PRIVATE tests/token_registry_test.cpp)
-    target_sources(binjad_foundation_tests PRIVATE tests/subscription_registry_test.cpp)
-    target_sources(binjad_foundation_tests PRIVATE tests/upload_registry_test.cpp)
-    target_sources(binjad_foundation_tests PRIVATE tests/upload_routes_test.cpp)
+        tests/AnalysisSchedulerTest.cpp
+        tests/AccountRegistryTest.cpp
+        tests/AnalysisSessionRegistryTest.cpp
+        tests/BootstrapCredentialTest.cpp
+        tests/ConfigTest.cpp
+        tests/CollaborationManagerTest.cpp
+        tests/DrogonRoutesTest.cpp
+        tests/FriendlyReferenceTest.cpp
+        tests/FileChildCoordinatorTest.cpp
+        tests/HttpAdmissionTest.cpp
+        tests/JobRegistryTest.cpp
+        tests/LocalProjectTest.cpp
+        tests/IpcEnvelopeTest.cpp
+        tests/McpProtocolTest.cpp
+        tests/OpenItemRegistryTest.cpp
+        tests/McpDispatcherTest.cpp
+        tests/McpFoundationTest.cpp
+        tests/PortalServiceTest.cpp
+        tests/PortalApiTest.cpp
+        tests/ProcessRoleTest.cpp
+        tests/SecurityTest.cpp)
+    target_sources(binjad_foundation_tests PRIVATE tests/TokenRegistryTest.cpp)
+    target_sources(binjad_foundation_tests PRIVATE tests/SubscriptionRegistryTest.cpp)
+    target_sources(binjad_foundation_tests PRIVATE tests/UploadRegistryTest.cpp)
+    target_sources(binjad_foundation_tests PRIVATE tests/UploadRoutesTest.cpp)
     if(APPLE)
         target_sources(binjad_foundation_tests PRIVATE
-            tests/mach_channel_test.cpp
-            tests/process_supervisor_test.cpp)
+            tests/MachChannelTest.cpp
+            tests/ProcessSupervisorTest.cpp)
     endif()
     target_link_libraries(binjad_foundation_tests PRIVATE
         binjad_http
@@ -461,16 +468,16 @@ if(BINJAD_BUILD_TESTS)
     gtest_discover_tests(binjad_foundation_tests PROPERTIES LABELS binjad)
 
     if(BN_INSTALL_DIR)
-        add_executable(binjad_analysis_fixture tests/analysis_fixture.cpp)
+        add_executable(binjad_analysis_fixture tests/AnalysisFixture.cpp)
         target_compile_features(binjad_analysis_fixture PRIVATE cxx_std_20)
 
-        add_executable(binjad_debugger_fixture tests/debugger_fixture.cpp)
+        add_executable(binjad_debugger_fixture tests/DebuggerFixture.cpp)
         target_compile_features(binjad_debugger_fixture PRIVATE cxx_std_20)
 
         add_executable(binjad_binaryninja_tests
-            tests/file_child_test.cpp
-            tests/language_test.cpp
-            tests/string_codec_test.cpp)
+            tests/FileChildTest.cpp
+            tests/LanguageTest.cpp
+            tests/StringCodecTest.cpp)
         target_link_libraries(binjad_binaryninja_tests PRIVATE
             binjad_binaryninja
             GTest::gtest_main)
@@ -483,12 +490,12 @@ if(BINJAD_BUILD_TESTS)
         gtest_discover_tests(binjad_binaryninja_tests PROPERTIES LABELS binjad)
 
         if(APPLE)
-            add_executable(binjad_project_fixture tests/create_project_fixture.cpp)
+            add_executable(binjad_project_fixture tests/CreateProjectFixture.cpp)
             target_link_libraries(binjad_project_fixture PRIVATE binjad_binaryninja)
             target_compile_features(binjad_project_fixture PRIVATE cxx_std_20)
 
             add_executable(binjad_mach_launchd_integration_tests
-                tests/mach_launchd_integration_test.cpp)
+                tests/MachLaunchdIntegrationTest.cpp)
             target_link_libraries(binjad_mach_launchd_integration_tests PRIVATE
                 binjad_overseer
                 binaryninjaapi

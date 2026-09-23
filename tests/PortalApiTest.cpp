@@ -169,7 +169,8 @@ TEST(PortalApiTest, ServesMinimalBrowserPage)
     const auto page = fixture.api.Page();
     EXPECT_EQ(page.status, 200);
     EXPECT_EQ(page.contentType, "text/html; charset=utf-8");
-    EXPECT_NE(page.body.find("<title>binjad</title>"), std::string::npos);
+    EXPECT_NE(page.body.find("<title>binja'd</title>"), std::string::npos);
+    EXPECT_NE(page.body.find("binja'd / control room"), std::string::npos);
     EXPECT_NE(page.body.find("control room"), std::string::npos);
     EXPECT_NE(page.body.find("Issue bearer token"), std::string::npos);
     EXPECT_NE(page.body.find("Daemon configuration"), std::string::npos);
@@ -180,6 +181,7 @@ TEST(PortalApiTest, ServesMinimalBrowserPage)
     EXPECT_EQ(page.body.find(">Plugins<"), std::string::npos);
     EXPECT_NE(page.body.find("Exact MCP wire context"), std::string::npos);
     EXPECT_NE(page.body.find("/portal/app.css"), std::string::npos);
+    EXPECT_NE(page.body.find("/portal/binjad.png"), std::string::npos);
     EXPECT_EQ(page.body.find("onclick="), std::string::npos);
     const auto css = fixture.api.Asset("app.css");
     EXPECT_EQ(css.status, 200);
@@ -191,6 +193,10 @@ TEST(PortalApiTest, ServesMinimalBrowserPage)
     EXPECT_NE(javascript.body.find("loadConfiguration"), std::string::npos);
     EXPECT_NE(javascript.body.find("renderEnabledToolLists"), std::string::npos);
     EXPECT_NE(javascript.body.find("Core Workflow"), std::string::npos);
+    const auto logo = fixture.api.Asset("binjad.png");
+    EXPECT_EQ(logo.status, 200);
+    EXPECT_EQ(logo.contentType, "image/png");
+    EXPECT_FALSE(logo.body.empty());
     EXPECT_EQ(fixture.api.Asset("secret.txt").status, 404);
 }
 
