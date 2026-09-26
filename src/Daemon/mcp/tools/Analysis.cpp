@@ -441,8 +441,7 @@ namespace binjad::mcp {
 						{
 							std::error_code ignored;
 							std::filesystem::remove_all(exported.value->workingDirectory, ignored);
-							return ToolCallSuccess(
-								context, detail::ErrorJson(files.error), true);
+							return ToolCallSuccess(context, detail::ErrorJson(files.error), true);
 						}
 						std::string companionError;
 						for (const auto& file : *files.value)
@@ -1106,7 +1105,8 @@ namespace binjad::mcp {
 				if (detachImmediately)
 				{
 					const auto info = context.jobs->Info(owner, job);
-					return info.job ? ToolCallSuccess(context, job_tools::JobJson(*info.job)) :
+					return info.job ?
+						ToolCallSuccess(context, job_tools::JobJson(*info.job)) :
 						ToolCallSuccess(context, detail::ErrorJson("job not found"), true);
 				}
 				const auto waited = context.jobs->WaitForTerminal(owner, job, context.config.jobs.detachAfter);

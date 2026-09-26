@@ -9,12 +9,11 @@
 <a href="#why-is-this-better-than-having-an-agent-write-api-scripts">why is this better than having an agent write API scripts</a>
 </p>
 
-This is an **UNOFFICIAL** MCP for BinaryNinja Commercial that offers "a few" things the official doesn't, and fixes some of my gripes
+This is an **UNOFFICIAL** HTTP MCP daemon for BinaryNinja Commercial that offers "a few" things the official doesn't, and fixes some of my gripes
 trying to work with the official one. It's designed for fully autonomous parallel work with multiple agents at scale, not 
 single agent guided analysis.
 
-Use this with the `bntextviews` plugin to allow your agents to write markdown/json content into projects you can then display in 
-BinaryNinja with a nice document reader. It's good!
+This runs indefinitely in the background without binaryninja open. Config is done via a web panel, daemon itself can be controlled via `brew services`
 
 > Beta release! This may break with different setups. Let me know in the Issues or bother me on messaging platforms if you have me. 
 > I want to know what use cases you have for this and what tools you need to do those things. If you're willing to spam
@@ -39,6 +38,9 @@ I am not currently an employee or affiliate of Vector 35 and this project is not
 > diff every file in them and report anything that looks like a vulnerability fix. Save your results to a markdown file
 > within that project, and generate binaryninja URL links to all mentioned functions. Present the contents of the file to
 > me afterwards"
+
+Use this with the `bntextviews` plugin to allow your agents to write markdown/json content into projects you can then display in
+BinaryNinja with a nice document reader. It's good!
 
 I've found Qwen 3.8 27b on a 4-bit quant to be very capable of everything this toolkit exposes. Docs have been tuned to 
 help lower-spec models through trickier things. 
@@ -118,9 +120,10 @@ while the panel looks like it has multi-acct support, it does not and will not e
 
 ### "why is this better than having an agent write API scripts"
 
-With a frontier model, ideally you're using both of these in tandem. This gives models a framework. I am sure you're familiar with
-the directory and file sprawl that agents naturally end up with; this naturally keeps that contained in an enclosed 
-directory structure kept in a specific set of folders on your drive. 
+There's a lot of discussion on this topic right now. Especially around context usage, etc. So here's the blogpost from
+me on the topic. 
+
+With a frontier model, ideally you're using both of these in tandem; This gives models a framework for a simple prompt that won't result in crazy directory sprawl. 
 
 I might have an entire OS filesystem's set of binaries in a project, and instead of having to manually include the long
 list of instructions on how to use that each time I can just say "use the iOS IPSW dump project in binja'd", and it'll
@@ -129,8 +132,23 @@ reuse existing bndbs.
 Another strong use case I've found with this is with local LLMs (Qwen 3.8 27b is a fav), which can definitely perform RE
 tasks (and actually get there much faster than frontier models), but which I am absolutely not letting run arbitrary
 python scripts on my system. This gives them literally every tool they need to analyze, organize, perform RE, annotate, and perform 
-generic VR. 
+generic VR, without requiring handing a cheap model an execute_python_script tool.
 
+You can have a frontier model w/ full API scripting access and sandboxed subagents that operate on view handles the orchestrator
+hands them. Observed models have done this pretty consistently, naturally without needing much guidance to do so, resulting in 
+cheaper work with a lot less paid compute usage. 
+
+`<opinion>`
+This is a particular gripe I have with IDA's whole official "code mode" (read: completely useless?) MCP. Using proper
+context management, the tools can serve as a framework to guide a model through whatever you asked it to do, _and_ as a sandbox
+to keep agents that are aligned just fine from accidentally doing something really stupid. And in a case where a SOtA model 
+doesn't need guidance, why on earth does it need an MCP to execute ida scripts. IDK man.
+
+from their blog: 
+> We also tested Qwen 3.8 27B, which can run (quantized) on a single consumer GPU (24GB NVIDIA RTX 3090). This class of models can perform reverse engineering tasks, but tends to get stuck and overthink, so you need a more hands-on approach. That being said, a minimal harness like Pi and the small footprint of the IDA MCP tools make a suitable combination for consumer hardware where prefill speeds are relatively low.
+
+maybe it's because you're just handing it a script runner bro ;_;
+`</opinion>`
 
 ##### LLM disclosure
 

@@ -4,7 +4,6 @@
 
 #include <mach/mach.h>
 
-namespace binjad::platform::macos
-{
-mach_port_t ExceptionPort(ProcessSupervisor& supervisor);
+namespace binjad::platform::macos {
+	mach_port_t ExceptionPort(ProcessSupervisor& supervisor);
 }

@@ -5,14 +5,12 @@
 #include <memory>
 #include <string>
 
-namespace binjad::security
-{
-struct PlatformCredentialStoreOptions
-{
-    std::string namespaceId;
-    bool standardInstallation = false;
-};
+namespace binjad::security {
+	struct PlatformCredentialStoreOptions
+	{
+		std::string namespaceId;
+		bool standardInstallation = false;
+	};
 
-std::unique_ptr<CredentialStore> CreatePlatformCredentialStore(
-    PlatformCredentialStoreOptions options);
-}
+	std::unique_ptr<CredentialStore> CreatePlatformCredentialStore(PlatformCredentialStoreOptions options);
+}  // namespace binjad::security

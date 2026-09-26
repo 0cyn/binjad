@@ -512,8 +512,8 @@ namespace binjad::mcp {
 
 
 		std::string RegisteredToolsResponse(const ValidatedRequest& request, std::string_view serverVersion,
-			bool localProjects, const ToolConfig& tools, bool adminAllowed,
-			bool arbitraryLocalProjects, bool projectRegistration)
+			bool localProjects, const ToolConfig& tools, bool adminAllowed, bool arbitraryLocalProjects,
+			bool projectRegistration)
 		{
 			const auto available = [&](const ToolCall& tool) {
 				if (!ToolCallCategoryEnabled(tool.Category(), tools))
@@ -551,12 +551,12 @@ namespace binjad::mcp {
 		std::string ToolsResponse(const ValidatedRequest& request, std::string_view serverVersion, bool localProjects,
 			const ToolConfig& tools, bool adminAllowed, bool arbitraryLocalProjects, bool projectRegistration)
 		{
-			return RegisteredToolsResponse(request, serverVersion, localProjects, tools,
-				adminAllowed, arbitraryLocalProjects, projectRegistration);
+			return RegisteredToolsResponse(request, serverVersion, localProjects, tools, adminAllowed,
+				arbitraryLocalProjects, projectRegistration);
 		}
 
-		std::string ResourcesResponse(const ValidatedRequest& request, std::string_view serverVersion,
-			bool localProjects)
+		std::string ResourcesResponse(
+			const ValidatedRequest& request, std::string_view serverVersion, bool localProjects)
 		{
 			return Response(request, [&](auto& writer) {
 				writer.Key("resources");
@@ -723,7 +723,8 @@ namespace binjad::mcp {
 			"bn_function_create for a persistent user function, then update analysis and save the BinaryView.\n"
 			"URLs: bn_url_open_item links owned arbitrary-path provenance. For a local-project item, call "
 			"bn_binary_view_save after the latest changes, then call bn_url_project_file with "
-			"updated_bndb_has_been_saved:true; its URL opens the committed project backing file, never unsaved child state. "
+			"updated_bndb_has_been_saved:true; its URL opens the committed project backing file, never unsaved child "
+			"state. "
 			"Use bn_url_remote_file for an absolute http, https, or file URL, and bn_url_navigate for a Binary Ninja "
 			"report-relative expression link. These tools percent-encode expr values.\n"
 			"Raw firmware: open only discovers candidates; select Mapped rather than Raw, call "
@@ -910,9 +911,8 @@ namespace binjad::mcp {
 		overseer::ProjectChildCoordinator* projectCoordinator, overseer::AnalysisScheduler* scheduler,
 		upload::UploadRegistry* uploads) :
 		config_(std::move(config)), toolConfig_(config_.tools), sessions_(sessions),
-		serverVersion_(std::move(serverVersion)),
-		openItems_(openItems), fileCoordinator_(fileCoordinator), jobs_(jobs), projects_(projects),
-		projectCoordinator_(projectCoordinator), scheduler_(scheduler), uploads_(uploads)
+		serverVersion_(std::move(serverVersion)), openItems_(openItems), fileCoordinator_(fileCoordinator), jobs_(jobs),
+		projects_(projects), projectCoordinator_(projectCoordinator), scheduler_(scheduler), uploads_(uploads)
 	{}
 
 	void Foundation::SetToolConfig(ToolConfig config)
@@ -933,9 +933,9 @@ namespace binjad::mcp {
 	{
 		const auto config = EffectiveConfig();
 		const auto request = DocumentationRequest(version, 1, "tools/list");
-		const auto currentPayload = ToolsResponse(request, serverVersion_, true,
-			config.tools, role == security::TokenRole::Admin,
-			config.projects.allowArbitraryPaths, config.projects.allowProjectRegistration);
+		const auto currentPayload = ToolsResponse(request, serverVersion_, true, config.tools,
+			role == security::TokenRole::Admin, config.projects.allowArbitraryPaths,
+			config.projects.allowProjectRegistration);
 		ToolConfig allTools;
 		const auto localPayload = ToolsResponse(request, serverVersion_, true, allTools, true, true, true);
 		const auto modernRequest = DocumentationRequest(ProtocolVersion::V2026_07_28, 1, "tools/list");
@@ -1159,14 +1159,11 @@ namespace binjad::mcp {
 		const auto config = EffectiveConfig();
 		if (request.method == "tools/list")
 			return {true, 200,
-				ToolsResponse(request, serverVersion_, true, config.tools,
-					principal.role == security::TokenRole::Admin, config.projects.allowArbitraryPaths,
-					config.projects.allowProjectRegistration),
+				ToolsResponse(request, serverVersion_, true, config.tools, principal.role == security::TokenRole::Admin,
+					config.projects.allowArbitraryPaths, config.projects.allowProjectRegistration),
 				{}};
 		if (request.method == "resources/list")
-			return {true, 200,
-				ResourcesResponse(request, serverVersion_, true),
-				{}};
+			return {true, 200, ResourcesResponse(request, serverVersion_, true), {}};
 		if (request.method == "resources/templates/list")
 			return {true, 200, TemplatesResponse(request, serverVersion_), {}};
 		if (request.method == "resources/read")
@@ -1243,7 +1240,7 @@ namespace binjad::mcp {
 			return {true, IsModern(request.version) ? 400 : 200, {},
 				ProtocolError {-32602, IsModern(request.version) ? 400 : 200, schemaError, request.id, {}}};
 		return tool->Execute({config, sessions_, serverVersion_, openItems_, fileCoordinator_, jobs_, projects_,
-			projectCoordinator_, scheduler_, uploads_, request,
-			principal, currentSession, now, unixNow, progress, attached, *arguments});
+			projectCoordinator_, scheduler_, uploads_, request, principal, currentSession, now, unixNow, progress,
+			attached, *arguments});
 	}
 }  // namespace binjad::mcp

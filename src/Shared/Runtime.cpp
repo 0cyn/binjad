@@ -4,19 +4,18 @@
 
 #include <stdexcept>
 
-namespace binjad
-{
-BinaryNinjaRuntime::BinaryNinjaRuntime(bool allowUserPlugins)
-{
-    BinaryNinja::SetBundledPluginDirectory(BinaryNinja::GetBundledPluginDirectory());
-    if (!BinaryNinja::InitPlugins(allowUserPlugins))
-        throw std::runtime_error("Binary Ninja plugin initialization failed");
-    initialized_ = true;
-}
+namespace binjad {
+	BinaryNinjaRuntime::BinaryNinjaRuntime(bool allowUserPlugins)
+	{
+		BinaryNinja::SetBundledPluginDirectory(BinaryNinja::GetBundledPluginDirectory());
+		if (!BinaryNinja::InitPlugins(allowUserPlugins))
+			throw std::runtime_error("Binary Ninja plugin initialization failed");
+		initialized_ = true;
+	}
 
-BinaryNinjaRuntime::~BinaryNinjaRuntime()
-{
-    if (initialized_)
-        BNShutdown();
-}
-}
+	BinaryNinjaRuntime::~BinaryNinjaRuntime()
+	{
+		if (initialized_)
+			BNShutdown();
+	}
+}  // namespace binjad

@@ -3,18 +3,17 @@
 #include <cstdlib>
 #include <stdexcept>
 
-namespace binjad::platform
-{
-std::filesystem::path UserDataDirectory()
-{
-    const char* home = std::getenv("HOME");
-    if (!home || !*home)
-        throw std::runtime_error("HOME is not set");
-    return std::filesystem::path(home) / "Library" / "Application Support" / "binjad";
-}
+namespace binjad::platform {
+	std::filesystem::path UserDataDirectory()
+	{
+		const char* home = std::getenv("HOME");
+		if (!home || !*home)
+			throw std::runtime_error("HOME is not set");
+		return std::filesystem::path(home) / "Library" / "Application Support" / "binjad";
+	}
 
-std::filesystem::path DefaultConfigPath()
-{
-    return UserDataDirectory() / "config.json";
-}
-}
+	std::filesystem::path DefaultConfigPath()
+	{
+		return UserDataDirectory() / "config.json";
+	}
+}  // namespace binjad::platform
