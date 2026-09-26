@@ -731,13 +731,8 @@ namespace binjad::mcp {
 							jobs->Fail(owner, job, detail::ErrorJson(saved.error), detail::CurrentUnixSeconds());
 							return;
 						}
-						const auto discardCreatedDatabase = [&] {
-							if (saved.value->created_database())
-								fileCoordinator->DiscardUncommittedSavedDatabase(owner, analysisSession, binaryView);
-						};
 						if (cancelled())
 						{
-							discardCreatedDatabase();
 							jobs->MarkCancelled(owner, job, detail::ErrorJson("job cancelled before commit"),
 								detail::CurrentUnixSeconds());
 							return;
@@ -756,7 +751,6 @@ namespace binjad::mcp {
 								saved.value->path(), target, !saved.value->created_database() && target == original);
 							if (!installed.installed)
 							{
-								discardCreatedDatabase();
 								jobs->Fail(
 									owner, job, detail::ErrorJson(installed.error), detail::CurrentUnixSeconds());
 								return;
@@ -769,7 +763,6 @@ namespace binjad::mcp {
 						{
 							if (!item.project || !projectCoordinator)
 							{
-								discardCreatedDatabase();
 								jobs->Fail(owner, job, detail::ErrorJson("local project service is unavailable"),
 									detail::CurrentUnixSeconds());
 								return;
@@ -781,7 +774,6 @@ namespace binjad::mcp {
 								"Saved analysis database");
 							if (!committed.value)
 							{
-								discardCreatedDatabase();
 								jobs->Fail(
 									owner, job, detail::ErrorJson(committed.error), detail::CurrentUnixSeconds());
 								return;
@@ -790,15 +782,12 @@ namespace binjad::mcp {
 							openItems->UpdateSource(owner, item.reference, session::OpenItemSourceKind::LocalProject,
 								committedDestination, item.project);
 						}
-						if (saved.value->created_database())
+						const auto promoted = fileCoordinator->PromoteSavedBinaryView(
+							owner, analysisSession, binaryView, saved.value->path());
+						if (!promoted.empty())
 						{
-							const auto promoted = fileCoordinator->PromoteSavedBinaryView(
-								owner, analysisSession, binaryView, saved.value->path());
-							if (!promoted.empty())
-							{
-								jobs->Fail(owner, job, detail::ErrorJson(promoted), detail::CurrentUnixSeconds());
-								return;
-							}
+							jobs->Fail(owner, job, detail::ErrorJson(promoted), detail::CurrentUnixSeconds());
+							return;
 						}
 						jobs->Complete(owner, job,
 							SaveResultJson(binaryView, item.reference, committedDestination,
@@ -1033,6 +1022,15 @@ namespace binjad::mcp {
 					jobs->MarkCancelled(owner, job, detail::ErrorJson("job cancelled"), detail::CurrentUnixSeconds());
 					return;
 				}
+				if (!jobs->Start(owner, job, detail::CurrentUnixSeconds()))
+					return;
+				jobs->ReportProgress(owner, job, "analysis", 0, 0, "analysis started", detail::CurrentUnixSeconds());
+				if (progress)
+				{
+					const auto info = jobs->Info(owner, job);
+					if (info.job)
+						progress(*info.job);
+				}
 				const auto finished = coordinator->UpdateAnalysisAndWait(
 					owner, analysisSession, view, [jobs, owner, job, progress](const ipc::Progress& update) {
 						jobs->ReportProgress(owner, job, update.phase(), update.completed(), update.total(),
@@ -1086,10 +1084,10 @@ namespace binjad::mcp {
 				if (!created.job)
 					return ToolCallSuccess(context, detail::ErrorJson(created.error), true);
 				const auto job = created.job->reference;
-				context.jobs->Start(owner, job, context.unixNow);
 				if (!detachImmediately && context.attached)
 					context.attached(job, [jobs = context.jobs, owner, job] { (void)jobs->Cancel(owner, job); });
-				context.jobs->ReportProgress(owner, job, "analysis", 0, 0, "analysis started", context.unixNow);
+				context.jobs->ReportProgress(
+					owner, job, "queued", 0, 0, "waiting for an analysis worker", context.unixNow);
 				if (!detachImmediately && context.progress)
 				{
 					const auto info = context.jobs->Info(owner, job);
@@ -1106,7 +1104,11 @@ namespace binjad::mcp {
 				if (!workerError.empty())
 					context.jobs->Fail(owner, job, detail::ErrorJson(workerError), context.unixNow);
 				if (detachImmediately)
-					return ToolCallSuccess(context, job_tools::JobJson(*created.job));
+				{
+					const auto info = context.jobs->Info(owner, job);
+					return info.job ? ToolCallSuccess(context, job_tools::JobJson(*info.job)) :
+						ToolCallSuccess(context, detail::ErrorJson("job not found"), true);
+				}
 				const auto waited = context.jobs->WaitForTerminal(owner, job, context.config.jobs.detachAfter);
 				if (!waited.job)
 					return ToolCallSuccess(context, detail::ErrorJson(waited.error), true);

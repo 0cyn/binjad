@@ -1,15 +1,24 @@
-### binja'd
+![logo](.github/img/logo.png)
 
-<super>this readme was fully written by a human, u can read it! <3</super>
+<p align="center">
+<super>this readme was fully written by a human, u can read it <3</super>
+</p>
 
-[install](#install)
+<p align="center">
+  <a href="#install">install</a> | <a href="#update">update</a> | <a href="#restart">restart</a> <br>
+<a href="#why-is-this-better-than-having-an-agent-write-api-scripts">why is this better than having an agent write API scripts</a>
+</p>
 
 This is an **UNOFFICIAL** MCP for BinaryNinja Commercial that offers "a few" things the official doesn't, and fixes some of my gripes
 trying to work with the official one. It's designed for fully autonomous parallel work with multiple agents at scale, not 
 single agent guided analysis.
 
+Use this with the `bntextviews` plugin to allow your agents to write markdown/json content into projects you can then display in 
+BinaryNinja with a nice document reader. It's good!
+
 > Beta release! This may break with different setups. Let me know in the Issues or bother me on messaging platforms if you have me. 
-> I want to know what use cases you have for this and what tools you need to do those things. 
+> I want to know what use cases you have for this and what tools you need to do those things. If you're willing to spam
+> me with issues when things break, we can turn this into the best tool in industry for this sort of work. 
 
 I am not currently an employee or affiliate of Vector 35 and this project is not associated with them in any way.
 
@@ -47,7 +56,11 @@ regarding Markdown/JSON in projects; the `bntextviews` plugin in the official pl
 * and on that note, a lot has been done to make sure it doesn't obliterate context
 * Web configuration API :thumbsup:
 
-### install 
+
+> Caveat of project work: Due to a binaryninja limitation, if you are running the server locally, having a project in GUI open in any way holds
+> a 'lock' on the project, which will result in certain toolcalls that modify projects to fail.
+
+### install note
 
 installation is currently done through homebrew. 
 
@@ -60,6 +73,8 @@ for keychain password on daemon startup and signup since we store keys, login in
 You can configure the daemon through the web portal or by manually editing `~/Library/Application\ Support/binjad/config.json`
 
 Please thumbs-up the [Windows Support]() or [Linux Support]() issues if you need it on these platforms. 
+
+#### install
 
 ```
 
@@ -84,17 +99,6 @@ this project at this time requires an existing GUI install with license configur
 
 ### design schtuff
 
-###### mandatory projects
-
-Projects are mandatory w/ this tooling. This was an explicit decision; it forces models to not fan out across a filesystem
-and just by default keep things much more organized. When running on a server, it also just gives us a nice obvious place 
-to store files and .bndbs.
-
-It also allows us to offer MCP tools to sandboxed agents that can't run filesystem commands, by design. 
-
-> Caveat of this: Due to a binaryninja limitation, if you are running the server locally, having a project in GUI open in any way holds 
-> a 'lock' on the project, which will result in certain toolcalls that modify projects to fail. 
-
 ###### Those random 4 words smashed together
 
 We use FourWordsLikeThis in place of UUIDs since they should be easier for a very cheap model to remember as compared to a UUID. 
@@ -112,6 +116,28 @@ projects; it owns the handles for the official ones and such.
 
 while the panel looks like it has multi-acct support, it does not and will not ever for a single commercial license.  
 
+### "why is this better than having an agent write API scripts"
+
+With a frontier model, ideally you're using both of these in tandem. This gives models a framework. I am sure you're familiar with
+the directory and file sprawl that agents naturally end up with; this naturally keeps that contained in an enclosed 
+directory structure kept in a specific set of folders on your drive. 
+
+I might have an entire OS filesystem's set of binaries in a project, and instead of having to manually include the long
+list of instructions on how to use that each time I can just say "use the iOS IPSW dump project in binja'd", and it'll
+reuse existing bndbs. 
+
+Another strong use case I've found with this is with local LLMs (Qwen 3.8 27b is a fav), which can definitely perform RE
+tasks (and actually get there much faster than frontier models), but which I am absolutely not letting run arbitrary
+python scripts on my system. This gives them literally every tool they need to analyze, organize, perform RE, annotate, and perform 
+generic VR. 
+
+
+##### LLM disclosure
+
+A lot of work has gone into making this solid, a lot of care went into the architecture and design of this, any
+graphics you see were made with AI (Adobe Illustrator,) and I do give a fuck about this working. This was not oneshotted
+in a week. But also yes, heavy LLM usage occurred. It's an MCP man.
+
 ---
 
 #### security
@@ -127,5 +153,7 @@ I welcome security-related bug reports but this project should never run at the 
 
 ---
 
-i think with the advent of capable fast local stuff (e.g. the Qwen 3.8 models) it might be an important time to 
-experiment w/ the tech, at the least. 
+#### license
+
+This is licensed under BSD-3C. Please note [LLMs were used](#llm-disclosure).
+

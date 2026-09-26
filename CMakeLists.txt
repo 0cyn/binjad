@@ -474,96 +474,36 @@ install(CODE [[
     endforeach()
 ]])
 
-option(BINJAD_BUILD_TESTS "Build binjad tests" ON)
+option(BINJAD_BUILD_TESTS "Enable real-daemon end-to-end tests" ON)
 if(BINJAD_BUILD_TESTS)
-    set(INSTALL_GTEST OFF CACHE BOOL "Do not install vendored GoogleTest" FORCE)
-    set(BUILD_GMOCK OFF CACHE BOOL "Build GoogleMock" FORCE)
-    add_subdirectory(vendor/googletest _deps/googletest EXCLUDE_FROM_ALL)
-
     enable_testing()
-    include(GoogleTest)
-
-    add_executable(binjad_foundation_tests
-        tests/AnalysisSchedulerTest.cpp
-        tests/AccountRegistryTest.cpp
-        tests/AnalysisSessionRegistryTest.cpp
-        tests/ConfigTest.cpp
-        tests/DrogonRoutesTest.cpp
-        tests/FriendlyReferenceTest.cpp
-        tests/FileChildCoordinatorTest.cpp
-        tests/HttpAdmissionTest.cpp
-        tests/JobRegistryTest.cpp
-        tests/LocalProjectTest.cpp
-        tests/IpcEnvelopeTest.cpp
-        tests/McpProtocolTest.cpp
-        tests/OpenItemRegistryTest.cpp
-        tests/McpDispatcherTest.cpp
-        tests/McpFoundationTest.cpp
-        tests/PortalServiceTest.cpp
-        tests/PortalApiTest.cpp
-        tests/ProcessRoleTest.cpp
-        tests/SecurityTest.cpp)
-    target_sources(binjad_foundation_tests PRIVATE tests/TokenRegistryTest.cpp)
-    target_sources(binjad_foundation_tests PRIVATE tests/SubscriptionRegistryTest.cpp)
-    target_sources(binjad_foundation_tests PRIVATE tests/UploadRegistryTest.cpp)
-    target_sources(binjad_foundation_tests PRIVATE tests/UploadRoutesTest.cpp)
-    if(APPLE)
-        target_sources(binjad_foundation_tests PRIVATE
-            tests/MachChannelTest.cpp
-            tests/ProcessSupervisorTest.cpp)
-    endif()
-    target_link_libraries(binjad_foundation_tests PRIVATE
-        binjad_http
-        binjad_overseer
-        GTest::gtest_main)
-    target_compile_definitions(binjad_foundation_tests PRIVATE
-        BINJAD_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
-    target_compile_features(binjad_foundation_tests PRIVATE cxx_std_20)
-    gtest_discover_tests(binjad_foundation_tests PROPERTIES LABELS binjad)
-
-    if(BN_INSTALL_DIR)
-        add_executable(binjad_analysis_fixture tests/AnalysisFixture.cpp)
-        target_compile_features(binjad_analysis_fixture PRIVATE cxx_std_20)
-
-        add_executable(binjad_debugger_fixture tests/DebuggerFixture.cpp)
-        target_compile_features(binjad_debugger_fixture PRIVATE cxx_std_20)
-
-        add_executable(binjad_binaryninja_tests
-            tests/FileChildTest.cpp
-            tests/LanguageTest.cpp
-            tests/StringCodecTest.cpp)
-        target_link_libraries(binjad_binaryninja_tests PRIVATE
-            binjad_binaryninja
-            GTest::gtest_main)
-        target_compile_features(binjad_binaryninja_tests PRIVATE cxx_std_20)
-        target_compile_definitions(binjad_binaryninja_tests PRIVATE
-            BINJAD_ANALYSIS_FIXTURE="$<TARGET_FILE:binjad_analysis_fixture>"
-            BINJAD_DEBUGGER_FIXTURE="$<TARGET_FILE:binjad_debugger_fixture>")
-        add_dependencies(binjad_binaryninja_tests
-            binjad_analysis_fixture binjad_debugger_fixture)
-        gtest_discover_tests(binjad_binaryninja_tests PROPERTIES LABELS binjad)
-
-        if(APPLE)
-            add_executable(binjad_project_fixture tests/CreateProjectFixture.cpp)
-            target_link_libraries(binjad_project_fixture PRIVATE binjad_binaryninja)
-            target_compile_features(binjad_project_fixture PRIVATE cxx_std_20)
-
-            add_executable(binjad_mach_launchd_integration_tests
-                tests/MachLaunchdIntegrationTest.cpp)
-            target_link_libraries(binjad_mach_launchd_integration_tests PRIVATE
-                binjad_overseer
-                binaryninjaapi
-                GTest::gtest_main)
-            target_include_directories(binjad_mach_launchd_integration_tests PRIVATE
-                "${BINJAD_BN_API_SOURCE_DIR}")
-            target_compile_definitions(binjad_mach_launchd_integration_tests PRIVATE
-                BINJAD_TEST_DAEMON_PATH="$<TARGET_FILE:binjad>"
-                BINJAD_TEST_PROJECT_FIXTURE_PATH="$<TARGET_FILE:binjad_project_fixture>")
-            target_compile_features(binjad_mach_launchd_integration_tests PRIVATE cxx_std_20)
-            add_dependencies(binjad_mach_launchd_integration_tests
-                binjad
-                binjad_project_fixture)
-            gtest_discover_tests(binjad_mach_launchd_integration_tests PROPERTIES LABELS binjad)
+    if(BN_INSTALL_DIR AND APPLE)
+        find_package(Python3 3.11 COMPONENTS Interpreter REQUIRED)
+        find_program(BINJAD_E2E_CLANG NAMES clang REQUIRED)
+        find_program(BINJAD_E2E_ELF_LINKER NAMES ld.lld REQUIRED)
+        find_program(BINJAD_E2E_PE_LINKER NAMES lld-link REQUIRED)
+        set(BINJAD_E2E_CORPUS "" CACHE FILEPATH "Optional local binary/cache corpus manifest")
+        option(BINJAD_E2E_REQUIRE_CORPUS "Fail E2E runs without an external corpus" OFF)
+        set(BINJAD_E2E_ARGUMENTS)
+        if(BINJAD_E2E_CORPUS)
+            list(APPEND BINJAD_E2E_ARGUMENTS --corpus "${BINJAD_E2E_CORPUS}")
         endif()
+        if(BINJAD_E2E_REQUIRE_CORPUS)
+            list(APPEND BINJAD_E2E_ARGUMENTS --require-corpus)
+        endif()
+        add_test(NAME binjad.e2e
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/e2e/Run.py"
+                --daemon "$<TARGET_FILE:binjad>"
+                --artifacts "${CMAKE_CURRENT_BINARY_DIR}/e2e"
+                --clang "${BINJAD_E2E_CLANG}"
+                --elf-linker "${BINJAD_E2E_ELF_LINKER}"
+                --pe-linker "${BINJAD_E2E_PE_LINKER}"
+                ${BINJAD_E2E_ARGUMENTS})
+        set_tests_properties(binjad.e2e PROPERTIES
+            LABELS "binjad;e2e"
+            RESOURCE_LOCK binjad_mach_service
+            TIMEOUT 3600)
+    else()
+        message(STATUS "Real-daemon E2E tests require BN_INSTALL_DIR and a supported service adapter (currently macOS)")
     endif()
 endif()

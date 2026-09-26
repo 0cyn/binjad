@@ -94,8 +94,6 @@ class FileChildCoordinator
     std::string PromoteSavedBinaryView(std::string_view ownerTokenId,
         std::string_view analysisSession, std::string_view binaryView,
         const std::filesystem::path& savedDatabase);
-    void DiscardUncommittedSavedDatabase(std::string_view ownerTokenId,
-        std::string_view analysisSession, std::string_view binaryView);
     std::string AbortAnalysis(std::string_view ownerTokenId,
         std::string_view analysisSession, std::string_view binaryView);
     std::string Close(

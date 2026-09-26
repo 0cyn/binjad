@@ -192,6 +192,8 @@ class FileChildCoordinator::Child
             std::lock_guard stateLock(stateMutex_);
             if (closed_)
                 return {};
+            if (!discardUncommitted && pendingDatabaseCommit_)
+                return "file has an uncommitted database save; explicit discard is required";
         }
         try
         {
@@ -232,6 +234,23 @@ class FileChildCoordinator::Child
         std::lock_guard lock(stateMutex_);
         workingCopy = std::move(path);
         reuseDatabase = true;
+        pendingDatabaseCommit_ = false;
+    }
+
+    bool RecordDatabaseSave(const std::filesystem::path& path)
+    {
+        std::lock_guard lock(stateMutex_);
+        pendingDatabaseCommit_ = true;
+        // A failed first commit leaves the core backed by its new private BNDB,
+        // while the public source is still raw. Retries must retain sibling-save
+        // semantics until that database has actually been committed.
+        return path != workingCopy;
+    }
+
+    bool HasPendingDatabaseCommit() const
+    {
+        std::lock_guard lock(stateMutex_);
+        return pendingDatabaseCommit_;
     }
 
     std::filesystem::path WorkingCopy() const
@@ -461,6 +480,7 @@ class FileChildCoordinator::Child
     std::string openItem_;
     std::string failure_;
     bool closed_ = false;
+    bool pendingDatabaseCommit_ = false;
     bool idleCrashNotice_ = false;
     bool suppressIdleNotice_ = false;
     std::jthread reader_;
@@ -728,7 +748,10 @@ CoordinatorResult<ipc::AnalysisStatus> FileChildCoordinator::AnalysisStatus(
         const auto reply = child->Call(command, view.openItem);
         if (!reply.success() || !reply.has_analysis_status())
             return {{}, reply.success() ? "file child returned no analysis status" : reply.error()};
-        return {reply.analysis_status(), {}};
+        auto status = reply.analysis_status();
+        if (child->HasPendingDatabaseCommit())
+            status.set_modified(true);
+        return {std::move(status), {}};
     }
     catch (const std::exception& exception)
     {
@@ -815,7 +838,9 @@ CoordinatorResult<ipc::BinaryViewSaved> FileChildCoordinator::SaveBinaryView(
         const auto reply = child->Call(command, view.openItem, std::move(progress));
         if (!reply.success() || !reply.has_binary_view_saved())
             return {{}, reply.success() ? "file child returned no save result" : reply.error()};
-        return {reply.binary_view_saved(), {}};
+        auto saved = reply.binary_view_saved();
+        saved.set_created_database(child->RecordDatabaseSave(saved.path()));
+        return {std::move(saved), {}};
     }
     catch (const std::exception& exception)
     {
@@ -978,24 +1003,6 @@ std::string FileChildCoordinator::PromoteSavedBinaryView(
         return error;
     child->PromoteWorkingCopy(savedDatabase);
     return {};
-}
-
-void FileChildCoordinator::DiscardUncommittedSavedDatabase(
-    std::string_view ownerTokenId, std::string_view analysisSession,
-    std::string_view binaryView)
-{
-    session::BinaryViewRecord view;
-    std::string error;
-    const auto child = ChildForView(ownerTokenId, analysisSession, binaryView, view, error);
-    if (!child)
-        return;
-    child->MarkExited("uncommitted database save was discarded");
-    try
-    {
-        supervisor_.Terminate(child->processId);
-    }
-    catch (...)
-    {}
 }
 
 std::string FileChildCoordinator::AbortAnalysis(std::string_view ownerTokenId,
