@@ -1,4 +1,4 @@
-#include "../tool_call.hpp"
+#include "../ToolCall.hpp"
 
 namespace binjad::mcp {
 	namespace {

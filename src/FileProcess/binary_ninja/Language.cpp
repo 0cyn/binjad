@@ -1,4 +1,4 @@
-#include "binjad/binary_ninja/language.hpp"
+#include "binjad/binary_ninja/Language.hpp"
 
 namespace binjad::binary_ninja
 {

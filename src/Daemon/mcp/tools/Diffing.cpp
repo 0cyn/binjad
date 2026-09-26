@@ -1,12 +1,11 @@
-#include "../tool_call.hpp"
-#include "../tool_schema.hpp"
+#include "../ToolCall.hpp"
+#include "../ToolSchema.hpp"
 
-#include "binjad/overseer/file_child_coordinator.hpp"
-#include "binjad/overseer/analysis_scheduler.hpp"
-#include "binjad/overseer/collaboration_child_manager.hpp"
-#include "binjad/overseer/project_child_coordinator.hpp"
-#include "binjad/session/job_registry.hpp"
-#include "binjad/session/open_item_registry.hpp"
+#include "binjad/overseer/FileChildCoordinator.hpp"
+#include "binjad/overseer/AnalysisScheduler.hpp"
+#include "binjad/overseer/ProjectChildCoordinator.hpp"
+#include "binjad/session/JobRegistry.hpp"
+#include "binjad/session/OpenItemRegistry.hpp"
 
 #include <chrono>
 #include <filesystem>
@@ -191,11 +190,9 @@ namespace binjad::mcp {
 			context.jobs->ReportProgress(owner, job, "diff", 0, 1000, "staging secondary database", context.unixNow);
 			const auto workerError = context.jobs->StartWorker(
 				[jobs = context.jobs, coordinator = context.fileCoordinator, scheduler = context.scheduler,
-					projectCoordinator = context.projectCoordinator,
-					collaborationManager = context.collaborationManager, configMode = context.config.EffectiveMode(),
-					owner, analysisSession, primary = target->primary, secondary = target->secondary,
-					project = target->project, identity = target->identity, openItem, job,
-					principal = context.principal, progress = context.progress] {
+					projectCoordinator = context.projectCoordinator, owner, analysisSession, primary = target->primary,
+					secondary = target->secondary, project = target->project, identity = target->identity, openItem,
+					job, progress = context.progress] {
 					const auto cancelled = [&] {
 						const auto info = jobs->Info(owner, job);
 						return info.job && info.job->cancelRequested;
@@ -224,7 +221,7 @@ namespace binjad::mcp {
 					overseer::CoordinatorResult<overseer::DiffSecondary> staged;
 					if (!project)
 						staged = coordinator->StageDiffView(owner, analysisSession, primary, secondary, identity.key);
-					else if (configMode == Mode::Local)
+					else
 					{
 						if (!projectCoordinator)
 						{
@@ -242,25 +239,6 @@ namespace binjad::mcp {
 							owner, analysisSession, primary, exported.value->path, identity.key);
 						std::error_code ignored;
 						std::filesystem::remove_all(exported.value->workingDirectory, ignored);
-					}
-					else
-					{
-						if (!collaborationManager)
-						{
-							jobs->Fail(owner, job, ErrorJson("collaboration project service is unavailable"),
-								CurrentUnixSeconds());
-							return;
-						}
-						auto downloaded = collaborationManager->DownloadFile(principal, *project, secondary);
-						if (!downloaded.value)
-						{
-							jobs->Fail(owner, job, ErrorJson(downloaded.error), CurrentUnixSeconds());
-							return;
-						}
-						staged = coordinator->StageDiffFile(
-							owner, analysisSession, primary, downloaded.value->path, identity.key);
-						std::error_code ignored;
-						std::filesystem::remove_all(downloaded.value->workingDirectory, ignored);
 					}
 					if (!staged.value)
 					{

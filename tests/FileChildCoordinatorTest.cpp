@@ -1,7 +1,7 @@
-#include "binjad/ipc/envelope.hpp"
-#include "binjad/mcp/foundation.hpp"
-#include "binjad/overseer/file_child_coordinator.hpp"
-#include "binjad/session/job_registry.hpp"
+#include "binjad/ipc/Envelope.hpp"
+#include "binjad/mcp/Foundation.hpp"
+#include "binjad/overseer/FileChildCoordinator.hpp"
+#include "binjad/session/JobRegistry.hpp"
 
 #include <rapidjsonwrapper.h>
 

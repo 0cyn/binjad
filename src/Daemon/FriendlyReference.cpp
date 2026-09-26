@@ -1,7 +1,7 @@
-#include "binjad/reference/friendly_reference.hpp"
+#include "binjad/reference/FriendlyReference.hpp"
 
-#include "binjad/reference/friendly_words_data.hpp"
-#include "binjad/security/random.hpp"
+#include "binjad/reference/FriendlyWordsData.hpp"
+#include "binjad/security/Random.hpp"
 
 #include <algorithm>
 #include <array>

@@ -1,4 +1,4 @@
-#include "binjad/platform/macos/mach_channel.hpp"
+#include "binjad/platform/macos/MachChannel.hpp"
 
 #include <gtest/gtest.h>
 

@@ -1,4 +1,4 @@
-#include "binjad/http/drogon_routes.hpp"
+#include "binjad/http/DrogonRoutes.hpp"
 
 #include <rapidjsonwrapper.h>
 
@@ -141,7 +141,8 @@ bool IsSseOperation(const AdmittedMcpRequest& request)
         }
         return false;
     }
-    return tool == "bn_analysis_update_and_wait" || tool == "bn_binary_view_save";
+    return tool == "bn_analysis_update_and_wait" || tool == "bn_binary_view_save"
+        || tool == "bn_local_project_directory_import" || tool == "bn_local_project_relocate";
 }
 
 std::string ProgressNotification(const session::JobRecord& job)

@@ -1,4 +1,4 @@
-#include "../../security/platform_random.hpp"
+#include "../../security/PlatformRandom.hpp"
 
 #include <Windows.h>
 #include <bcrypt.h>

@@ -1,11 +1,11 @@
-#include "binjad/security/credential_store.hpp"
-#include "binjad/security/crypto.hpp"
-#include "binjad/security/credential_vault.hpp"
-#include "binjad/security/integrity_file.hpp"
-#include "binjad/security/password.hpp"
-#include "binjad/security/random.hpp"
-#include "binjad/security/token_authenticator.hpp"
-#include "binjad/platform/paths.hpp"
+#include "binjad/security/CredentialStore.hpp"
+#include "binjad/security/Crypto.hpp"
+#include "binjad/security/CredentialVault.hpp"
+#include "binjad/security/IntegrityFile.hpp"
+#include "binjad/security/Password.hpp"
+#include "binjad/security/Random.hpp"
+#include "binjad/security/TokenAuthenticator.hpp"
+#include "binjad/platform/Paths.hpp"
 
 #include <gtest/gtest.h>
 
@@ -109,7 +109,7 @@ TEST(SecurityTest, ComparesValuesWithoutLengthShortCircuit)
     EXPECT_FALSE(binjad::security::ConstantTimeEqual("same", "samo"));
 }
 
-TEST(SecurityTest, NamespacesCredentialsByNormalizedAbsoluteConfigPath)
+TEST(SecurityTest, ComputesNormalizedLegacyCredentialNamespace)
 {
     const auto first = binjad::security::CredentialNamespace("relative/../config.json");
     const auto second = binjad::security::CredentialNamespace("config.json");

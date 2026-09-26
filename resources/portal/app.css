@@ -37,7 +37,7 @@
   }
 
   .header-logo {
-    filter: invert(1);
+    /* filter: invert(1);*/
   }
 }
 
@@ -204,9 +204,13 @@ textarea {
   border: 0;
 }
 
-.gate-box > .primary {
+#login-form {
+  margin: 0;
+  padding: 0 20px 20px;
+}
+
+#login-form > .primary {
   margin-top: 12px;
-  margin-bottom: 20px;
 }
 
 .brand {
@@ -406,12 +410,6 @@ textarea {
   background: var(--surface-alt);
 }
 
-.breadcrumb {
-  margin-bottom: 5px;
-  color: var(--muted);
-  font-size: 12px;
-}
-
 .view {
   padding: 15px 20px 30px;
 }
@@ -449,11 +447,12 @@ textarea {
 .block > label,
 .block > .field-row,
 .block > .config-grid,
+.block > .project-form,
+.block > .form-actions,
 .block > .advanced,
 .block > .issued-token,
 .block > .stack,
-.block > #accounts-list,
-.block > #tokens-list,
+.block > #token-status,
 .block > #projects-list,
 .block > #runtime-list,
 .block > .context-controls,
@@ -507,6 +506,29 @@ textarea {
   grid-template-columns: 1fr 1fr;
 }
 
+.project-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: 16px;
+}
+
+.project-form label:last-child {
+  grid-column: 1 / -1;
+}
+
+.project-form label {
+  grid-template-columns: 1fr;
+  gap: 4px;
+}
+
+.form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  padding: 10px 0 12px;
+  border-top: 1px solid var(--border);
+}
+
 .block-head .actions {
   display: flex;
   flex-wrap: wrap;
@@ -531,9 +553,18 @@ td.actions button + button {
   margin: 8px 12px 12px;
 }
 
-#accounts-list table,
-#tokens-list table {
-  min-width: 540px;
+#access .block > label:not(.check) {
+  grid-template-columns: 1fr;
+  gap: 4px;
+}
+
+#access .block > .meta {
+  margin-right: 12px;
+  margin-left: 12px;
+}
+
+#token-status > .danger {
+  margin-bottom: 12px;
 }
 
 .row {
@@ -596,6 +627,12 @@ tbody tr:nth-child(even) {
 .tool-pack-list {
   margin: 0 12px;
   border-top: 1px solid var(--border);
+}
+
+.section-note {
+  margin: 0 2px 5px;
+  color: var(--muted);
+  font-size: 11px;
 }
 
 .tool-pack {
@@ -684,6 +721,10 @@ tbody tr:nth-child(even) {
   padding: 12px 0;
 }
 
+.tool-controls {
+  grid-template-columns: minmax(180px, 0.7fr) minmax(240px, 1fr);
+}
+
 .context-controls label,
 .tool-controls label {
   grid-template-columns: 1fr;
@@ -758,6 +799,18 @@ tbody tr:nth-child(even) {
   line-height: 1.45;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+.document-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.document-size {
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
 }
 
 .tool-docs-list {
@@ -901,6 +954,61 @@ tbody tr:nth-child(even) {
   margin-top: 8px;
 }
 
+.tooltip {
+  position: relative;
+  display: inline-grid;
+  width: 16px;
+  height: 16px;
+  margin-left: 3px;
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  cursor: help;
+  place-items: center;
+}
+
+.tooltip::after {
+  position: absolute;
+  bottom: calc(100% + 7px);
+  left: 50%;
+  z-index: 30;
+  width: min(280px, 70vw);
+  padding: 7px 9px;
+  border: 1px solid var(--border-strong);
+  border-radius: 3px;
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 0 4px 14px rgb(0 0 0 / 18%);
+  content: attr(data-tooltip);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.35;
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-50%, 3px);
+  transition: opacity 100ms ease, transform 100ms ease;
+}
+
+.tooltip:hover::after,
+.tooltip:focus::after {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+@media (min-width: 851px) and (max-width: 1050px) {
+  .config-grid,
+  .project-form {
+    grid-template-columns: 1fr;
+  }
+
+  .project-form label:last-child {
+    grid-column: auto;
+  }
+}
+
 @media (max-width: 850px) {
   .page-head {
     position: static;
@@ -921,11 +1029,16 @@ tbody tr:nth-child(even) {
   .split,
   .field-row,
   .config-grid,
+  .project-form,
   .context-controls,
   .tool-controls,
   .tool-docs-list,
   .failure-contracts {
     grid-template-columns: 1fr;
+  }
+
+  .project-form label:last-child {
+    grid-column: auto;
   }
 
   label {
@@ -937,5 +1050,16 @@ tbody tr:nth-child(even) {
   .content-head {
     padding-right: 12px;
     padding-left: 12px;
+  }
+
+  .block-head {
+    align-items: flex-start;
+    gap: 8px;
+  }
+
+  .document-actions {
+    align-items: flex-end;
+    flex-direction: column;
+    gap: 5px;
   }
 }

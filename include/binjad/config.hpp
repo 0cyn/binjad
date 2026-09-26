@@ -10,13 +10,6 @@
 
 namespace binjad
 {
-enum class Mode
-{
-    Auto,
-    Local,
-    Collaboration,
-};
-
 enum class FairnessUnit
 {
     AnalysisSession,
@@ -40,13 +33,6 @@ struct HttpConfig
     std::string healthPath = "/healthz";
     std::vector<std::string> allowedOrigins;
     std::uint64_t mcpMaxBodyBytes = 8ULL * 1024 * 1024;
-    bool veryDangerousUnauthenticatedPortal = false;
-};
-
-struct AuthenticationConfig
-{
-    std::chrono::seconds defaultTokenTtl{7 * 24 * 60 * 60};
-    bool allowInfiniteTokens = false;
 };
 
 struct CpuConfig
@@ -80,17 +66,7 @@ struct ProjectConfig
     std::vector<std::filesystem::path> roots;
     std::optional<std::filesystem::path> defaultRoot;
     bool allowArbitraryPaths = true;
-};
-
-struct CollaborationRemoteConfig
-{
-    std::string name;
-    std::string url;
-};
-
-struct CollaborationConfig
-{
-    std::optional<CollaborationRemoteConfig> remote;
+    bool allowProjectRegistration = false;
 };
 
 struct StorageConfig
@@ -110,6 +86,8 @@ struct ToolConfig
     bool annotations = true;
     bool binaryEditing = true;
     bool history = true;
+    bool headerParsing = true;
+    bool urlGeneration = true;
     bool diffing = true;
     bool kernelCache = true;
     bool sharedCache = true;
@@ -118,20 +96,15 @@ struct ToolConfig
 
 struct Config
 {
-    Mode mode = Mode::Auto;
     ListenerConfig listener;
     HttpConfig http;
-    AuthenticationConfig authentication;
     CpuConfig cpu;
     SessionConfig sessions;
     JobConfig jobs;
     UploadConfig uploads;
     ProjectConfig projects;
-    CollaborationConfig collaboration;
     StorageConfig storage;
     ToolConfig tools;
-
-    Mode EffectiveMode() const;
 };
 
 struct ConfigError
@@ -150,4 +123,4 @@ ConfigResult ParseConfig(std::string_view json, const std::filesystem::path& con
 ConfigResult LoadConfig(const std::filesystem::path& configPath);
 ConfigResult LoadOrCreateConfig(const std::filesystem::path& configPath);
 std::string_view DefaultConfigJson();
-}
+} // namespace binjad

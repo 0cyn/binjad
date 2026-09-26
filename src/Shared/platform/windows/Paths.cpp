@@ -1,4 +1,4 @@
-#include "binjad/platform/paths.hpp"
+#include "binjad/platform/Paths.hpp"
 
 #include <Windows.h>
 

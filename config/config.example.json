@@ -1,6 +1,5 @@
 {
   "_comment": "Unknown fields such as _comment are ignored. Known fields are validated strictly.",
-  "mode": "auto",
   "listener": {
     "addresses": [
       "127.0.0.1",
@@ -16,12 +15,7 @@
     "portal_path": "/portal",
     "health_path": "/healthz",
     "allowed_origins": [],
-    "mcp_max_body_bytes": 8388608,
-    "very_dangerous_unauthenticated_portal": false
-  },
-  "authentication": {
-    "default_token_ttl_seconds": 604800,
-    "allow_infinite_tokens": false
+    "mcp_max_body_bytes": 8388608
   },
   "cpu": {
     "percentage": 75,
@@ -42,17 +36,11 @@
     "require_bearer_authentication": false
   },
   "projects": {
-    "_comment": "Relative roots are resolved against this file's directory.",
+    "_comment": "Relative roots are resolved against this file's directory. Outside-root project creation and registration are disabled unless allow_project_registration is true.",
     "roots": [],
     "default_root": "",
-    "allow_arbitrary_paths": true
-  },
-  "collaboration": {
-    "_comment": "A non-empty remote makes auto mode select collaboration.",
-    "remote": {
-      "name": "",
-      "url": ""
-    }
+    "allow_arbitrary_paths": true,
+    "allow_project_registration": false
   },
   "storage": {
     "_comment": "Empty paths default beside this file.",
@@ -61,7 +49,7 @@
     "spool_path": ""
   },
   "tools": {
-    "_comment": "Core workflow tools are always enabled. These extended tool packs can be disabled to reduce MCP context. Changes require restart.",
+    "_comment": "Core workflow tools are always enabled. Extended tool-pack changes are persisted and applied immediately.",
     "project_management": true,
     "function_analysis": true,
     "binary_data": true,
@@ -70,6 +58,8 @@
     "annotations": true,
     "binary_editing": true,
     "history": true,
+    "header_parsing": true,
+    "url_generation": true,
     "diffing": true,
     "kernel_cache": true,
     "shared_cache": true,

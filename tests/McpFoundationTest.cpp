@@ -1,6 +1,6 @@
-#include "binjad/mcp/foundation.hpp"
-#include "binjad/session/open_item_registry.hpp"
-#include "binjad/session/job_registry.hpp"
+#include "binjad/mcp/Foundation.hpp"
+#include "binjad/session/OpenItemRegistry.hpp"
+#include "binjad/session/JobRegistry.hpp"
 
 #include <rapidjsonwrapper.h>
 
@@ -76,8 +76,10 @@ TEST(McpFoundationTest, ListsRevisionAppropriateSessionTools)
     ASSERT_TRUE(modern.handled);
     EXPECT_NE(modern.body.find("bn_analysis_session_create"), std::string::npos);
     EXPECT_NE(modern.body.find("bn_compute_status"), std::string::npos);
-    EXPECT_NE(modern.body.find("bn_local_project_register"), std::string::npos);
+    EXPECT_EQ(modern.body.find("bn_local_project_register"), std::string::npos);
     EXPECT_NE(modern.body.find("bn_local_project_file_import_batch"), std::string::npos);
+    EXPECT_NE(modern.body.find("bn_local_project_directory_import"), std::string::npos);
+    EXPECT_NE(modern.body.find("bn_local_project_relocate"), std::string::npos);
     const auto user = foundation.Handle(Request(
         binjad::mcp::ProtocolVersion::V2026_07_28, "tools/list"),
         UserPrincipal(), {}, 1);
@@ -155,6 +157,31 @@ TEST(McpFoundationTest, DisabledExtendedPackKeepsCoreWorkflowAndRejectsDirectCal
     EXPECT_EQ(called.error->message, "unknown tool");
 }
 
+TEST(McpFoundationTest, ToolPacksCanBeReconfiguredWhileRunning)
+{
+    binjad::Config config;
+    binjad::reference::FriendlyReferencePool references;
+    binjad::session::AnalysisSessionRegistry sessions(references, 30min);
+    binjad::mcp::Foundation foundation(config, sessions, "0.1.0");
+
+    const auto enabled = foundation.Handle(Request(
+        binjad::mcp::ProtocolVersion::V2026_07_28, "tools/list"),
+        Principal(), {}, 1);
+    EXPECT_NE(enabled.body.find("bn_function_il"), std::string::npos);
+
+    auto tools = config.tools;
+    tools.functionAnalysis = false;
+    foundation.SetToolConfig(tools);
+    const auto disabled = foundation.Handle(Request(
+        binjad::mcp::ProtocolVersion::V2026_07_28, "tools/list"),
+        Principal(), {}, 1);
+    EXPECT_EQ(disabled.body.find("bn_function_il"), std::string::npos);
+    EXPECT_EQ(foundation.ContextDocumentation(binjad::mcp::ProtocolVersion::V2026_07_28,
+                  binjad::security::TokenRole::Admin, "binjad")
+                  .find("bn_function_il"),
+        std::string::npos);
+}
+
 TEST(McpFoundationTest, CoreWorkflowIsCompleteAndContainsNoExtendedTools)
 {
     binjad::Config config;
@@ -166,6 +193,8 @@ TEST(McpFoundationTest, CoreWorkflowIsCompleteAndContainsNoExtendedTools)
     config.tools.annotations = false;
     config.tools.binaryEditing = false;
     config.tools.history = false;
+    config.tools.headerParsing = false;
+    config.tools.urlGeneration = false;
     config.tools.diffing = false;
     config.tools.kernelCache = false;
     config.tools.sharedCache = false;
@@ -199,6 +228,34 @@ TEST(McpFoundationTest, CoreWorkflowIsCompleteAndContainsNoExtendedTools)
     for (const auto& tool : advertised.GetArray())
         EXPECT_TRUE(expected.contains(std::string_view(tool["name"].GetString(),
             tool["name"].GetStringLength()))) << tool["name"].GetString();
+}
+
+TEST(McpFoundationTest, GatesHeaderParsingAndOutsideRootProjectRegistration)
+{
+    binjad::Config config;
+    binjad::reference::FriendlyReferencePool references;
+    binjad::session::AnalysisSessionRegistry sessions(references, 30min);
+    binjad::mcp::Foundation defaults(config, sessions, "0.1.0");
+    const auto principal = Principal();
+    const auto listed = defaults.Handle(Request(
+        binjad::mcp::ProtocolVersion::V2026_07_28, "tools/list"), principal, {}, 1);
+    for (const auto* name : {"bn_binary_header_info", "bn_linked_library_list",
+             "bn_macho_load_command_list", "bn_elf_program_header_list",
+             "bn_elf_dynamic_entry_list", "bn_pe_data_directory_list"})
+        EXPECT_NE(listed.body.find(name), std::string::npos) << name;
+    EXPECT_EQ(listed.body.find("bn_local_project_register"), std::string::npos);
+    const auto disabledRegistration = defaults.Handle(Request(
+        binjad::mcp::ProtocolVersion::V2026_07_28, "tools/call", "bn_local_project_register", {},
+        R"({"arguments":{"path":"/tmp/Outside.bnpr"}})"), principal, {}, 1);
+    EXPECT_NE(disabledRegistration.body.find("outside-root project registration is disabled"), std::string::npos);
+
+    config.tools.headerParsing = false;
+    config.projects.allowProjectRegistration = true;
+    binjad::mcp::Foundation configured(config, sessions, "0.1.0");
+    const auto configuredList = configured.Handle(Request(
+        binjad::mcp::ProtocolVersion::V2026_07_28, "tools/list"), principal, {}, 1);
+    EXPECT_EQ(configuredList.body.find("bn_binary_header_info"), std::string::npos);
+    EXPECT_NE(configuredList.body.find("bn_local_project_register"), std::string::npos);
 }
 
 TEST(McpFoundationTest, GatesDiffingPackAndAdvertisesStrictPairSchemas)
@@ -236,6 +293,116 @@ TEST(McpFoundationTest, GatesDiffingPackAndAdvertisesStrictPairSchemas)
     const auto* runProject = FindTool(document, "bn_diff_run_project");
     ASSERT_NE(runProject, nullptr);
     EXPECT_EQ((*runProject)["inputSchema"]["required"].Size(), 3U);
+}
+
+TEST(McpFoundationTest, GeneratesDocumentedBinaryNinjaUrls)
+{
+    binjad::Config config;
+    binjad::reference::FriendlyReferencePool references;
+    binjad::session::AnalysisSessionRegistry sessions(references, 30min);
+    binjad::session::OpenItemRegistry openItems(references);
+    binjad::mcp::Foundation foundation(config, sessions, "0.1.0", &openItems);
+    const auto principal = Principal();
+    const auto current = sessions.Create(principal.id, 1,
+        binjad::session::AnalysisSessionRegistry::Clock::time_point{});
+    ASSERT_TRUE(current.session);
+    const auto pathItem = openItems.Create(principal.id, current.session->reference,
+        binjad::session::OpenItemSourceKind::ArbitraryPath, "/tmp/My file#one.bndb", {}, {{"Raw", true}});
+    ASSERT_TRUE(pathItem.openItem);
+    const auto projectItem = openItems.Create(principal.id, current.session->reference,
+        binjad::session::OpenItemSourceKind::LocalProject, "folder/input.bndb", "ProjectRef", {{"Raw", true}});
+    ASSERT_TRUE(projectItem.openItem);
+
+    const auto listed = foundation.Handle(Request(
+        binjad::mcp::ProtocolVersion::V2026_07_28, "tools/list"), principal, {}, 1);
+    rapidjson::Document discovery;
+    discovery.Parse(listed.body.data(), listed.body.size());
+    ASSERT_FALSE(discovery.HasParseError());
+    for (const auto* name : {"bn_url_open_item", "bn_url_project_file", "bn_url_remote_file", "bn_url_navigate"})
+        ASSERT_NE(FindTool(discovery, name), nullptr) << name;
+    const auto* projectTool = FindTool(discovery, "bn_url_project_file");
+    ASSERT_NE(projectTool, nullptr);
+    ASSERT_TRUE((*projectTool)["inputSchema"]["required"].IsArray());
+    EXPECT_EQ((*projectTool)["inputSchema"]["required"].Size(), 2U);
+    const auto& savedProperty = (*projectTool)["inputSchema"]["properties"]["updated_bndb_has_been_saved"];
+    ASSERT_TRUE(savedProperty["enum"].IsArray());
+    ASSERT_EQ(savedProperty["enum"].Size(), 1U);
+    EXPECT_TRUE(savedProperty["enum"][0].GetBool());
+
+    const auto local = foundation.Handle(Request(
+        binjad::mcp::ProtocolVersion::V2026_07_28, "tools/call", "bn_url_open_item", {},
+        std::string(R"({"arguments":{"openItem":")") + pathItem.openItem->reference
+            + R"(","expr":"main + 0x10"}})"),
+        principal, current.session, {}, 1);
+    EXPECT_FALSE(local.error.has_value());
+    EXPECT_NE(local.body.find("binaryninja:///tmp/My%20file%23one.bndb?expr=main%20%2B%200x10"),
+        std::string::npos);
+    EXPECT_NE(local.body.find(R"("confirmationRequired":true)"), std::string::npos);
+
+    const auto remote = foundation.Handle(Request(
+        binjad::mcp::ProtocolVersion::V2026_07_28, "tools/call", "bn_url_remote_file", {},
+        R"({"arguments":{"url":"https://example.com/a%20b?token=x#part","expr":".text+6b"}})"),
+        principal, current.session, {}, 1);
+    EXPECT_FALSE(remote.error.has_value());
+    EXPECT_NE(remote.body.find(
+        "binaryninja:https://example.com/a%20b?token=x&expr=.text%2B6b#part"), std::string::npos);
+
+    const auto navigate = foundation.Handle(Request(
+        binjad::mcp::ProtocolVersion::V2026_07_28, "tools/call", "bn_url_navigate", {},
+        R"({"arguments":{"expr":"[.data + 400]"}})"),
+        principal, current.session, {}, 1);
+    EXPECT_FALSE(navigate.error.has_value());
+    EXPECT_NE(navigate.body.find("binaryninja://?expr=%5B.data%20%2B%20400%5D"), std::string::npos);
+    EXPECT_NE(navigate.body.find(R"("confirmationRequired":false)"), std::string::npos);
+
+    const auto project = foundation.Handle(Request(
+        binjad::mcp::ProtocolVersion::V2026_07_28, "tools/call", "bn_url_open_item", {},
+        std::string(R"({"arguments":{"openItem":")") + projectItem.openItem->reference + R"("}})"),
+        principal, current.session, {}, 1);
+    EXPECT_NE(project.body.find("use bn_url_project_file instead"), std::string::npos);
+    EXPECT_NE(project.body.find(R"("isError":true)"), std::string::npos);
+
+    const auto falseAcknowledgement = foundation.Handle(Request(
+        binjad::mcp::ProtocolVersion::V2026_07_28, "tools/call", "bn_url_project_file", {},
+        std::string(R"({"arguments":{"openItem":")") + projectItem.openItem->reference
+            + R"(","updated_bndb_has_been_saved":false}})"),
+        principal, current.session, {}, 1);
+    ASSERT_TRUE(falseAcknowledgement.error.has_value());
+    EXPECT_EQ(falseAcknowledgement.error->code, -32602);
+
+    auto otherPrincipal = UserPrincipal();
+    otherPrincipal.id = std::string(64, 'c');
+    const auto unauthorized = foundation.Handle(Request(
+        binjad::mcp::ProtocolVersion::V2026_07_28, "tools/call", "bn_url_open_item", {},
+        std::string(R"({"arguments":{"openItem":")") + pathItem.openItem->reference + R"("}})"),
+        otherPrincipal, current.session, {}, 1);
+    EXPECT_NE(unauthorized.body.find("open item not found"), std::string::npos);
+    EXPECT_NE(unauthorized.body.find(R"("isError":true)"), std::string::npos);
+
+    const auto invalidRemote = foundation.Handle(Request(
+        binjad::mcp::ProtocolVersion::V2026_07_28, "tools/call", "bn_url_remote_file", {},
+        R"({"arguments":{"url":"ssh://example.com/input"}})"),
+        principal, current.session, {}, 1);
+    EXPECT_NE(invalidRemote.body.find("url scheme must be http, https, or file"), std::string::npos);
+    EXPECT_NE(invalidRemote.body.find(R"("isError":true)"), std::string::npos);
+}
+
+TEST(McpFoundationTest, GatesUrlGenerationPack)
+{
+    binjad::Config config;
+    config.tools.urlGeneration = false;
+    binjad::reference::FriendlyReferencePool references;
+    binjad::session::AnalysisSessionRegistry sessions(references, 30min);
+    binjad::mcp::Foundation foundation(config, sessions, "0.1.0");
+    const auto principal = Principal();
+    const auto listed = foundation.Handle(Request(
+        binjad::mcp::ProtocolVersion::V2026_07_28, "tools/list"), principal, {}, 1);
+    EXPECT_EQ(listed.body.find("bn_url_navigate"), std::string::npos);
+    const auto called = foundation.Handle(Request(
+        binjad::mcp::ProtocolVersion::V2026_07_28, "tools/call", "bn_url_navigate", {},
+        R"({"arguments":{"expr":"main"}})"), principal, {}, 1);
+    ASSERT_TRUE(called.error.has_value());
+    EXPECT_EQ(called.error->message, "unknown tool");
 }
 
 TEST(McpFoundationTest, ActiveJobsAdvertiseBoundedPollingAndResultConsumption)
@@ -299,7 +466,11 @@ TEST(McpFoundationTest, AdvertisesStrictAnalysisToolSchemas)
             "bn_type_enum_create", "bn_type_enum_modify", "bn_type_delete", "bn_type_rename",
             "bn_type_xrefs_from", "bn_type_xrefs_to", "bn_data_variable_define",
             "bn_data_variable_undefine", "bn_section_create", "bn_section_delete",
-            "bn_section_modify"})
+            "bn_section_modify", "bn_binary_header_info", "bn_linked_library_list",
+            "bn_macho_load_command_list", "bn_elf_program_header_list",
+            "bn_elf_dynamic_entry_list", "bn_pe_data_directory_list",
+            "bn_local_project_root_list", "bn_local_project_directory_import",
+            "bn_local_project_relocate"})
         EXPECT_NE(FindTool(document, name), nullptr) << name;
     for (const auto* name : {"bn_function_basic_blocks", "bn_function_complexity",
             "bn_function_prototype_get", "bn_function_search"})
@@ -495,7 +666,9 @@ TEST(McpFoundationTest, RejectsMissingAnalysisToolTargets)
             "bn_type_enum_create", "bn_type_enum_modify", "bn_type_delete", "bn_type_rename",
             "bn_type_xrefs_from", "bn_type_xrefs_to", "bn_data_variable_define",
             "bn_data_variable_undefine", "bn_section_create", "bn_section_delete",
-            "bn_section_modify"})
+            "bn_section_modify", "bn_binary_header_info", "bn_linked_library_list",
+            "bn_macho_load_command_list", "bn_elf_program_header_list",
+            "bn_elf_dynamic_entry_list", "bn_pe_data_directory_list"})
     {
         const auto result = foundation.Handle(Request(
             binjad::mcp::ProtocolVersion::V2026_07_28, "tools/call", name, {},

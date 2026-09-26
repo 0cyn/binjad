@@ -1,17 +1,19 @@
 const api = `${location.pathname.replace(/\/$/, "")}/api`;
 
 let authorization = "";
-let loginMode = "basic";
 let currentView = "overview";
-let runtimeLine = "local daemon";
 let contextDocument = null;
 let toolDocumentation = null;
+let toolConfigurationKey = "";
+let serverVersion = "";
+let pollTimer = null;
+let polling = false;
 
 const titles = {
   overview: "Service overview",
-  access: "Access control",
+  access: "Account/Token",
   projects: "Project catalog",
-  configuration: "Daemon configuration",
+  configuration: "Configuration",
   "enabled-tools": "Enabled tools",
   context: "MCP context view",
   tools: "MCP tool calls",
@@ -26,61 +28,85 @@ const toolPacks = [
     name: "Project Management & Documents",
     description: "Project metadata, folders and files, server-side imports, and direct text or JSON document reading.",
     input: "cfg-tool-project-management",
+    key: "project_management",
   },
   {
     name: "Function Analysis",
     description: "IL, callers and callees, code references, and stack layout.",
     input: "cfg-tool-function-analysis",
+    key: "function_analysis",
   },
   {
     name: "Binary Data",
     description: "Imports, exports, entry points, sections, segments, data variables, relocations, and data references.",
     input: "cfg-tool-binary-data",
+    key: "binary_data",
   },
   {
     name: "Search",
     description: "Comments, bytes, instructions, IL, constants, and project-wide analysis search.",
     input: "cfg-tool-search",
+    key: "search",
   },
   {
     name: "Types & Signatures",
     description: "Named-type inspection and editing, prototypes, calling conventions, and function-variable names and types.",
     input: "cfg-tool-types",
+    key: "types",
   },
   {
     name: "Annotations & Symbols",
     description: "Comments, user symbols, bookmarks, tags, and namespaced custom metadata.",
     input: "cfg-tool-annotations",
+    key: "annotations",
   },
   {
     name: "Binary Editing",
     description: "Functions, entry points, typed data, sections, segments, rebasing, memory-map preview, and strings.",
     input: "cfg-tool-binary-editing",
+    key: "binary_editing",
   },
   {
     name: "Transactions & History",
     description: "Explicit mutation transactions, rollback, undo, and redo.",
     input: "cfg-tool-history",
+    key: "history",
+  },
+  {
+    name: "Header Parsing",
+    description: "Mach-O, ELF, and PE header summaries, linked libraries, load commands, program headers, dynamic entries, and data directories.",
+    input: "cfg-tool-header-parsing",
+    key: "header_parsing",
+  },
+  {
+    name: "URL Generation",
+    description: "Binary Ninja links for owned paths, saved project BNDBs, remote files, and context-relative navigation expressions.",
+    input: "cfg-tool-url-generation",
+    key: "url_generation",
   },
   {
     name: "Diffing",
     description: "Google BinDiff comparisons, matched and unmatched function exploration, and explicit metadata porting into the primary view.",
     input: "cfg-tool-diffing",
+    key: "diffing",
   },
   {
     name: "KernelCache",
     description: "Images, dependencies, symbols, and selective image loading.",
     input: "cfg-tool-kernel-cache",
+    key: "kernel_cache",
   },
   {
     name: "SharedCache",
     description: "Images, regions, entries, symbols, and selective loading.",
     input: "cfg-tool-shared-cache",
+    key: "shared_cache",
   },
   {
     name: "Debugger",
     description: "Admin-only target control, process state, memory, registers, and breakpoints.",
     input: "cfg-tool-debugger",
+    key: "debugger",
   },
 ];
 
@@ -95,7 +121,7 @@ function renderEnabledToolPacks() {
         <span class="tool-pack-control">
           <span id="tool-pack-count-${index}" class="tool-pack-count">loading tools</span>
           ${pack.input
-            ? `<input id="${pack.input}" class="tool-pack-checkbox" type="checkbox" aria-label="Enable ${escapeHtml(pack.name)}">`
+            ? `<input id="${pack.input}" class="tool-pack-checkbox" type="checkbox" aria-label="Enable ${escapeHtml(pack.name)}" title="Turn ${escapeHtml(pack.name)} MCP tools on or off immediately.">`
             : '<span class="badge">always on</span>'}
         </span>
       </summary>
@@ -181,53 +207,35 @@ async function call(path, options = {}) {
   return value;
 }
 
-function selectLoginTab(mode) {
-  loginMode = mode;
-  $("#basic-tab").classList.toggle("on", mode === "basic");
-  $("#bearer-tab").classList.toggle("on", mode === "bearer");
-  $("#basic-login").classList.toggle("hidden", mode !== "basic");
-  $("#bearer-login").classList.toggle("hidden", mode !== "bearer");
-}
-
-async function loadBootstrapState() {
+async function loadSetupState() {
   try {
-    const value = await call("/bootstrap");
-    $("#bootstrap").classList.toggle("hidden", !value.result);
-    if (!value.result) {
-      try {
-        await enterPanel();
-      } catch {
-        // Authentication is still required in the normal configuration.
-      }
-    }
+    const value = await call("/setup");
+    $("#setup").classList.toggle("hidden", !value.result);
   } catch (error) {
     toast(error.message, true);
   }
 }
 
-async function bootstrapAdministrator() {
+async function setupAccount() {
   try {
-    await call("/bootstrap", {
+    await call("/setup", {
       method: "POST",
       body: JSON.stringify({
-        credential: $("#boot-credential").value,
-        username: $("#boot-user").value,
-        password: $("#boot-password").value,
+        username: $("#setup-user").value,
+        password: $("#setup-password").value,
       }),
     });
-    $("#bootstrap").classList.add("hidden");
-    toast("Administrator created");
+    $("#login-user").value = $("#setup-user").value;
+    $("#setup-password").value = "";
+    $("#setup").classList.add("hidden");
+    toast("Account created; log in to create the MCP token");
   } catch (error) {
     toast(error.message, true);
   }
 }
 
 async function login() {
-  if (loginMode === "basic") {
-    authorization = `Basic ${base64Utf8(`${$("#login-user").value}:${$("#login-password").value}`)}`;
-  } else {
-    authorization = `Bearer ${$("#login-token").value.trim()}`;
-  }
+  authorization = `Basic ${base64Utf8(`${$("#login-user").value}:${$("#login-password").value}`)}`;
 
   try {
     await enterPanel();
@@ -241,20 +249,20 @@ async function enterPanel() {
   await refreshStatus();
   $("#gate").classList.add("hidden");
   $("#app").classList.remove("hidden");
-  await Promise.all([
-    loadAccounts(),
-    loadTokens(),
-    loadProjects(),
-    loadConfiguration(),
-  ]);
+  await loadConfiguration();
+  startPolling();
 }
 
 function logout() {
+  stopPolling();
   authorization = "";
+  contextDocument = null;
+  toolDocumentation = null;
+  toolConfigurationKey = "";
+  serverVersion = "";
   $("#app").classList.add("hidden");
   $("#gate").classList.remove("hidden");
   $("#login-password").value = "";
-  $("#login-token").value = "";
 }
 
 function showView(id, button) {
@@ -266,20 +274,12 @@ function showView(id, button) {
     element.classList.toggle("on", element === button);
   });
   $("#view-title").textContent = titles[id];
-  renderBreadcrumb();
-  if (id === "context" && !contextDocument) loadContext();
-  if (id === "tools" && !toolDocumentation) loadToolDocumentation();
+  if (id === "context") loadContext();
+  if (id === "tools") loadToolDocumentation();
   if (id === "enabled-tools") {
-    if (toolDocumentation) renderEnabledToolLists();
-    else loadToolDocumentation();
+    loadToolConfiguration(true);
+    loadToolDocumentation();
   }
-}
-
-function renderBreadcrumb() {
-  const section = ["enabled-tools", "context", "tools"].includes(currentView)
-    ? "MCP"
-    : currentView === "projects" ? "Services" : "System";
-  $("#mode-line").textContent = `${section} / ${runtimeLine}`;
 }
 
 function setRestartRequired(required) {
@@ -300,12 +300,14 @@ async function refreshStatus() {
   $("#m-queued").textContent = runtime.queued_analyses;
   $("#m-workers").textContent = runtime.allocated_workers;
   $("#m-budget").textContent = runtime.worker_budget;
-  runtimeLine = `${status.mode} daemon / v${status.version}`;
-  renderBreadcrumb();
-  $("#actor").textContent = `${status.actor.username} · ${status.actor.role}`;
-  $("#project-backend").textContent = status.mode === "local"
-    ? "Local commercial"
-    : "Collaboration";
+  $("#actor").textContent = status.actor.username;
+  $("#account-username").textContent = status.actor.username;
+  renderToken(status.token);
+  renderProjects(status.projects);
+  const toolsChanged = fillToolConfiguration(status.tools);
+  const versionChanged = serverVersion !== "" && serverVersion !== status.version;
+  serverVersion = status.version;
+  $("#project-backend").textContent = "Local commercial";
   setRestartRequired(status.restart_required);
 
   $("#runtime-list").innerHTML = `
@@ -314,130 +316,75 @@ async function refreshStatus() {
     <div class="row"><span>Detached jobs</span><b>${runtime.jobs}</b></div>
     <div class="row"><span>Projects</span><b>${runtime.projects}</b></div>
   `;
+  return toolsChanged || versionChanged;
+}
+
+async function refreshVisibleMcpDocumentation() {
+  contextDocument = null;
+  toolDocumentation = null;
+  if (currentView === "context") await loadContext(true);
+  if (["tools", "enabled-tools"].includes(currentView)) {
+    await loadToolDocumentation(true);
+  }
 }
 
 async function refreshAll() {
   try {
-    await Promise.all([
-      refreshStatus(),
-      loadAccounts(),
-      loadTokens(),
-      loadProjects(),
-    ]);
+    if (await refreshStatus()) await refreshVisibleMcpDocumentation();
     toast("Dashboard refreshed");
   } catch (error) {
     toast(error.message, true);
   }
 }
 
-async function loadAccounts() {
+async function changePassword() {
   try {
-    const value = await call("/accounts");
-    const rows = value.result.map((account) => `
-      <tr>
-        <td>${escapeHtml(account.username)}</td>
-        <td>${escapeHtml(account.role)}</td>
-        <td><span class="meta">${escapeHtml(account.id.slice(0, 12))}</span></td>
-        <td class="actions">
-          <button class="quiet" data-action="edit-account" data-id="${account.id}" data-role="${account.role}">Edit</button>
-          <button class="danger" data-action="delete-account" data-id="${account.id}">Delete</button>
-        </td>
-      </tr>
-    `).join("");
-    $("#accounts-list").innerHTML = rows
-      ? `<div class="table-wrap"><table><thead><tr><th>Username</th><th>Role</th><th>ID</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table></div>`
-      : '<div class="row meta">No accounts</div>';
-  } catch (error) {
-    $("#accounts-list").innerHTML = `<div class="meta">${escapeHtml(error.message)}</div>`;
-  }
-}
-
-async function createAccount() {
-  try {
-    await call("/accounts", {
-      method: "POST",
+    await call("/account", {
+      method: "PATCH",
       body: JSON.stringify({
-        username: $("#account-name").value,
         password: $("#account-password").value,
-        role: $("#account-role").value,
       }),
     });
     $("#account-password").value = "";
-    await loadAccounts();
-    toast("Account created");
+    logout();
+    toast("Password changed; log in again");
   } catch (error) {
     toast(error.message, true);
   }
 }
 
-async function editAccount(id, currentRole) {
-  const role = prompt("Role: portal-admin or self-service", currentRole);
-  if (role === null) return;
-  const password = prompt("New password (leave blank to keep current)", "");
-  const body = {role};
-  if (password) body.password = password;
+function renderToken(token) {
+  $("#token-status").innerHTML = token
+    ? `<div class="row"><span>Created</span><b>${new Date(token.created_at * 1000).toLocaleString()}</b></div>
+       <div class="row"><span>Expires</span><b>${token.expires_at ? new Date(token.expires_at * 1000).toLocaleString() : "Never"}</b></div>
+       <button class="danger top-gap" data-action="revoke-token">Revoke token</button>`
+    : '<div class="row meta">No MCP token. Create one to connect a client.</div>';
+}
+
+async function loadToken(silent = false) {
   try {
-    await call(`/accounts/${encodeURIComponent(id)}`, {
-      method: "PATCH",
-      body: JSON.stringify(body),
-    });
-    await loadAccounts();
-    toast("Account updated");
+    const value = await call("/token");
+    renderToken(value.result);
   } catch (error) {
-    toast(error.message, true);
+    if (!silent) $("#token-status").innerHTML = `<div class="meta">${escapeHtml(error.message)}</div>`;
   }
 }
 
-async function deleteAccount(id) {
-  if (!confirm("Delete this account and revoke its tokens?")) return;
-  try {
-    await call(`/accounts/${encodeURIComponent(id)}`, {
-      method: "DELETE",
-      body: JSON.stringify({tokens: "revoke"}),
-    });
-    await loadAccounts();
-    toast("Account deleted");
-  } catch (error) {
-    toast(error.message, true);
-  }
-}
-
-async function loadTokens() {
-  try {
-    const value = await call("/tokens");
-    const rows = value.result.map((token) => `
-      <tr>
-        <td>${escapeHtml(token.label || "unlabeled")}</td>
-        <td>${escapeHtml(token.role)}</td>
-        <td>${token.expires_at ? new Date(token.expires_at * 1000).toLocaleString() : "Never"}</td>
-        <td><button class="danger" data-action="revoke-token" data-id="${token.id}">Revoke</button></td>
-      </tr>
-    `).join("");
-    $("#tokens-list").innerHTML = rows
-      ? `<div class="table-wrap"><table><thead><tr><th>Label</th><th>Role</th><th>Expires</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table></div>`
-      : '<div class="row meta">No tokens</div>';
-  } catch (error) {
-    $("#tokens-list").innerHTML = `<div class="meta">${escapeHtml(error.message)}</div>`;
-  }
-}
-
-async function issueToken() {
-  const body = {
-    label: $("#token-label").value || undefined,
-    role: $("#token-role").value,
-  };
-  if ($("#token-ttl").value !== "") {
-    body.ttl_seconds = Number($("#token-ttl").value);
+async function rotateToken() {
+  const ttl = $("#token-never").checked ? 0 : Number($("#token-ttl").value);
+  if (!Number.isSafeInteger(ttl) || ttl < 0 || (!$("#token-never").checked && ttl === 0)) {
+    toast("TTL must be a positive whole number, or select Never expires", true);
+    return;
   }
   try {
-    const value = await call("/tokens", {
+    const value = await call("/token", {
       method: "POST",
-      body: JSON.stringify(body),
+      body: JSON.stringify({ttl_seconds: ttl}),
     });
     $("#token-secret").textContent = value.result.token;
     $("#issued-token").classList.remove("hidden");
-    await loadTokens();
-    toast("Token issued; copy it now");
+    await loadToken();
+    toast("Token created; copy it now");
   } catch (error) {
     toast(error.message, true);
   }
@@ -452,21 +399,19 @@ async function copyToken() {
   }
 }
 
-async function revokeToken(id) {
+async function revokeToken() {
   if (!confirm("Revoke this token and tear down its sessions?")) return;
   try {
-    await call(`/tokens/${encodeURIComponent(id)}`, {method: "DELETE"});
-    await loadTokens();
+    await call("/token", {method: "DELETE"});
+    await loadToken();
     toast("Token revoked");
   } catch (error) {
     toast(error.message, true);
   }
 }
 
-async function loadProjects() {
-  try {
-    const value = await call("/projects");
-    const rows = value.result.map((project) => `
+function renderProjects(projects) {
+  const rows = projects.map((project) => `
       <tr>
         <td>${escapeHtml(project.name)}</td>
         <td>${escapeHtml(project.description || "")}</td>
@@ -474,11 +419,40 @@ async function loadProjects() {
         <td><button class="danger" data-action="delete-project" data-id="${project.project}">Delete</button></td>
       </tr>
     `).join("");
-    $("#projects-list").innerHTML = rows
-      ? `<div class="table-wrap"><table><thead><tr><th>Name</th><th>Description</th><th>Reference</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table></div>`
-      : '<div class="row meta">No local projects discovered</div>';
+  $("#projects-list").innerHTML = rows
+    ? `<div class="table-wrap"><table><thead><tr><th>Name</th><th>Description</th><th>Reference</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table></div>`
+    : '<div class="row meta">No local projects discovered</div>';
+}
+
+function toggleProjectCreate() {
+  const form = $("#project-create");
+  form.classList.toggle("hidden");
+  if (!form.classList.contains("hidden")) $("#project-name").focus();
+}
+
+async function createProject() {
+  const name = $("#project-name").value.trim();
+  if (!name) {
+    toast("Project name is required", true);
+    return;
+  }
+  try {
+    await call("/projects", {
+      method: "POST",
+      body: JSON.stringify({
+        name,
+        path: $("#project-path").value.trim(),
+        description: $("#project-description").value,
+      }),
+    });
+    $("#project-name").value = "";
+    $("#project-path").value = "";
+    $("#project-description").value = "";
+    $("#project-create").classList.add("hidden");
+    await refreshStatus();
+    toast("Project created");
   } catch (error) {
-    $("#projects-list").innerHTML = `<div class="meta">${escapeHtml(error.message)}</div>`;
+    toast(error.message, true);
   }
 }
 
@@ -489,7 +463,7 @@ async function deleteProject(id) {
       method: "DELETE",
       body: JSON.stringify({delete: true}),
     });
-    await Promise.all([loadProjects(), refreshStatus()]);
+    await refreshStatus();
     toast("Project deleted");
   } catch (error) {
     toast(error.message, true);
@@ -505,8 +479,60 @@ function numberValue(selector) {
   return Number($(selector).value);
 }
 
+function fillToolConfiguration(tools = {}) {
+  const nextKey = toolPacks
+    .filter((pack) => pack.input)
+    .map((pack) => `${pack.key}:${Boolean(tools[pack.key])}`)
+    .join("|");
+  const changed = toolConfigurationKey !== "" && toolConfigurationKey !== nextKey;
+  toolConfigurationKey = nextKey;
+  for (const pack of toolPacks) {
+    if (!pack.input) continue;
+    const input = $(`#${pack.input}`);
+    if (Object.hasOwn(tools, pack.key)) input.checked = Boolean(tools[pack.key]);
+  }
+  return changed;
+}
+
+async function loadToolConfiguration(silent = false) {
+  try {
+    const value = await call("/tools");
+    fillToolConfiguration(value.result.tools);
+    setRestartRequired(value.result.restart_required ?? $("#restart-badge").classList.contains("warn"));
+  } catch (error) {
+    if (!silent) toast(error.message, true);
+  }
+}
+
+async function updateToolPack(input) {
+  const pack = toolPacks.find((item) => item.input === input.id);
+  if (!pack) return;
+  const enabled = input.checked;
+  input.disabled = true;
+  try {
+    const value = await call("/tools", {
+      method: "PATCH",
+      body: JSON.stringify({[pack.key]: enabled}),
+    });
+    fillToolConfiguration(value.result.tools);
+    setRestartRequired(value.result.restart_required);
+    contextDocument = null;
+    toolDocumentation = null;
+    await Promise.all([
+      currentView === "context" ? loadContext(true) : Promise.resolve(),
+      ["tools", "enabled-tools"].includes(currentView)
+        ? loadToolDocumentation(true)
+        : Promise.resolve(),
+    ]);
+  } catch (error) {
+    input.checked = !enabled;
+    toast(error.message, true);
+  } finally {
+    input.disabled = false;
+  }
+}
+
 function fillConfiguration(configuration) {
-  put("#cfg-mode", configuration.mode ?? "auto");
   put("#cfg-port", configuration.listener?.port ?? 8712);
   put("#cfg-cpu", configuration.cpu?.percentage ?? 75);
   put("#cfg-fairness", configuration.cpu?.fairness ?? "job");
@@ -514,7 +540,6 @@ function fillConfiguration(configuration) {
   put("#cfg-session-ttl", configuration.sessions?.ttl_seconds ?? 1800);
   put("#cfg-detach", configuration.jobs?.detach_after_seconds ?? 30);
   put("#cfg-grace", configuration.jobs?.cancellation_grace_seconds ?? 5);
-  put("#cfg-token-ttl", configuration.authentication?.default_token_ttl_seconds ?? 604800);
   put("#cfg-upload-max", configuration.uploads?.max_bytes ?? 4294967296);
   put("#cfg-upload-memory", configuration.uploads?.memory_threshold_bytes ?? 268435456);
   put("#cfg-upload-ttl", configuration.uploads?.url_ttl_seconds ?? 3600);
@@ -524,25 +549,26 @@ function fillConfiguration(configuration) {
   put("#cfg-roots", (configuration.projects?.roots || []).join("\n"));
   put("#cfg-default-root", configuration.projects?.default_root ?? "");
   put("#cfg-spool", configuration.storage?.spool_path ?? "");
-  $("#cfg-infinite").checked = Boolean(configuration.authentication?.allow_infinite_tokens);
   $("#cfg-arbitrary").checked = configuration.projects?.allow_arbitrary_paths ?? true;
-  $("#cfg-unauthenticated").checked = Boolean(
-    configuration.http?.very_dangerous_unauthenticated_portal,
-  );
+  $("#cfg-project-registration").checked = configuration.projects?.allow_project_registration ?? false;
   const tools = configuration.tools || {};
   const legacyPlugins = configuration.plugins || {};
-  $("#cfg-tool-project-management").checked = tools.project_management ?? true;
-  $("#cfg-tool-function-analysis").checked = tools.function_analysis ?? true;
-  $("#cfg-tool-binary-data").checked = tools.binary_data ?? true;
-  $("#cfg-tool-search").checked = tools.search ?? true;
-  $("#cfg-tool-types").checked = tools.types ?? true;
-  $("#cfg-tool-annotations").checked = tools.annotations ?? true;
-  $("#cfg-tool-binary-editing").checked = tools.binary_editing ?? true;
-  $("#cfg-tool-history").checked = tools.history ?? true;
-  $("#cfg-tool-diffing").checked = tools.diffing ?? true;
-  $("#cfg-tool-kernel-cache").checked = tools.kernel_cache ?? legacyPlugins.kernel_cache ?? true;
-  $("#cfg-tool-shared-cache").checked = tools.shared_cache ?? legacyPlugins.shared_cache ?? true;
-  $("#cfg-tool-debugger").checked = tools.debugger ?? legacyPlugins.debugger ?? true;
+  fillToolConfiguration({
+    project_management: tools.project_management ?? true,
+    function_analysis: tools.function_analysis ?? true,
+    binary_data: tools.binary_data ?? true,
+    search: tools.search ?? true,
+    types: tools.types ?? true,
+    annotations: tools.annotations ?? true,
+    binary_editing: tools.binary_editing ?? true,
+    history: tools.history ?? true,
+    header_parsing: tools.header_parsing ?? true,
+    url_generation: tools.url_generation ?? true,
+    diffing: tools.diffing ?? true,
+    kernel_cache: tools.kernel_cache ?? legacyPlugins.kernel_cache ?? true,
+    shared_cache: tools.shared_cache ?? legacyPlugins.shared_cache ?? true,
+    debugger: tools.debugger ?? legacyPlugins.debugger ?? true,
+  });
   $("#config-json").value = JSON.stringify(configuration, null, 2);
 }
 
@@ -558,14 +584,12 @@ function mergeConfiguration() {
   configuration.cpu ||= {};
   configuration.sessions ||= {};
   configuration.jobs ||= {};
-  configuration.authentication ||= {};
   configuration.uploads ||= {};
   configuration.projects ||= {};
   configuration.storage ||= {};
   configuration.http ||= {};
   configuration.tools ||= {};
 
-  configuration.mode = $("#cfg-mode").value;
   configuration.listener.port = numberValue("#cfg-port");
   configuration.cpu.percentage = numberValue("#cfg-cpu");
   configuration.cpu.fairness = $("#cfg-fairness").value;
@@ -573,8 +597,6 @@ function mergeConfiguration() {
   configuration.sessions.ttl_seconds = numberValue("#cfg-session-ttl");
   configuration.jobs.detach_after_seconds = numberValue("#cfg-detach");
   configuration.jobs.cancellation_grace_seconds = numberValue("#cfg-grace");
-  configuration.authentication.default_token_ttl_seconds = numberValue("#cfg-token-ttl");
-  configuration.authentication.allow_infinite_tokens = $("#cfg-infinite").checked;
   configuration.uploads.max_bytes = numberValue("#cfg-upload-max");
   configuration.uploads.memory_threshold_bytes = numberValue("#cfg-upload-memory");
   configuration.uploads.url_ttl_seconds = numberValue("#cfg-upload-ttl");
@@ -585,8 +607,7 @@ function mergeConfiguration() {
     .filter(Boolean);
   configuration.projects.default_root = $("#cfg-default-root").value;
   configuration.projects.allow_arbitrary_paths = $("#cfg-arbitrary").checked;
-  configuration.http.very_dangerous_unauthenticated_portal =
-    $("#cfg-unauthenticated").checked;
+  configuration.projects.allow_project_registration = $("#cfg-project-registration").checked;
   configuration.storage.spool_path = $("#cfg-spool").value;
   configuration.tools.project_management = $("#cfg-tool-project-management").checked;
   configuration.tools.function_analysis = $("#cfg-tool-function-analysis").checked;
@@ -596,10 +617,16 @@ function mergeConfiguration() {
   configuration.tools.annotations = $("#cfg-tool-annotations").checked;
   configuration.tools.binary_editing = $("#cfg-tool-binary-editing").checked;
   configuration.tools.history = $("#cfg-tool-history").checked;
+  configuration.tools.header_parsing = $("#cfg-tool-header-parsing").checked;
+  configuration.tools.url_generation = $("#cfg-tool-url-generation").checked;
   configuration.tools.diffing = $("#cfg-tool-diffing").checked;
   configuration.tools.kernel_cache = $("#cfg-tool-kernel-cache").checked;
   configuration.tools.shared_cache = $("#cfg-tool-shared-cache").checked;
   configuration.tools.debugger = $("#cfg-tool-debugger").checked;
+  delete configuration.mode;
+  delete configuration.authentication;
+  delete configuration.collaboration;
+  delete configuration.http.very_dangerous_unauthenticated_portal;
   delete configuration.plugins;
   return configuration;
 }
@@ -623,6 +650,14 @@ async function saveConfiguration() {
     });
     $("#config-json").value = JSON.stringify(configuration, null, 2);
     setRestartRequired(value.result.restart_required);
+    contextDocument = null;
+    toolDocumentation = null;
+    await Promise.all([
+      currentView === "context" ? loadContext(true) : Promise.resolve(),
+      ["tools", "enabled-tools"].includes(currentView)
+        ? loadToolDocumentation(true)
+        : Promise.resolve(),
+    ]);
     toast(value.result.restart_required
       ? "Configuration saved; restart required"
       : "Configuration matches running service");
@@ -634,14 +669,7 @@ async function saveConfiguration() {
 function mcpSelection(prefix) {
   return {
     protocol: $(`#mcp-${prefix}-protocol`).value,
-    role: $(`#mcp-${prefix}-role`).value,
   };
-}
-
-function summaryChips(items) {
-  return items.map(([label, value]) => `
-    <div class="summary-chip"><span>${escapeHtml(label)}</span><b>${escapeHtml(value)}</b></div>
-  `).join("");
 }
 
 async function copyText(value, message) {
@@ -653,7 +681,7 @@ async function copyText(value, message) {
   }
 }
 
-async function loadContext() {
+async function loadContext(silent = false) {
   const selection = mcpSelection("context");
   try {
     const value = await call("/mcp/context", {
@@ -664,28 +692,18 @@ async function loadContext() {
       }),
     });
     contextDocument = value.result;
-    const options = contextDocument.runningOptions;
-    $("#context-summary").innerHTML = summaryChips([
-      ["Protocol", contextDocument.protocolVersion],
-      ["Role", contextDocument.role],
-      ["Mode", contextDocument.mode],
-      ["Tools", contextDocument.openCodeProjection.tools.length],
-      ["Enabled packs", Object.values(options.tools || {}).filter(Boolean).length],
-    ]);
-    $("#mcp-wire-context").innerHTML = contextDocument.mcpWire.map((entry, index) => `
-      <details class="document" ${index === 0 ? "open" : ""}>
-        <summary><code>${escapeHtml(entry.method)}</code><button class="quiet" data-action="copy-wire-context" data-index="${index}">Copy</button></summary>
-        <pre class="code-document">${escapeHtml(entry.payload)}</pre>
-      </details>
-    `).join("");
-    $("#opencode-boundary").textContent = contextDocument.openCodeProjection.boundary;
-    $("#opencode-context").textContent = JSON.stringify(
+    const projection = JSON.stringify(
       contextDocument.openCodeProjection,
       null,
       2,
     );
+    $("#opencode-context").textContent = projection;
+    const bytes = new TextEncoder().encode(projection).length;
+    const kilobytes = bytes < 1024 ? `${bytes} B` : `${(bytes / 1024).toFixed(1)} KB`;
+    const tokens = Math.ceil(projection.length / 4).toLocaleString();
+    $("#model-context-size").textContent = `${kilobytes} | ~${tokens} tokens`;
   } catch (error) {
-    toast(error.message, true);
+    if (!silent) toast(error.message, true);
   }
 }
 
@@ -703,24 +721,16 @@ function renderFailureContracts() {
 function renderToolDocumentation() {
   if (!toolDocumentation) return;
   const query = $("#tool-filter").value.trim().toLowerCase();
-  const tools = toolDocumentation.tools.filter((tool) =>
+  const tools = toolDocumentation.tools.filter((tool) => tool.available).filter((tool) =>
     !query || `${tool.name} ${tool.pack} ${tool.category} ${tool.description}`.toLowerCase().includes(query)
   );
-  $("#tool-docs-summary").innerHTML = summaryChips([
-    ["Protocol", toolDocumentation.protocolVersion],
-    ["Role", toolDocumentation.role],
-    ["Mode", toolDocumentation.mode],
-    ["Available", `${toolDocumentation.availableCount} / ${toolDocumentation.totalCount}`],
-    ["Filter results", tools.length],
-  ]);
   $("#tool-docs-list").innerHTML = tools.map((tool) => `
-    <article class="block tool-document ${tool.available ? "" : "tool-unavailable"}" data-tool="${escapeHtml(tool.name)}">
+    <article class="block tool-document" data-tool="${escapeHtml(tool.name)}">
       <div class="block-head tool-title">
-        <div><h2><code>${escapeHtml(tool.name)}</code></h2><div class="meta">${escapeHtml(tool.pack)} / ${escapeHtml(tool.category)} / ${tool.available ? "available" : "not advertised"}</div></div>
+        <h2><code>${escapeHtml(tool.name)}</code></h2>
         <button class="quiet" data-action="copy-tool-schema" data-tool="${escapeHtml(tool.name)}">Copy schema</button>
       </div>
       <div class="tool-description">${escapeHtml(tool.description)}</div>
-      ${tool.available ? "" : `<div class="tool-availability">${escapeHtml(tool.availability)}</div>`}
       <details class="tool-detail">
         <summary>Input schema</summary>
         <pre class="code-document">${escapeHtml(JSON.stringify(tool.inputSchema, null, 2))}</pre>
@@ -737,7 +747,7 @@ function renderToolDocumentation() {
   renderFailureContracts();
 }
 
-async function loadToolDocumentation() {
+async function loadToolDocumentation(silent = false) {
   try {
     const value = await call("/mcp/tools", {
       method: "POST",
@@ -747,47 +757,63 @@ async function loadToolDocumentation() {
     renderEnabledToolLists();
     renderToolDocumentation();
   } catch (error) {
-    toast(error.message, true);
+    if (!silent) toast(error.message, true);
   }
 }
 
+async function pollState() {
+  if (!authorization || polling || document.hidden) return;
+  polling = true;
+  try {
+    if (await refreshStatus()) await refreshVisibleMcpDocumentation();
+  } catch {
+    // Keep the last rendered state and retry on the next poll.
+  } finally {
+    polling = false;
+  }
+}
+
+function startPolling() {
+  stopPolling();
+  pollTimer = setInterval(pollState, 10000);
+}
+
+function stopPolling() {
+  if (pollTimer !== null) clearInterval(pollTimer);
+  pollTimer = null;
+  polling = false;
+}
+
 const actions = {
-  bootstrap: bootstrapAdministrator,
-  login,
+  setup: setupAccount,
   logout,
   "refresh-all": refreshAll,
-  "create-account": createAccount,
-  "load-accounts": loadAccounts,
-  "issue-token": issueToken,
+  "change-password": changePassword,
+  "rotate-token": rotateToken,
   "copy-token": copyToken,
-  "load-tokens": loadTokens,
-  "load-projects": loadProjects,
+  "toggle-project-create": toggleProjectCreate,
+  "create-project": createProject,
   "load-config": loadConfiguration,
   "save-config": saveConfiguration,
-  "load-context": loadContext,
-  "load-tool-docs": loadToolDocumentation,
 };
+
+$("#login-form").addEventListener("submit", (event) => {
+  event.preventDefault();
+  login();
+});
 
 document.addEventListener("click", (event) => {
   const button = event.target.closest("[data-action]");
   if (!button) return;
   const action = button.dataset.action;
-  if (action === "login-tab") {
-    selectLoginTab(button.dataset.mode);
-  } else if (action === "show-view") {
+  if (action === "show-view") {
     showView(button.dataset.view, button);
-  } else if (action === "edit-account") {
-    editAccount(button.dataset.id, button.dataset.role);
-  } else if (action === "delete-account") {
-    deleteAccount(button.dataset.id);
   } else if (action === "revoke-token") {
-    revokeToken(button.dataset.id);
+    revokeToken();
   } else if (action === "delete-project") {
     deleteProject(button.dataset.id);
-  } else if (action === "copy-wire-context" && contextDocument) {
-    copyText(contextDocument.mcpWire[Number(button.dataset.index)].payload, "MCP payload copied");
   } else if (action === "copy-opencode-context" && contextDocument) {
-    copyText(JSON.stringify(contextDocument.openCodeProjection, null, 2), "OpenCode projection copied");
+    copyText(JSON.stringify(contextDocument.openCodeProjection, null, 2), "Model view copied");
   } else if (action === "copy-tool-schema" && toolDocumentation) {
     const tool = toolDocumentation.tools.find((item) => item.name === button.dataset.tool);
     if (tool) copyText(JSON.stringify(tool.inputSchema, null, 2), "Tool schema copied");
@@ -797,19 +823,31 @@ document.addEventListener("click", (event) => {
 });
 
 document.addEventListener("change", (event) => {
-  if (event.target.matches("#mcp-context-protocol, #mcp-context-role")) {
+  if (event.target.matches("#token-never")) {
+    $("#token-ttl").disabled = event.target.checked;
+  }
+  if (event.target.matches("#mcp-context-protocol")) {
     contextDocument = null;
     loadContext();
   }
-  if (event.target.matches("#mcp-tools-protocol, #mcp-tools-role")) {
+  if (event.target.matches("#mcp-tools-protocol")) {
     toolDocumentation = null;
     loadToolDocumentation();
   }
+  if (event.target.matches("#mcp-client-name")) {
+    contextDocument = null;
+    loadContext();
+  }
+  if (event.target.matches(".tool-pack-checkbox")) updateToolPack(event.target);
 });
 
 document.addEventListener("input", (event) => {
   if (event.target.matches("#tool-filter")) renderToolDocumentation();
 });
 
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) pollState();
+});
+
 renderEnabledToolPacks();
-loadBootstrapState();
+loadSetupState();

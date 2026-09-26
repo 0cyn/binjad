@@ -1,20 +1,30 @@
-#include "binjad/security/credential_store.hpp"
-#include "binjad/security/credential_vault.hpp"
+#include "binjad/security/CredentialStore.hpp"
+#include "binjad/security/CredentialVault.hpp"
 
-#include "../../security/platform_credential_store.hpp"
+#include "../../security/PlatformCredentialStore.hpp"
 
 #include <CoreFoundation/CoreFoundation.h>
 #include <Security/Security.h>
 
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
+#include <utility>
 
 namespace binjad::security
 {
 namespace
 {
+constexpr std::string_view kService = "me.cynder.binjad";
 constexpr std::string_view kVaultAccount = "credential-vault";
+constexpr std::string_view kVaultLabel = "binjad";
+
+struct VaultReadResult
+{
+    std::optional<CredentialVaultValues> values;
+    std::string error;
+};
 
 std::string StatusMessage(OSStatus status)
 {
@@ -62,11 +72,78 @@ CFMutableDictionaryRef Query(std::string_view service)
     return query;
 }
 
+bool SetLabel(CFMutableDictionaryRef attributes)
+{
+    const auto label = String(kVaultLabel);
+    if (!label)
+        return false;
+    CFDictionarySetValue(attributes, kSecAttrLabel, label);
+    CFRelease(label);
+    return true;
+}
+
+VaultReadResult ReadVault(std::string_view service)
+{
+    const auto query = Query(service);
+    if (!query)
+        return {{}, "cannot allocate Keychain query"};
+    CFDictionarySetValue(query, kSecReturnData, kCFBooleanTrue);
+    CFDictionarySetValue(query, kSecMatchLimit, kSecMatchLimitOne);
+    CFTypeRef result = nullptr;
+    const auto status = SecItemCopyMatching(query, &result);
+    CFRelease(query);
+    if (status == errSecItemNotFound)
+        return {};
+    if (status != errSecSuccess)
+        return {{}, StatusMessage(status)};
+    if (!result || CFGetTypeID(result) != CFDataGetTypeID())
+    {
+        if (result)
+            CFRelease(result);
+        return {{}, "Keychain returned an invalid credential vault"};
+    }
+    const auto data = static_cast<CFDataRef>(result);
+    const std::string contents(reinterpret_cast<const char*>(CFDataGetBytePtr(data)),
+        static_cast<std::size_t>(CFDataGetLength(data)));
+    CFRelease(result);
+    auto parsed = ParseCredentialVault(contents);
+    if (!parsed.values)
+        return {{}, parsed.error};
+    return {std::move(parsed.values), {}};
+}
+
+std::string DeleteService(std::string_view service)
+{
+    const auto query = Query(service);
+    if (!query)
+        return "cannot allocate Keychain query";
+    CFDictionaryRemoveValue(query, kSecAttrAccount);
+    while (true)
+    {
+        const auto status = SecItemDelete(query);
+        if (status == errSecItemNotFound)
+        {
+            CFRelease(query);
+            return {};
+        }
+        if (status != errSecSuccess)
+        {
+            CFRelease(query);
+            return StatusMessage(status);
+        }
+    }
+}
+
 class MacCredentialStore final : public CredentialStore
 {
   public:
-    explicit MacCredentialStore(std::string namespaceId)
-        : service_("me.cynder.binjad." + std::move(namespaceId))
+    explicit MacCredentialStore(PlatformCredentialStoreOptions options)
+        : service_(options.standardInstallation
+                  ? std::string(kService)
+                  : std::string(kService) + "." + options.namespaceId),
+          legacyService_(options.standardInstallation
+                  ? std::string(kService) + "." + std::move(options.namespaceId)
+                  : std::string{})
     {
     }
 
@@ -111,43 +188,57 @@ class MacCredentialStore final : public CredentialStore
   private:
     std::string LoadLocked()
     {
-        // Service commands and the daemon are separate processes sharing this vault.
-        const auto query = Query(service_);
-        if (!query)
-            return "cannot allocate Keychain query";
-        CFDictionarySetValue(query, kSecReturnData, kCFBooleanTrue);
-        CFDictionarySetValue(query, kSecMatchLimit, kSecMatchLimitOne);
-        CFTypeRef result = nullptr;
-        const auto status = SecItemCopyMatching(query, &result);
-        CFRelease(query);
-        if (status == errSecItemNotFound)
+        if (loaded_)
+            return {};
+
+        auto current = ReadVault(service_);
+        if (!current.error.empty())
+            return current.error;
+        if (current.values)
         {
-            values_.clear();
+            values_ = std::move(*current.values);
+            if (!legacyService_.empty())
+            {
+                if (const auto error = DeleteService(legacyService_); !error.empty())
+                    return "cannot remove legacy Keychain credentials: " + error;
+            }
+            loaded_ = true;
             return {};
         }
-        if (status != errSecSuccess)
-            return StatusMessage(status);
-        if (!result || CFGetTypeID(result) != CFDataGetTypeID())
+
+        if (!legacyService_.empty())
         {
-            if (result)
-                CFRelease(result);
-            return "Keychain returned an invalid credential vault";
+            // Move the former default-config item only after the stable item is durable.
+            auto legacy = ReadVault(legacyService_);
+            if (!legacy.error.empty())
+                return "cannot read legacy Keychain credential vault: " + legacy.error;
+            if (legacy.values)
+            {
+                if (const auto error = PersistServiceLocked(service_, *legacy.values); !error.empty())
+                    return "cannot migrate Keychain credential vault: " + error;
+                if (const auto error = DeleteService(legacyService_); !error.empty())
+                    return "cannot remove legacy Keychain credentials: " + error;
+                values_ = std::move(*legacy.values);
+                loaded_ = true;
+                return {};
+            }
         }
-        const auto data = static_cast<CFDataRef>(result);
-        const std::string contents(reinterpret_cast<const char*>(CFDataGetBytePtr(data)),
-            static_cast<std::size_t>(CFDataGetLength(data)));
-        CFRelease(result);
-        auto parsed = ParseCredentialVault(contents);
-        if (!parsed.values)
-            return parsed.error;
-        values_ = std::move(*parsed.values);
+
+        values_.clear();
+        loaded_ = true;
         return {};
     }
 
     std::string PersistLocked(const CredentialVaultValues& values)
     {
+        return PersistServiceLocked(service_, values);
+    }
+
+    std::string PersistServiceLocked(
+        std::string_view service, const CredentialVaultValues& values)
+    {
         const auto contents = SerializeCredentialVault(values);
-        const auto query = Query(service_);
+        const auto query = Query(service);
         if (!query)
             return "cannot allocate Keychain query";
         const auto data = CFDataCreate(kCFAllocatorDefault,
@@ -164,10 +255,24 @@ class MacCredentialStore final : public CredentialStore
             return "cannot allocate Keychain credential value";
         }
         CFDictionarySetValue(update, kSecValueData, data);
+        if (!SetLabel(update))
+        {
+            CFRelease(update);
+            CFRelease(data);
+            CFRelease(query);
+            return "cannot allocate Keychain credential label";
+        }
         auto status = SecItemUpdate(query, update);
         if (status == errSecItemNotFound)
         {
             CFDictionarySetValue(query, kSecValueData, data);
+            if (!SetLabel(query))
+            {
+                CFRelease(update);
+                CFRelease(data);
+                CFRelease(query);
+                return "cannot allocate Keychain credential label";
+            }
             status = SecItemAdd(query, nullptr);
         }
         CFRelease(update);
@@ -177,13 +282,16 @@ class MacCredentialStore final : public CredentialStore
     }
 
     std::string service_;
+    std::string legacyService_;
     CredentialVaultValues values_;
+    bool loaded_ = false;
     std::mutex mutex_;
 };
 }
 
-std::unique_ptr<CredentialStore> CreatePlatformCredentialStore(std::string_view namespaceId)
+std::unique_ptr<CredentialStore> CreatePlatformCredentialStore(
+    PlatformCredentialStoreOptions options)
 {
-    return std::make_unique<MacCredentialStore>(std::string(namespaceId));
+    return std::make_unique<MacCredentialStore>(std::move(options));
 }
 }

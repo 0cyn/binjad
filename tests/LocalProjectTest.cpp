@@ -1,11 +1,11 @@
-#include "binjad/ipc/envelope.hpp"
-#include "binjad/mcp/foundation.hpp"
-#include "binjad/overseer/file_child_coordinator.hpp"
-#include "binjad/overseer/project_child_coordinator.hpp"
-#include "binjad/project/local_project_registry.hpp"
-#include "binjad/security/credential_store.hpp"
-#include "binjad/session/job_registry.hpp"
-#include "binjad/upload/upload_registry.hpp"
+#include "binjad/ipc/Envelope.hpp"
+#include "binjad/mcp/Foundation.hpp"
+#include "binjad/overseer/FileChildCoordinator.hpp"
+#include "binjad/overseer/ProjectChildCoordinator.hpp"
+#include "binjad/project/LocalProjectRegistry.hpp"
+#include "binjad/security/CredentialStore.hpp"
+#include "binjad/session/JobRegistry.hpp"
+#include "binjad/upload/UploadRegistry.hpp"
 
 #include <rapidjsonwrapper.h>
 
@@ -104,6 +104,7 @@ class ScriptChannel final : public binjad::ipc::ByteChannel
                     file->set_description(fileDescription_);
                     file->set_creation_timestamp(10);
                     file->set_folder_id(folderId_);
+                    file->set_backing_path(source_.string());
                 }
                 for (const auto& [id, path] : importedFiles_)
                 {
@@ -112,6 +113,7 @@ class ScriptChannel final : public binjad::ipc::ByteChannel
                     file->set_path(path);
                     file->set_name(std::filesystem::path(path).filename().string());
                     file->set_description("Imported");
+                    file->set_backing_path((source_.parent_path() / "project-data" / id).string());
                     if (path.starts_with("Renamed/")) file->set_folder_id("folder-id");
                 }
             }
@@ -362,14 +364,14 @@ TEST(LocalProjectRegistryTest, UsesUniquePathsWithoutFileOrFolderReferences)
         {"folder-id", {}, "reports", "reports", {}, {}, {}}};
     EXPECT_TRUE(projects.AssignFolders(project, folders).empty());
     std::vector<binjad::project::LocalProjectFileRecord> files{
-        {"file-id", "reports/a.json", "a.json", {}, 1, {}, "folder-id", {}}};
+        {"file-id", "reports/a.json", "a.json", {}, 1, {}, "folder-id", {}, {}}};
     EXPECT_TRUE(projects.AssignFiles(project, files).empty());
     ASSERT_TRUE(projects.FindFile(project, "reports/a.json"));
     EXPECT_EQ(references.Size(), 1U);
 
     std::vector<binjad::project::LocalProjectFileRecord> duplicateFiles{
-        {"first", "same.md", "same.md", {}, 1, {}, {}, {}},
-        {"second", "same.md", "same.md", {}, 2, {}, {}, {}}};
+        {"first", "same.md", "same.md", {}, 1, {}, {}, {}, {}},
+        {"second", "same.md", "same.md", {}, 2, {}, {}, {}, {}}};
     EXPECT_NE(projects.AssignFiles(project, duplicateFiles).find("duplicate"),
         std::string::npos);
     std::vector<binjad::project::LocalProjectFolderRecord> duplicateFolders{
@@ -440,6 +442,7 @@ TEST(LocalProjectTest, ListsAndOpensProjectFileThroughSeparateChildren)
     binjad::Config config;
     config.projects.roots = {temporary / "projects"};
     config.projects.defaultRoot = temporary / "projects";
+    config.projects.allowProjectRegistration = true;
     config.storage.spoolPath = temporary / "spool";
     FakeSupervisor supervisor;
     FakeAcceptor acceptor(source);
@@ -475,6 +478,7 @@ TEST(LocalProjectTest, ListsAndOpensProjectFileThroughSeparateChildren)
         "{\"project\":\"" + project + "\"}"), principal, current.session, {}, 1);
     EXPECT_NE(files.body.find("folder/true"), std::string::npos) << files.body;
     EXPECT_EQ(files.body.find(R"("file":)"), std::string::npos);
+    EXPECT_EQ(files.body.find(source.string()), std::string::npos);
     const std::string filePath = "folder/true";
 
     {
@@ -529,13 +533,41 @@ TEST(LocalProjectTest, ListsAndOpensProjectFileThroughSeparateChildren)
     const auto deniedRegistration = foundation.Handle(Tool("bn_local_project_register",
         R"({"path":"/private/Registered.bnpr"})"), userPrincipal, {}, {}, 1);
     EXPECT_NE(deniedRegistration.body.find("administrator token required"), std::string::npos);
+    const auto registeredPath = temporary / "Registered.bnpr";
+    std::filesystem::create_directories(registeredPath);
+    {
+        std::ofstream stream(registeredPath / "project-data", std::ios::binary);
+        stream << "registered fixture";
+    }
     const auto registeredProject = foundation.Handle(Tool("bn_local_project_register",
-        R"({"path":"/private/Registered.bnpr"})"), principal, current.session, {}, 1);
+        "{\"path\":\"" + registeredPath.string() + "\"}"), principal, current.session, {}, 1);
     EXPECT_NE(registeredProject.body.find("Registered"), std::string::npos)
         << registeredProject.body;
     const auto registeredPaths = knownProjects.Paths();
     EXPECT_NE(std::find(registeredPaths.begin(), registeredPaths.end(),
-        std::filesystem::path("/private/Registered.bnpr")), registeredPaths.end());
+        registeredPath), registeredPaths.end());
+    auto registeredProjectJson = Parse(registeredProject.body);
+    const std::string registeredReference =
+        registeredProjectJson["result"]["structuredContent"]["project"].GetString();
+
+    const auto roots = foundation.Handle(Tool("bn_local_project_root_list", "{}"),
+        principal, current.session, {}, 1);
+    EXPECT_NE(roots.body.find(R"("index":0)"), std::string::npos) << roots.body;
+    EXPECT_NE(roots.body.find(R"("default":true)"), std::string::npos) << roots.body;
+    EXPECT_EQ(roots.body.find((temporary / "projects").string()), std::string::npos) << roots.body;
+
+    const auto relocated = foundation.Handle(Tool("bn_local_project_relocate",
+        "{\"project\":\"" + registeredReference + "\",\"root\":0,\"path\":\"Adopted.bnpr\"}"),
+        principal, current.session, {}, 1);
+    EXPECT_NE(relocated.body.find(R"("sourceRetained":true)"), std::string::npos) << relocated.body;
+    EXPECT_TRUE(std::filesystem::is_directory(registeredPath));
+    EXPECT_TRUE(std::filesystem::is_directory(temporary / "projects" / "Adopted.bnpr"));
+    const auto pathsAfterRelocation = knownProjects.Paths();
+    EXPECT_EQ(std::find(pathsAfterRelocation.begin(), pathsAfterRelocation.end(), registeredPath),
+        pathsAfterRelocation.end());
+    const auto relocatedRecord = projects.Find(registeredReference);
+    ASSERT_TRUE(relocatedRecord);
+    EXPECT_EQ(relocatedRecord->storagePath, temporary / "projects" / "Adopted.bnpr");
 
     const auto createdFolder = foundation.Handle(Tool("bn_local_project_folder_create",
         "{\"project\":\"" + project + "\",\"name\":\"Folder\"}"),
@@ -560,6 +592,29 @@ TEST(LocalProjectTest, ListsAndOpensProjectFileThroughSeparateChildren)
             "\",\"name\":\"batch-two\"}]}"), principal, current.session, {}, 1);
     EXPECT_NE(importedBatch.body.find(R"("imported":2)"), std::string::npos)
         << importedBatch.body;
+    const auto directorySource = temporary / "directory-import";
+    std::filesystem::create_directories(directorySource / "nested");
+    {
+        std::ofstream stream(directorySource / ".hidden", std::ios::binary);
+        stream << "hidden";
+    }
+    {
+        std::ofstream stream(directorySource / "nested" / "item.bin", std::ios::binary);
+        stream << "nested";
+    }
+    std::filesystem::create_symlink(directorySource / ".hidden", directorySource / "ignored-link", ignored);
+    const auto importedDirectory = foundation.Handle(Tool("bn_local_project_directory_import",
+        "{\"project\":\"" + project + "\",\"source\":\"" + directorySource.string()
+            + "\",\"folder\":\"Tree\"}"), principal, current.session, {}, 1);
+    EXPECT_NE(importedDirectory.body.find(R"("imported":2)"), std::string::npos) << importedDirectory.body;
+    EXPECT_NE(importedDirectory.body.find(R"("skippedSymlinks":1)"), std::string::npos) << importedDirectory.body;
+    const auto resumedDirectory = foundation.Handle(Tool("bn_local_project_directory_import",
+        "{\"project\":\"" + project + "\",\"source\":\"" + directorySource.string()
+            + "\",\"folder\":\"TreeResume\",\"startAfter\":\".hidden\"}"),
+        principal, current.session, {}, 1);
+    EXPECT_NE(resumedDirectory.body.find(R"("imported":1)"), std::string::npos) << resumedDirectory.body;
+    EXPECT_NE(resumedDirectory.body.find(R"("lastCompleted":"nested/item.bin")"), std::string::npos)
+        << resumedDirectory.body;
     const auto filtered = foundation.Handle(Tool("bn_local_project_file_list",
         "{\"project\":\"" + project + "\",\"folder\":\"" + folder +
             "\",\"query\":\"batch-two\"}"), principal, current.session, {}, 1);
@@ -622,6 +677,12 @@ TEST(LocalProjectTest, ListsAndOpensProjectFileThroughSeparateChildren)
         "{\"binaryView\":\"" + binaryView + "\",\"analyze\":false}"),
         principal, current.session, {}, 1);
     EXPECT_NE(materialized.body.find(R"("created":true)"), std::string::npos);
+    const auto unsavedProjectUrl = foundation.Handle(Tool("bn_url_project_file",
+        "{\"openItem\":\"" + openItem
+            + R"(","updated_bndb_has_been_saved":true})"),
+        principal, current.session, {}, 1);
+    EXPECT_NE(unsavedProjectUrl.body.find("does not target a saved BNDB"), std::string::npos)
+        << unsavedProjectUrl.body;
     const auto saved = foundation.Handle(Tool("bn_binary_view_save",
         "{\"binaryView\":\"" + binaryView + "\"}"),
         principal, current.session, {}, 1);
@@ -629,6 +690,25 @@ TEST(LocalProjectTest, ListsAndOpensProjectFileThroughSeparateChildren)
     const auto updated = openItems.FindOpenItem(principal.id, openItem);
     ASSERT_TRUE(updated);
     EXPECT_EQ(updated->source, "folder/true.bndb");
+    const auto missingSaveAcknowledgement = foundation.Handle(Tool("bn_url_project_file",
+        "{\"openItem\":\"" + openItem + "\"}"), principal, current.session, {}, 1);
+    ASSERT_TRUE(missingSaveAcknowledgement.error.has_value());
+    EXPECT_EQ(missingSaveAcknowledgement.error->code, -32602);
+    const auto falseSaveAcknowledgement = foundation.Handle(Tool("bn_url_project_file",
+        "{\"openItem\":\"" + openItem
+            + R"(","updated_bndb_has_been_saved":false})"),
+        principal, current.session, {}, 1);
+    ASSERT_TRUE(falseSaveAcknowledgement.error.has_value());
+    EXPECT_EQ(falseSaveAcknowledgement.error->code, -32602);
+    const auto projectUrl = foundation.Handle(Tool("bn_url_project_file",
+        "{\"openItem\":\"" + openItem
+            + R"(","updated_bndb_has_been_saved":true,"expr":"main + 4"})"),
+        principal, current.session, {}, 1);
+    EXPECT_NE(projectUrl.body.find("binaryninja:///"), std::string::npos) << projectUrl.body;
+    EXPECT_NE(projectUrl.body.find("project-data/saved-file-id-"), std::string::npos) << projectUrl.body;
+    EXPECT_NE(projectUrl.body.find("?expr=main%20%2B%204"), std::string::npos) << projectUrl.body;
+    EXPECT_NE(projectUrl.body.find(R"("sourceKind":"local_project")"), std::string::npos);
+    EXPECT_NE(projectUrl.body.find(R"("path":"folder/true.bndb")"), std::string::npos);
     const auto detached = foundation.Handle(Tool("bn_binary_view_save_async",
         "{\"binaryView\":\"" + binaryView + "\"}"),
         principal, current.session, {}, 1);

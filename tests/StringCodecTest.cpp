@@ -1,4 +1,4 @@
-#include "binjad/binary_ninja/string_codec.hpp"
+#include "binjad/binary_ninja/StringCodec.hpp"
 
 #include <gtest/gtest.h>
 

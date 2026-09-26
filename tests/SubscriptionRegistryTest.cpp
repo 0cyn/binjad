@@ -1,5 +1,5 @@
-#include "binjad/session/subscription_registry.hpp"
-#include "binjad/session/open_item_registry.hpp"
+#include "binjad/session/SubscriptionRegistry.hpp"
+#include "binjad/session/OpenItemRegistry.hpp"
 
 #include <gtest/gtest.h>
 

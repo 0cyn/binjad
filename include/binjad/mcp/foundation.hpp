@@ -1,12 +1,13 @@
 #pragma once
 
-#include "binjad/config.hpp"
-#include "binjad/mcp/protocol.hpp"
-#include "binjad/security/token_authenticator.hpp"
-#include "binjad/session/analysis_session_registry.hpp"
+#include "binjad/Config.hpp"
+#include "binjad/mcp/Protocol.hpp"
+#include "binjad/security/TokenAuthenticator.hpp"
+#include "binjad/session/AnalysisSessionRegistry.hpp"
 
 #include <cstdint>
 #include <functional>
+#include <mutex>
 #include <optional>
 #include <string>
 
@@ -15,13 +16,11 @@ namespace binjad::overseer
 class FileChildCoordinator;
 class ProjectChildCoordinator;
 class AnalysisScheduler;
-class CollaborationChildManager;
-}
+} // namespace binjad::overseer
 
 namespace binjad::project
 {
 class LocalProjectRegistry;
-class CollaborationProjectRegistry;
 }
 
 namespace binjad::upload
@@ -34,7 +33,7 @@ namespace binjad::session
 class OpenItemRegistry;
 class JobRegistry;
 struct JobRecord;
-}
+} // namespace binjad::session
 
 namespace binjad::mcp
 {
@@ -48,41 +47,35 @@ struct FoundationResult
 
 class Foundation
 {
-  public:
+public:
     using JobProgressCallback = std::function<void(const session::JobRecord&)>;
-    using AttachedJobCallback = std::function<void(
-        std::string_view, std::function<void()>)>;
+    using AttachedJobCallback = std::function<void(std::string_view, std::function<void()>)>;
 
-    Foundation(Config config, session::AnalysisSessionRegistry& sessions,
-        std::string serverVersion, session::OpenItemRegistry* openItems = nullptr,
-        overseer::FileChildCoordinator* fileCoordinator = nullptr,
-        session::JobRegistry* jobs = nullptr,
-        project::LocalProjectRegistry* projects = nullptr,
+    Foundation(Config config, session::AnalysisSessionRegistry& sessions, std::string serverVersion,
+        session::OpenItemRegistry* openItems = nullptr, overseer::FileChildCoordinator* fileCoordinator = nullptr,
+        session::JobRegistry* jobs = nullptr, project::LocalProjectRegistry* projects = nullptr,
         overseer::ProjectChildCoordinator* projectCoordinator = nullptr,
-        overseer::AnalysisScheduler* scheduler = nullptr,
-        upload::UploadRegistry* uploads = nullptr,
-        project::CollaborationProjectRegistry* collaborationProjects = nullptr,
-        overseer::CollaborationChildManager* collaborationManager = nullptr);
-    FoundationResult Handle(const ValidatedRequest& request,
-        const security::TokenRecord& principal,
+        overseer::AnalysisScheduler* scheduler = nullptr, upload::UploadRegistry* uploads = nullptr);
+    FoundationResult Handle(const ValidatedRequest& request, const security::TokenRecord& principal,
         const std::optional<session::AnalysisSessionRecord>& currentSession,
-        session::AnalysisSessionRegistry::Clock::time_point now,
-        std::uint64_t unixNow, JobProgressCallback progress = {},
-        AttachedJobCallback attached = {});
-    FoundationResult Handle(const ValidatedRequest& request,
-        const security::TokenRecord& principal,
-        session::AnalysisSessionRegistry::Clock::time_point now,
-        std::uint64_t unixNow)
+        session::AnalysisSessionRegistry::Clock::time_point now, std::uint64_t unixNow,
+        JobProgressCallback progress = {}, AttachedJobCallback attached = {});
+    FoundationResult Handle(const ValidatedRequest& request, const security::TokenRecord& principal,
+        session::AnalysisSessionRegistry::Clock::time_point now, std::uint64_t unixNow)
     {
         return Handle(request, principal, std::nullopt, now, unixNow);
     }
-    std::string ContextDocumentation(ProtocolVersion version,
-        security::TokenRole role, std::string_view clientName) const;
-    std::string ToolDocumentation(ProtocolVersion version,
-        security::TokenRole role) const;
+    std::string ContextDocumentation(
+        ProtocolVersion version, security::TokenRole role, std::string_view clientName) const;
+    std::string ToolDocumentation(ProtocolVersion version, security::TokenRole role) const;
+    void SetToolConfig(ToolConfig config);
 
-  private:
+private:
+    Config EffectiveConfig() const;
+
     Config config_;
+    ToolConfig toolConfig_;
+    mutable std::mutex toolConfigMutex_;
     session::AnalysisSessionRegistry& sessions_;
     std::string serverVersion_;
     session::OpenItemRegistry* openItems_;
@@ -92,7 +85,5 @@ class Foundation
     overseer::ProjectChildCoordinator* projectCoordinator_;
     overseer::AnalysisScheduler* scheduler_;
     upload::UploadRegistry* uploads_;
-    project::CollaborationProjectRegistry* collaborationProjects_;
-    overseer::CollaborationChildManager* collaborationManager_;
 };
-}
+} // namespace binjad::mcp

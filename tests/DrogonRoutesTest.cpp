@@ -1,6 +1,6 @@
-#include "binjad/http/drogon_routes.hpp"
+#include "binjad/http/DrogonRoutes.hpp"
 
-#include "binjad/security/crypto.hpp"
+#include "binjad/security/Crypto.hpp"
 
 #include <gtest/gtest.h>
 #include <trantor/net/AsyncStream.h>
@@ -214,6 +214,26 @@ TEST(DrogonRoutesTest, KeepsImportOnlyUploadCommitAsJson)
     ASSERT_TRUE(response);
     EXPECT_EQ(response->contentTypeString(), "application/json");
     EXPECT_FALSE(response->asyncStreamCallback());
+}
+
+TEST(DrogonRoutesTest, StreamsLongProjectJobsAsSse)
+{
+    for (const auto* tool : {"bn_local_project_directory_import", "bn_local_project_relocate"})
+    {
+        Fixture fixture;
+        fixture.config.http.mcpMaxBodyBytes = 4096;
+        binjad::http::DrogonRoutes routes(fixture.config, fixture.authenticator,
+            [](auto, auto callback) { callback(drogon::HttpResponse::newHttpResponse()); });
+        auto request = Request(drogon::Post, fixture.token,
+            std::string(R"({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":")")
+                + tool + R"(","arguments":{}}})");
+        request->addHeader("Accept", "application/json, text/event-stream");
+        drogon::HttpResponsePtr response;
+        routes.HandleMcp(request, {}, [&](const auto& value) { response = value; });
+        ASSERT_TRUE(response) << tool;
+        EXPECT_EQ(response->contentTypeString(), "text/event-stream") << tool;
+        EXPECT_TRUE(response->asyncStreamCallback()) << tool;
+    }
 }
 
 TEST(DrogonRoutesTest, CancelsAttachedJobWhenSseSendDetectsDisconnect)

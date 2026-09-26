@@ -1,7 +1,7 @@
-#include "binjad/http/upload_routes.hpp"
+#include "binjad/http/UploadRoutes.hpp"
 
-#include "binjad/platform/paths.hpp"
-#include "binjad/security/crypto.hpp"
+#include "binjad/platform/Paths.hpp"
+#include "binjad/security/Crypto.hpp"
 
 #include <gtest/gtest.h>
 

@@ -1,4 +1,4 @@
-#include "binjad/session/subscription_registry.hpp"
+#include "binjad/session/SubscriptionRegistry.hpp"
 
 #include <algorithm>
 #include <utility>

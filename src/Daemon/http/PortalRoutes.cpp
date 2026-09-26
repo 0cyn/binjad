@@ -1,6 +1,6 @@
-#include "binjad/http/portal_routes.hpp"
+#include "binjad/http/PortalRoutes.hpp"
 
-#include "binjad/http/drogon_routes.hpp"
+#include "binjad/http/DrogonRoutes.hpp"
 
 #include <charconv>
 #include <cstdint>

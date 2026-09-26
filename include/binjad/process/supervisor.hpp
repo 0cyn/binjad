@@ -1,7 +1,7 @@
 #pragma once
 
-#include "binjad/ipc/channel.hpp"
-#include "binjad/process/role.hpp"
+#include "binjad/ipc/Channel.hpp"
+#include "binjad/process/Role.hpp"
 
 #include <cstdint>
 #include <filesystem>

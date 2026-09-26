@@ -1,4 +1,4 @@
-#include "binjad/http/mcp_dispatcher.hpp"
+#include "binjad/http/McpDispatcher.hpp"
 
 #include <gtest/gtest.h>
 
@@ -200,4 +200,27 @@ TEST(McpDispatcherTest, ModernListenAcknowledgesAndFiltersNotifications)
     EXPECT_NE(notifications[2].find("notifications/resources/updated"),
         std::string::npos);
     detach();
+}
+
+TEST(McpDispatcherTest, HotToolConfigurationPublishesListChange)
+{
+    binjad::reference::FriendlyReferencePool references;
+    binjad::session::AnalysisSessionRegistry sessions(references, 30min);
+    binjad::http::McpDispatcher dispatcher(sessions, "0.1.0");
+    binjad::mcp::SubscriptionFilter filter;
+    filter.toolsListChanged = true;
+    std::vector<std::string> notifications;
+    dispatcher.Subscriptions()->ListenModern(Principal().id, filter,
+        [&](std::string_view notification) { notifications.emplace_back(notification); });
+
+    binjad::ToolConfig tools;
+    tools.functionAnalysis = false;
+    dispatcher.SetToolConfig(tools);
+
+    ASSERT_EQ(notifications.size(), 1U);
+    EXPECT_NE(notifications.front().find("notifications/tools/list_changed"), std::string::npos);
+    EXPECT_EQ(dispatcher.ContextDocumentation(binjad::mcp::ProtocolVersion::V2026_07_28,
+                  binjad::security::TokenRole::Admin, "binjad")
+                  .find("bn_function_il"),
+        std::string::npos);
 }

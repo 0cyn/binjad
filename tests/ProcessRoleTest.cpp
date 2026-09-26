@@ -1,4 +1,4 @@
-#include "binjad/process/role.hpp"
+#include "binjad/process/Role.hpp"
 
 #include <gtest/gtest.h>
 

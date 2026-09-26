@@ -1,4 +1,4 @@
-#include "binjad/platform/cpu.hpp"
+#include "binjad/platform/Cpu.hpp"
 
 #include <Windows.h>
 

@@ -10,34 +10,25 @@
 <body>
   <div id="gate" class="gate">
     <div class="gate-box">
-      <div class="brand">binja'd / control room</div>
-      <p class="lede">Commercial analysis service administration. Credentials stay in this browser tab.</p>
+      <div class="brand">binja'd</div>
 
-      <section id="bootstrap" class="hidden">
-        <div class="notice">No portal administrator exists. Use the one-time local bootstrap credential.</div>
-        <label>
-          Bootstrap credential
-          <input id="boot-credential" type="password" autocomplete="off">
-        </label>
+      <section id="setup" class="hidden">
+        <div class="notice">Create the account for this new binja'd service.</div>
         <div class="field-row">
           <label>
-            Admin username
-            <input id="boot-user" autocomplete="username">
+            Username
+            <input id="setup-user" autocomplete="username">
           </label>
           <label>
             Password
-            <input id="boot-password" type="password" autocomplete="new-password">
+            <input id="setup-password" type="password" autocomplete="new-password">
           </label>
         </div>
-        <button class="primary" data-action="bootstrap">Initialize service</button>
+        <button class="primary" data-action="setup">Create account</button>
         <hr>
       </section>
 
-      <div class="tabs">
-        <button id="basic-tab" class="on" data-action="login-tab" data-mode="basic">Account</button>
-        <button id="bearer-tab" data-action="login-tab" data-mode="bearer">Admin token</button>
-      </div>
-      <div id="basic-login">
+      <form id="login-form">
         <label>
           Username
           <input id="login-user" autocomplete="username">
@@ -46,14 +37,8 @@
           Password
           <input id="login-password" type="password" autocomplete="current-password">
         </label>
-      </div>
-      <div id="bearer-login" class="hidden">
-        <label>
-          Bearer token
-          <input id="login-token" type="password" autocomplete="off">
-        </label>
-      </div>
-      <button class="primary" data-action="login">Enter control room</button>
+        <button class="primary" type="submit">Log in</button>
+      </form>
     </div>
   </div>
 
@@ -78,7 +63,12 @@
             <button data-action="show-view" data-view="configuration">Configuration</button>
           </div>
         </details>
-        <button data-action="show-view" data-view="projects">Services: Projects</button>
+        <details class="nav-group">
+          <summary>Services</summary>
+          <div class="nav-items">
+            <button data-action="show-view" data-view="projects">Projects</button>
+          </div>
+        </details>
         <details class="nav-group">
           <summary>MCP</summary>
           <div class="nav-items">
@@ -92,10 +82,7 @@
 
     <main class="main">
       <header class="content-head">
-        <div>
-          <div class="breadcrumb" id="mode-line">System / local daemon</div>
-          <h1 id="view-title">Service overview</h1>
-        </div>
+        <h1 id="view-title">Service overview</h1>
         <div id="restart-badge" class="badge hidden">restart required</div>
       </header>
 
@@ -148,32 +135,17 @@
         <div class="split">
           <div class="stack">
             <article class="block">
-              <div class="block-head"><h2>Create account</h2></div>
-              <label>Username <input id="account-name"></label>
-              <label>Password <input id="account-password" type="password"></label>
-              <label>
-                Role
-                <select id="account-role">
-                  <option value="portal-admin">Portal administrator</option>
-                  <option value="self-service">Self service</option>
-                </select>
-              </label>
-              <button class="primary" data-action="create-account">Create account</button>
+              <div class="block-head"><h2>Account</h2></div>
+              <div class="row"><span>Username</span><b id="account-username"></b></div>
+              <label>New password <input id="account-password" type="password" autocomplete="new-password"></label>
+              <button class="primary" data-action="change-password">Change password</button>
             </article>
             <article class="block">
-              <div class="block-head"><h2>Issue bearer token</h2></div>
-              <label>Label <input id="token-label"></label>
-              <div class="field-row">
-                <label>
-                  Role
-                  <select id="token-role">
-                    <option value="admin">Admin</option>
-                    <option value="user">User</option>
-                  </select>
-                </label>
-                <label>TTL seconds <input id="token-ttl" type="number" min="0" placeholder="default"></label>
-              </div>
-              <button class="primary" data-action="issue-token">Issue token</button>
+              <div class="block-head"><h2>Create or rotate MCP token</h2></div>
+              <label>TTL seconds <input id="token-ttl" type="number" min="1" value="604800"></label>
+              <label class="check"><input id="token-never" type="checkbox"> Never expires</label>
+              <div class="meta">Creating a token atomically revokes the previous token and closes its sessions.</div>
+              <button class="primary" data-action="rotate-token">Create / Rotate token</button>
               <div id="issued-token" class="hidden issued-token">
                 <div class="caption">Shown once</div>
                 <div class="token-box" id="token-secret"></div>
@@ -184,30 +156,34 @@
           <div class="stack">
             <article class="block">
               <div class="block-head">
-                <h2>Portal accounts</h2>
-                <button class="quiet" data-action="load-accounts">Reload</button>
+                <h2>MCP token</h2>
               </div>
-              <div id="accounts-list"></div>
-            </article>
-            <article class="block">
-              <div class="block-head">
-                <h2>Bearer tokens</h2>
-                <button class="quiet" data-action="load-tokens">Reload</button>
-              </div>
-              <div id="tokens-list"></div>
+              <div id="token-status"></div>
             </article>
           </div>
         </div>
       </section>
 
       <section id="projects" class="view hidden">
+        <article id="project-create" class="block hidden">
+          <div class="block-head"><h2>Create project</h2></div>
+          <div class="project-form">
+            <label>Name <input id="project-name" maxlength="255"></label>
+            <label>Project path <input id="project-path" placeholder="Optional path ending in .bnpr"></label>
+            <label>Description <input id="project-description"></label>
+          </div>
+          <div class="form-actions">
+            <button class="quiet" data-action="toggle-project-create">Cancel</button>
+            <button class="primary" data-action="create-project">Create</button>
+          </div>
+        </article>
         <article class="block">
           <div class="block-head">
             <div>
               <h2>Local project catalog</h2>
-              <div class="meta">Projects are discovered from configured roots. Deletion requires confirmation and no open handles.</div>
+              <div class="meta">Projects are stored in configured roots, see System/Configuration</div>
             </div>
-            <button class="quiet" data-action="load-projects">Reload</button>
+            <button class="primary" data-action="toggle-project-create">Create Project</button>
           </div>
           <div id="projects-list"></div>
         </article>
@@ -217,28 +193,17 @@
         <div id="config-warning" class="notice hidden">Saved configuration differs from the running daemon. Restart the service to apply it.</div>
         <article class="block">
           <div class="block-head">
-            <div>
-              <h2>Daemon configuration</h2>
-              <div class="meta">Validated and atomically persisted. Changes are never hot-applied.</div>
-            </div>
+            <h2>Configuration</h2>
             <div class="actions">
-              <button class="quiet" data-action="load-config">Reload</button>
-              <button class="primary" data-action="save-config">Validate &amp; save</button>
+              <button class="quiet" data-action="load-config">Reload from disk</button>
+              <button class="primary" data-action="save-config">Save</button>
             </div>
           </div>
           <div class="config-grid">
+            <label><span>Listener port <span class="tooltip" tabindex="0" data-tooltip="The port binja'd listens on. Change this only if 8712 is already taken.">?</span></span><input id="cfg-port" type="number" min="1" max="65535"></label>
+            <label><span>CPU allocation % <span class="tooltip" tabindex="0" data-tooltip="How much of this computer's CPU binja'd is allowed to give Binary Ninja.">?</span></span><input id="cfg-cpu" type="number" min="1" max="100"></label>
             <label>
-              Mode
-              <select id="cfg-mode">
-                <option value="local">Local / Commercial</option>
-                <option value="auto">Auto</option>
-                <option value="collaboration">Collaboration</option>
-              </select>
-            </label>
-            <label>Listener port <input id="cfg-port" type="number" min="1" max="65535"></label>
-            <label>CPU allocation % <input id="cfg-cpu" type="number" min="1" max="100"></label>
-            <label>
-              Fairness
+              <span>Fairness <span class="tooltip" tabindex="0" data-tooltip="Controls what gets a fair slice of the worker budget when several analyses are ready.">?</span></span>
               <select id="cfg-fairness">
                 <option value="job">Job</option>
                 <option value="file">File</option>
@@ -247,31 +212,29 @@
               </select>
             </label>
             <label>
-              Subdivision
+              <span>Subdivision <span class="tooltip" tabindex="0" data-tooltip="Controls whether files inside one fairness group run one at a time or split workers evenly.">?</span></span>
               <select id="cfg-subdivision">
                 <option value="serial">Serial</option>
                 <option value="equal">Equal</option>
               </select>
             </label>
-            <label>Session TTL seconds <input id="cfg-session-ttl" type="number" min="1"></label>
-            <label>Detach after seconds <input id="cfg-detach" type="number" min="0"></label>
-            <label>Cancellation grace seconds <input id="cfg-grace" type="number" min="1"></label>
-            <label>Default token TTL seconds <input id="cfg-token-ttl" type="number" min="0"></label>
-            <label>Upload limit bytes <input id="cfg-upload-max" type="number" min="1"></label>
-            <label>Memory threshold bytes <input id="cfg-upload-memory" type="number" min="0"></label>
-            <label>Upload URL TTL seconds <input id="cfg-upload-ttl" type="number" min="1"></label>
-            <label class="check"><input id="cfg-upload-auth" type="checkbox"> Require bearer header on upload requests</label>
-            <label>Project roots, one per line <textarea id="cfg-roots"></textarea></label>
-            <label>Default project root <input id="cfg-default-root"></label>
-            <label>Spool path <input id="cfg-spool"></label>
+            <label><span>Session TTL seconds <span class="tooltip" tabindex="0" data-tooltip="How long an inactive analysis session sticks around before binja'd closes it.">?</span></span><input id="cfg-session-ttl" type="number" min="1"></label>
+            <label><span>Detach after seconds <span class="tooltip" tabindex="0" data-tooltip="How long a request can run before binja'd hands it back as a background job. Set 0 to detach immediately.">?</span></span><input id="cfg-detach" type="number" min="0"></label>
+            <label><span>Cancellation grace seconds <span class="tooltip" tabindex="0" data-tooltip="How long binja'd waits for Binary Ninja to stop cleanly before killing and restarting its file process.">?</span></span><input id="cfg-grace" type="number" min="1"></label>
+            <label><span>Upload limit bytes <span class="tooltip" tabindex="0" data-tooltip="The largest single file the upload endpoint will accept, in bytes.">?</span></span><input id="cfg-upload-max" type="number" min="1"></label>
+            <label><span>Memory threshold bytes <span class="tooltip" tabindex="0" data-tooltip="Uploads at or below this size stay in memory. Larger uploads spill into the private spool.">?</span></span><input id="cfg-upload-memory" type="number" min="0"></label>
+            <label><span>Upload URL TTL seconds <span class="tooltip" tabindex="0" data-tooltip="How long a one-time upload URL stays usable if nobody finishes an upload.">?</span></span><input id="cfg-upload-ttl" type="number" min="1"></label>
+            <label class="check"><input id="cfg-upload-auth" type="checkbox"><span>Require Bearer Header w/ MCP token on file uploads <span class="tooltip" tabindex="0" data-tooltip="Makes uploads include the same MCP Bearer token as normal MCP calls. Leave this off when the upload URL itself should be the credential.">?</span></span></label>
+            <label><span>Project roots, one per line <span class="tooltip" tabindex="0" data-tooltip="Directories binja'd scans recursively for .bnpr and .bnpm projects when it starts.">?</span></span><textarea id="cfg-roots"></textarea></label>
+            <label><span>Default project root <span class="tooltip" tabindex="0" data-tooltip="Where new projects go when no absolute destination is provided. It must also appear in Project roots.">?</span></span><input id="cfg-default-root"></label>
+            <label><span>Spool path <span class="tooltip" tabindex="0" data-tooltip="Private scratch space for uploads and working files. Leave it empty to use the default beside this config.">?</span></span><input id="cfg-spool"></label>
           </div>
           <div class="field-row">
-            <label class="check"><input id="cfg-infinite" type="checkbox"> Allow infinite bearer tokens</label>
-            <label class="check"><input id="cfg-arbitrary" type="checkbox"> Allow admin arbitrary-path opens</label>
-            <label class="check danger-setting"><input id="cfg-unauthenticated" type="checkbox"> Very dangerous unauthenticated portal</label>
+            <label class="check"><input id="cfg-arbitrary" type="checkbox"><span>Tokens can request binaryninja open a local file directly from the MCP computer's disk without requiring uploads <span class="tooltip" tabindex="0" data-tooltip="Lets MCP tokens ask Binary Ninja to open a regular file straight from this computer. Turn it off if every file should come through a project or upload.">?</span></span></label>
+            <label class="check"><input id="cfg-project-registration" type="checkbox"><span>Allow local projects outside configured roots to be created or registered <span class="tooltip" tabindex="0" data-tooltip="Lets admin MCP tokens persist projects from arbitrary local paths. Leave this off unless an existing outside-root project must be adopted or a project must intentionally remain outside configured roots.">?</span></span></label>
           </div>
           <details class="advanced">
-            <summary>Advanced JSON</summary>
+            <summary>Advanced JSON <span class="tooltip" tabindex="0" data-tooltip="The complete config file. Guided controls above are written into this JSON when you save.">?</span></summary>
             <p class="meta">The complete schema is authoritative. Guided controls are synchronized before save.</p>
             <textarea id="config-json" class="raw" spellcheck="false"></textarea>
           </details>
@@ -279,14 +242,8 @@
       </section>
 
       <section id="enabled-tools" class="view hidden">
+        <div class="section-note">Updates immediately on change</div>
         <article class="block">
-          <div class="block-head">
-            <div>
-              <h2>Enabled tool packs</h2>
-              <div class="meta">Keep only the capabilities clients need in their MCP context. Changes apply after the daemon restarts.</div>
-            </div>
-            <button class="primary" data-action="save-config">Validate &amp; save</button>
-          </div>
           <div id="enabled-tool-packs" class="tool-pack-list"></div>
         </article>
       </section>
@@ -294,11 +251,7 @@
       <section id="context" class="view hidden">
         <article class="block">
           <div class="block-head">
-            <div>
-              <h2>Model context inspector</h2>
-              <div class="meta">Generated from the running daemon's authoritative MCP definitions and feature gates.</div>
-            </div>
-            <button class="quiet" data-action="load-context">Refresh</button>
+            <h2>Model context inspector</h2>
           </div>
           <div class="context-controls">
             <label>
@@ -311,35 +264,21 @@
               </select>
             </label>
             <label>
-              Bearer role
-              <select id="mcp-context-role" class="mcp-role">
-                <option value="admin">Admin</option>
-                <option value="user">User</option>
-              </select>
-            </label>
-            <label>
               OpenCode namespace
               <input id="mcp-client-name" value="binjad" maxlength="64">
             </label>
           </div>
         </article>
-        <div id="context-summary" class="context-summary"></div>
         <article class="block">
           <div class="block-head">
             <div>
-              <h2>Exact MCP wire context</h2>
-              <div class="meta">Byte-for-byte JSON-RPC payloads produced by binjad. Client-side model encoding is outside the MCP server boundary.</div>
+              <h2>Model view</h2>
+              <div class="meta">This is what a model sees as formatted by opencode</div>
             </div>
-          </div>
-          <div id="mcp-wire-context" class="document-list"></div>
-        </article>
-        <article class="block">
-          <div class="block-head">
-            <div>
-              <h2>OpenCode-oriented projection</h2>
-              <div id="opencode-boundary" class="meta"></div>
+            <div class="document-actions">
+              <span id="model-context-size" class="document-size"></span>
+              <button class="quiet" data-action="copy-opencode-context">Copy JSON</button>
             </div>
-            <button class="quiet" data-action="copy-opencode-context">Copy JSON</button>
           </div>
           <pre id="opencode-context" class="code-document"></pre>
         </article>
@@ -350,9 +289,8 @@
           <div class="block-head">
             <div>
               <h2>Tool call reference</h2>
-              <div class="meta">Descriptions and input schemas are the same objects advertised through tools/list.</div>
+              <div class="meta">these are the docs provided to model per toolcall</div>
             </div>
-            <button class="quiet" data-action="load-tool-docs">Refresh</button>
           </div>
           <div class="tool-controls">
             <label>
@@ -365,19 +303,11 @@
               </select>
             </label>
             <label>
-              Bearer role
-              <select id="mcp-tools-role" class="mcp-role">
-                <option value="admin">Admin</option>
-                <option value="user">User</option>
-              </select>
-            </label>
-            <label>
               Filter tools
               <input id="tool-filter" type="search" placeholder="Name, category, or description">
             </label>
           </div>
         </article>
-        <div id="tool-docs-summary" class="context-summary"></div>
         <div id="tool-docs-list" class="tool-docs-list"></div>
         <article class="block">
           <div class="block-head"><h2>Failure contracts</h2></div>

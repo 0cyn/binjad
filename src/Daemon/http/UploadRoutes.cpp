@@ -1,6 +1,6 @@
-#include "binjad/http/upload_routes.hpp"
+#include "binjad/http/UploadRoutes.hpp"
 
-#include "binjad/platform/paths.hpp"
+#include "binjad/platform/Paths.hpp"
 
 #include <algorithm>
 #include <charconv>

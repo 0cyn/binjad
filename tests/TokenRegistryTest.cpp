@@ -1,4 +1,4 @@
-#include "binjad/security/token_registry.hpp"
+#include "binjad/security/TokenRegistry.hpp"
 
 #include <gtest/gtest.h>
 
@@ -14,13 +14,12 @@ namespace
 {
 class MemoryCredentialStore final : public binjad::security::CredentialStore
 {
-  public:
+public:
     binjad::security::CredentialReadResult Read(std::string_view key) override
     {
         const auto value = values.find(std::string(key));
-        return value == values.end()
-            ? binjad::security::CredentialReadResult{}
-            : binjad::security::CredentialReadResult{value->second, {}};
+        return value == values.end() ? binjad::security::CredentialReadResult{}
+                                     : binjad::security::CredentialReadResult{value->second, {}};
     }
 
     std::string Write(std::string_view key, std::string_view value) override
@@ -41,10 +40,9 @@ class MemoryCredentialStore final : public binjad::security::CredentialStore
 #if !defined(_WIN32)
 class TemporaryDirectory
 {
-  public:
+public:
     explicit TemporaryDirectory(std::string_view name)
-        : path(std::filesystem::temp_directory_path() /
-            (std::string(name) + '-' + std::to_string(::getpid())))
+        : path(std::filesystem::temp_directory_path() / (std::string(name) + '-' + std::to_string(::getpid())))
     {
         std::error_code ignored;
         std::filesystem::remove_all(path, ignored);
@@ -59,23 +57,22 @@ class TemporaryDirectory
     std::filesystem::path path;
 };
 #endif
-}
+} // namespace
 
 TEST(TokenRegistryTest, ParsesStrictVersionedRecordsAndInfiniteExpiry)
 {
     const std::string verifier(64, 'a');
     const std::string tokenId(64, 'b');
     const std::string accountId(64, 'c');
-    const auto json = std::string(R"({"version":1,"tokens":{")") + verifier +
-        R"(":{"id":")" + tokenId + R"(","issuer_account_id":")" + accountId +
-        R"(","role":"admin","label":"release","created_at":10,"expires_at":0}}})";
+    const auto json = std::string(R"({"version":2,"tokens":{")") + verifier + R"(":{"id":")" + tokenId
+        + R"(","issuer_account_id":")" + accountId
+        + R"(","role":"admin","label":"release","created_at":10,"expires_at":0}}})";
     const auto parsed = binjad::security::ParseTokenRegistry(json);
     ASSERT_TRUE(parsed.records.has_value()) << parsed.error;
     ASSERT_EQ(parsed.records->size(), 1U);
     EXPECT_FALSE(parsed.records->at(verifier).expiresAt.has_value());
 
-    const auto unknown = binjad::security::ParseTokenRegistry(
-        R"({"version":1,"tokens":{},"unexpected":true})");
+    const auto unknown = binjad::security::ParseTokenRegistry(R"({"version":2,"tokens":{},"unexpected":true})");
     EXPECT_FALSE(unknown.records.has_value());
     EXPECT_NE(unknown.error.find("unknown field"), std::string::npos);
 }
@@ -90,8 +87,8 @@ TEST(TokenRegistryTest, CreatesIssuesAuthenticatesReloadsAndRevokes)
     ASSERT_TRUE(registry.Load().empty());
     EXPECT_TRUE(registry.IsLoaded());
 
-    const auto issued = registry.Issue({std::string(64, 'c'),
-        binjad::security::TokenRole::Admin, "release", 10, 100});
+    const auto issued =
+        registry.ReplaceForIssuer({std::string(64, 'c'), binjad::security::TokenRole::Admin, "release", 10, 100});
     ASSERT_TRUE(issued.token.has_value()) << issued.error;
     ASSERT_TRUE(issued.record.has_value());
     EXPECT_TRUE(registry.Authenticator().Authenticate(*issued.token, 99).has_value());
@@ -114,9 +111,9 @@ TEST(TokenRegistryTest, RefusesRecordsWithoutOriginalHmacKey)
     MemoryCredentialStore credentials;
     binjad::security::TokenRegistry registry(credentials, path);
     ASSERT_TRUE(registry.Load().empty());
-    ASSERT_TRUE(registry.Issue({std::string(64, 'c'),
-        binjad::security::TokenRole::User, {}, 10, 100}).token.has_value());
-    credentials.values.erase("tokens-hmac-key");
+    ASSERT_TRUE(registry.ReplaceForIssuer({std::string(64, 'c'), binjad::security::TokenRole::User, {}, 10, 100})
+            .token.has_value());
+    credentials.values.erase("tokens-hmac-key-v2");
 
     binjad::security::TokenRegistry reopened(credentials, path);
     EXPECT_NE(reopened.Load().find("HMAC key is missing"), std::string::npos);
@@ -128,17 +125,17 @@ TEST(TokenRegistryTest, ValidatesLabelsBeforePersistence)
     MemoryCredentialStore credentials;
     binjad::security::TokenRegistry registry(credentials, temporary.path / "tokens.json");
     ASSERT_TRUE(registry.Load().empty());
-    const auto invalid = registry.Issue({std::string(64, 'c'),
-        binjad::security::TokenRole::User, "line\nbreak", 10, 100});
+    const auto invalid =
+        registry.ReplaceForIssuer({std::string(64, 'c'), binjad::security::TokenRole::User, "line\nbreak", 10, 100});
     EXPECT_FALSE(invalid.token.has_value());
     EXPECT_NE(invalid.error.find("control-free"), std::string::npos);
-    const auto invalidUtf8 = registry.Issue({std::string(64, 'c'),
-        binjad::security::TokenRole::User, std::string("invalid\xff", 8), 10, 100});
+    const auto invalidUtf8 = registry.ReplaceForIssuer(
+        {std::string(64, 'c'), binjad::security::TokenRole::User, std::string("invalid\xff", 8), 10, 100});
     EXPECT_FALSE(invalidUtf8.token.has_value());
     EXPECT_TRUE(registry.Records().empty());
 }
 
-TEST(TokenRegistryTest, ListsAndRevokesTokensByIssuer)
+TEST(TokenRegistryTest, ReplacesOneTokenPerIssuer)
 {
     TemporaryDirectory temporary("binjad-token-issuer");
     MemoryCredentialStore credentials;
@@ -146,16 +143,20 @@ TEST(TokenRegistryTest, ListsAndRevokesTokensByIssuer)
     ASSERT_TRUE(registry.Load().empty());
     const std::string firstIssuer(64, 'c');
     const std::string secondIssuer(64, 'd');
-    ASSERT_TRUE(registry.Issue({firstIssuer,
-        binjad::security::TokenRole::User, "first", 10, 100}).token);
-    ASSERT_TRUE(registry.Issue({firstIssuer,
-        binjad::security::TokenRole::User, "second", 11, 100}).token);
-    ASSERT_TRUE(registry.Issue({secondIssuer,
-        binjad::security::TokenRole::User, "other", 12, 100}).token);
-    EXPECT_EQ(registry.RecordsForIssuer(firstIssuer).size(), 2U);
+    const auto first =
+        registry.ReplaceForIssuer({firstIssuer, binjad::security::TokenRole::User, "first", 10, 100}).token;
+    ASSERT_TRUE(first);
+    const auto replacement =
+        registry.ReplaceForIssuer({firstIssuer, binjad::security::TokenRole::User, "second", 11, 100});
+    ASSERT_TRUE(replacement.token);
+    ASSERT_EQ(replacement.replaced.size(), 1U);
+    ASSERT_TRUE(registry.ReplaceForIssuer({secondIssuer, binjad::security::TokenRole::User, "other", 12, 100}).token);
+    EXPECT_EQ(registry.RecordsForIssuer(firstIssuer).size(), 1U);
+    EXPECT_FALSE(registry.Authenticator().Authenticate(*first, 50));
+    EXPECT_TRUE(registry.Authenticator().Authenticate(*replacement.token, 50));
     std::size_t removed = 0;
     ASSERT_TRUE(registry.RevokeByIssuer(firstIssuer, removed).empty());
-    EXPECT_EQ(removed, 2U);
+    EXPECT_EQ(removed, 1U);
     EXPECT_TRUE(registry.RecordsForIssuer(firstIssuer).empty());
     EXPECT_EQ(registry.Records().size(), 1U);
 }

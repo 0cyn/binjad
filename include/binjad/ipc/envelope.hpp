@@ -1,6 +1,6 @@
 #pragma once
 
-#include "binjad/ipc/channel.hpp"
+#include "binjad/ipc/Channel.hpp"
 
 #include <ipc.pb.h>
 

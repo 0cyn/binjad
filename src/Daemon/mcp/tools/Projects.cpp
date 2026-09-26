@@ -1,16 +1,15 @@
-#include "../tool_call.hpp"
-#include "../tool_schema.hpp"
+#include "../ToolCall.hpp"
+#include "../ToolSchema.hpp"
 
-#include "binjad/overseer/collaboration_child_manager.hpp"
-#include "binjad/overseer/analysis_scheduler.hpp"
-#include "binjad/overseer/file_child_coordinator.hpp"
-#include "binjad/overseer/project_child_coordinator.hpp"
-#include "binjad/platform/paths.hpp"
-#include "binjad/project/collaboration_project_registry.hpp"
-#include "binjad/project/local_project_registry.hpp"
-#include "binjad/session/job_registry.hpp"
-#include "binjad/session/open_item_registry.hpp"
-#include "binjad/upload/upload_registry.hpp"
+#include "binjad/overseer/AnalysisScheduler.hpp"
+#include "binjad/overseer/FileChildCoordinator.hpp"
+#include "binjad/overseer/ProjectChildCoordinator.hpp"
+#include "binjad/platform/Paths.hpp"
+#include "binjad/project/LocalProjectRegistry.hpp"
+#include "binjad/security/Random.hpp"
+#include "binjad/session/JobRegistry.hpp"
+#include "binjad/session/OpenItemRegistry.hpp"
+#include "binjad/upload/UploadRegistry.hpp"
 
 #include <binaryninjacore.h>
 
@@ -21,6 +20,9 @@
 #include <filesystem>
 #include <fstream>
 #include <limits>
+#include <set>
+#include <unordered_map>
+#include <unordered_set>
 
 namespace binjad::mcp {
 	namespace {
@@ -157,25 +159,6 @@ namespace binjad::mcp {
 				writer.EndObject();
 			}
 
-			template <typename WriterType>
-			void WriteCollaborationProject(WriterType& writer, const project::CollaborationProjectRecord& project)
-			{
-				writer.StartObject();
-				writer.Key("project");
-				writer.String(project.reference.data(), static_cast<rapidjson::SizeType>(project.reference.size()));
-				writer.Key("name");
-				writer.String(project.name.data(), static_cast<rapidjson::SizeType>(project.name.size()));
-				writer.Key("description");
-				writer.String(project.description.data(), static_cast<rapidjson::SizeType>(project.description.size()));
-				writer.Key("createdAt");
-				writer.Int64(project.created);
-				writer.Key("lastModified");
-				writer.Int64(project.lastModified);
-				writer.Key("admin");
-				writer.Bool(project.admin);
-				writer.EndObject();
-			}
-
 			template <typename Record, typename WriteRecord>
 			std::string PaginatedJson(std::string_view key, const std::vector<Record>& records,
 				const rapidjson::Value& arguments, WriteRecord writeRecord)
@@ -230,34 +213,6 @@ namespace binjad::mcp {
 				return ToolCallSuccess(context, {buffer.GetString(), buffer.GetSize()});
 			}
 
-			FoundationResult CollaborationProjectList(const ToolCallContext& context)
-			{
-				if (!context.collaborationManager)
-					return ToolCallSuccess(
-						context, detail::ErrorJson("collaboration project service is unavailable"), true);
-				const auto projects = context.collaborationManager->ListProjects(context.principal);
-				if (!projects.value)
-					return ToolCallSuccess(context, detail::ErrorJson(projects.error), true);
-				return ToolCallSuccess(context,
-					PaginatedJson("projects", *projects.value, context.arguments,
-						[](auto& writer, const auto& project) { WriteCollaborationProject(writer, project); }));
-			}
-
-			FoundationResult CollaborationProjectInfo(const ToolCallContext& context)
-			{
-				const auto member = context.arguments.FindMember("project");
-				const std::string reference(member->value.GetString(), member->value.GetStringLength());
-				const auto project = context.collaborationProjects ?
-					context.collaborationProjects->Find(context.principal.id, reference) :
-					std::nullopt;
-				if (!project)
-					return ToolCallSuccess(context, detail::ErrorJson("project not found"), true);
-				StringBuffer buffer;
-				Writer<StringBuffer> writer(buffer);
-				WriteCollaborationProject(writer, *project);
-				return ToolCallSuccess(context, {buffer.GetString(), buffer.GetSize()});
-			}
-
 			template <typename WriterType>
 			void WriteLocalProjectFile(WriterType& writer, const project::LocalProjectFileRecord& file)
 			{
@@ -274,37 +229,6 @@ namespace binjad::mcp {
 				{
 					writer.Key("folder");
 					writer.String(file.folderPath->data(), static_cast<rapidjson::SizeType>(file.folderPath->size()));
-				}
-				writer.EndObject();
-			}
-
-			template <typename WriterType>
-			void WriteCollaborationFile(WriterType& writer, const project::CollaborationFileRecord& file)
-			{
-				writer.StartObject();
-				writer.Key("path");
-				writer.String(file.path.data(), static_cast<rapidjson::SizeType>(file.path.size()));
-				writer.Key("name");
-				writer.String(file.name.data(), static_cast<rapidjson::SizeType>(file.name.size()));
-				writer.Key("description");
-				writer.String(file.description.data(), static_cast<rapidjson::SizeType>(file.description.size()));
-				writer.Key("size");
-				writer.Uint64(file.size);
-				writer.Key("type");
-				switch (file.type)
-				{
-				case RawDataFileType:
-					writer.String("raw");
-					break;
-				case BinaryViewAnalysisFileType:
-					writer.String("analysis");
-					break;
-				case TypeArchiveFileType:
-					writer.String("type_archive");
-					break;
-				default:
-					writer.String("unknown");
-					break;
 				}
 				writer.EndObject();
 			}
@@ -389,8 +313,9 @@ namespace binjad::mcp {
 					if (context.principal.role != security::TokenRole::Admin)
 						return ToolCallSuccess(context,
 							detail::ErrorJson("administrator token required for an absolute project path"), true);
-					if (!context.config.projects.allowArbitraryPaths)
-						return ToolCallSuccess(context, detail::ErrorJson("arbitrary server paths are disabled"), true);
+					if (!context.config.projects.allowProjectRegistration)
+						return ToolCallSuccess(
+							context, detail::ErrorJson("outside-root project creation is disabled"), true);
 					if (normalized.extension() != ".bnpr")
 						return ToolCallInvalidArguments(context, "absolute path must end in .bnpr");
 					destination = normalized;
@@ -412,21 +337,6 @@ namespace binjad::mcp {
 				return ToolCallSuccess(context, {buffer.GetString(), buffer.GetSize()});
 			}
 
-			FoundationResult CollaborationProjectFileList(const ToolCallContext& context)
-			{
-				if (!context.collaborationManager)
-					return ToolCallSuccess(
-						context, detail::ErrorJson("collaboration project service is unavailable"), true);
-				const auto project = detail::RequiredString(context.arguments, "project");
-				const auto files = context.collaborationManager->ListFiles(context.principal, project);
-				if (!files.value)
-					return ToolCallSuccess(context, detail::ErrorJson(files.error), true);
-				return ToolCallSuccess(context,
-					PaginatedJson("files", *files.value, context.arguments, [](auto& writer, const auto& file) {
-						WriteCollaborationFile(writer, file);
-					}));
-			}
-
 			BINJAD_PROJECT_TOOL(LocalProjectListTool, "bn_local_project_list", "List local projects.", Core, "Projects",
 				ToolCallAvailability::LocalMode, LocalProjectList, schema::Integer("offset", false, 0),
 				schema::Integer("limit", false, 1, 1000, 50,
@@ -446,18 +356,6 @@ namespace binjad::mcp {
 				"administrator.",
 				Core, "Projects", ToolCallAvailability::LocalMode, LocalProjectCreate, schema::String("name", true),
 				schema::NonEmptyString("path"), schema::String("description"));
-			BINJAD_PROJECT_TOOL(CollaborationProjectListTool, "bn_collaboration_project_list",
-				"Refresh and list collaboration projects.", Core, "Projects", ToolCallAvailability::CollaborationMode,
-				CollaborationProjectList, schema::Integer("offset", false, 0),
-				schema::Integer("limit", false, 1, 1000, 50,
-					"Return at most 50 items by default; continue with the response nextOffset."));
-			BINJAD_PROJECT_TOOL(CollaborationProjectInfoTool, "bn_collaboration_project_info",
-				"Inspect a collaboration project.", Core, "Projects", ToolCallAvailability::CollaborationMode,
-				CollaborationProjectInfo, schema::String("project", true));
-			BINJAD_PROJECT_TOOL(CollaborationProjectFileListTool, "bn_collaboration_project_file_list",
-				"List files in a collaboration project.", Core, "Projects", ToolCallAvailability::CollaborationMode,
-				CollaborationProjectFileList, schema::String("project", true), schema::Integer("offset", false, 0),
-				schema::Integer("limit", false, 1, 1000));
 			BINJAD_PROJECT_TOOL(ProjectFileOpenTool, "bn_project_file_open",
 				"Discover BinaryView candidates for a project file; call bn_binary_view_open before using a candidate.",
 				Core, "Projects", ToolCallAvailability::None, ExecuteOpenItemTool, schema::String("project", true),
@@ -474,6 +372,8 @@ namespace binjad::mcp {
 			constexpr auto kLocal = ToolCallAvailability::LocalMode;
 			constexpr auto kLocalAdminPaths =
 				ToolCallAvailability::LocalMode | ToolCallAvailability::Admin | ToolCallAvailability::ArbitraryPaths;
+			constexpr auto kLocalAdminRegistration = ToolCallAvailability::LocalMode | ToolCallAvailability::Admin
+				| ToolCallAvailability::ProjectRegistration;
 
 			using rapidjson::StringBuffer;
 			using rapidjson::Writer;
@@ -530,8 +430,8 @@ namespace binjad::mcp {
 			{
 				if (context.principal.role != security::TokenRole::Admin)
 					return ToolCallSuccess(context, detail::ErrorJson("administrator token required"), true);
-				if (!context.config.projects.allowArbitraryPaths)
-					return ToolCallSuccess(context, detail::ErrorJson("arbitrary server paths are disabled"), true);
+				if (!context.config.projects.allowProjectRegistration)
+					return ToolCallSuccess(context, detail::ErrorJson("outside-root project registration is disabled"), true);
 				if (!context.projectCoordinator)
 					return ToolCallSuccess(context, detail::ErrorJson("local project service is unavailable"), true);
 				const auto registered =
@@ -542,6 +442,527 @@ namespace binjad::mcp {
 				Writer<StringBuffer> writer(buffer);
 				catalog_tools::WriteLocalProject(writer, *registered.value);
 				return ToolCallSuccess(context, {buffer.GetString(), buffer.GetSize()});
+			}
+
+			std::string ActiveJobJson(const session::JobRecord& job)
+			{
+				StringBuffer buffer;
+				Writer<StringBuffer> writer(buffer);
+				writer.StartObject();
+				writer.Key("job");
+				writer.String(job.reference.data(), static_cast<rapidjson::SizeType>(job.reference.size()));
+				writer.Key("operation");
+				writer.String(job.operation.data(), static_cast<rapidjson::SizeType>(job.operation.size()));
+				writer.Key("state");
+				const auto state = session::JobStateName(job.state);
+				writer.String(state.data(), static_cast<rapidjson::SizeType>(state.size()));
+				writer.Key("pollAfterMilliseconds");
+				writer.Uint(10000);
+				writer.Key("nextAction");
+				writer.String("Call bn_job_info no more than every 10 seconds; when terminal, call bn_job_result exactly once.");
+				writer.EndObject();
+				return {buffer.GetString(), buffer.GetSize()};
+			}
+
+			bool JobCancelled(session::JobRegistry& jobs, std::string_view owner, std::string_view job)
+			{
+				const auto info = jobs.Info(owner, job);
+				return !info.job || info.job->cancelRequested;
+			}
+
+			std::string JoinProjectPath(std::string_view base, std::string_view relative)
+			{
+				return base.empty() ? std::string(relative) :
+					(std::filesystem::path(base) / std::filesystem::path(relative)).generic_string();
+			}
+
+			void AddPathAndParents(std::set<std::string>& paths, std::string_view path)
+			{
+				std::filesystem::path current;
+				for (const auto& component : std::filesystem::path(path))
+				{
+					current /= component;
+					paths.insert(current.generic_string());
+				}
+			}
+
+			struct DirectoryFile
+			{
+				std::filesystem::path source;
+				std::string relative;
+			};
+
+			struct DirectoryScan
+			{
+				std::vector<DirectoryFile> files;
+				std::vector<std::string> directories;
+				std::size_t skippedSymlinks = 0;
+			};
+
+			DirectoryScan ScanImportDirectory(const std::filesystem::path& source, std::string_view startAfter)
+			{
+				DirectoryScan result;
+				for (std::filesystem::recursive_directory_iterator iterator(source), end; iterator != end; ++iterator)
+				{
+					const auto status = iterator->symlink_status();
+					if (std::filesystem::is_symlink(status))
+					{
+						++result.skippedSymlinks;
+						continue;
+					}
+					const auto relativePath = iterator->path().lexically_relative(source);
+					const auto relative = relativePath.generic_string();
+					if (!detail::ProjectPath(relative))
+						throw std::runtime_error("source contains a path that cannot be represented in a project");
+					if (std::filesystem::is_directory(status))
+						result.directories.push_back(relative);
+					else if (std::filesystem::is_regular_file(status) && relative > startAfter)
+						result.files.push_back({iterator->path(), relative});
+				}
+				std::sort(result.files.begin(), result.files.end(), [](const auto& left, const auto& right) {
+					return left.relative < right.relative;
+				});
+				std::sort(result.directories.begin(), result.directories.end());
+				return result;
+			}
+
+			std::string DirectoryImportResult(std::string_view project, std::size_t total, std::size_t imported,
+				std::size_t skippedSymlinks, std::string_view lastCompleted, std::string_view failedPath = {},
+				std::string_view error = {})
+			{
+				StringBuffer buffer;
+				Writer<StringBuffer> writer(buffer);
+				writer.StartObject();
+				writer.Key("project");
+				writer.String(project.data(), static_cast<rapidjson::SizeType>(project.size()));
+				writer.Key("total");
+				writer.Uint64(total);
+				writer.Key("imported");
+				writer.Uint64(imported);
+				writer.Key("skippedSymlinks");
+				writer.Uint64(skippedSymlinks);
+				writer.Key("lastCompleted");
+				if (lastCompleted.empty())
+					writer.Null();
+				else
+					writer.String(lastCompleted.data(), static_cast<rapidjson::SizeType>(lastCompleted.size()));
+				if (!failedPath.empty())
+				{
+					writer.Key("failedPath");
+					writer.String(failedPath.data(), static_cast<rapidjson::SizeType>(failedPath.size()));
+				}
+				if (!error.empty())
+				{
+					writer.Key("error");
+					writer.String(error.data(), static_cast<rapidjson::SizeType>(error.size()));
+					writer.Key("nextAction");
+					writer.String(lastCompleted.empty() ?
+						"Resolve the reported failure and retry the same call." :
+						"Resolve the reported failure and retry with startAfter set to lastCompleted.");
+				}
+				writer.EndObject();
+				return {buffer.GetString(), buffer.GetSize()};
+			}
+
+			FoundationResult WaitForProjectJob(const ToolCallContext& context, std::string_view owner, std::string_view job)
+			{
+				const auto waited = context.jobs->WaitForTerminal(owner, job, context.config.jobs.detachAfter);
+				if (!waited.job)
+					return ToolCallSuccess(context, detail::ErrorJson(waited.error), true);
+				if (waited.job->state == session::JobState::Queued || waited.job->state == session::JobState::Running)
+					return ToolCallSuccess(context, ActiveJobJson(*waited.job));
+				const auto result = context.jobs->TakeResult(owner, job);
+				if (!result.job)
+					return ToolCallSuccess(context, detail::ErrorJson(result.error), true);
+				return ToolCallSuccess(
+					context, result.job->resultJson, result.job->state != session::JobState::Complete);
+			}
+
+			FoundationResult LocalProjectRootList(const ToolCallContext& context)
+			{
+				StringBuffer buffer;
+				Writer<StringBuffer> writer(buffer);
+				writer.StartObject();
+				writer.Key("roots");
+				writer.StartArray();
+				for (std::size_t index = 0; index < context.config.projects.roots.size(); ++index)
+				{
+					writer.StartObject();
+					writer.Key("index");
+					writer.Uint64(index);
+					writer.Key("default");
+					writer.Bool(context.config.projects.defaultRoot
+						&& *context.config.projects.defaultRoot == context.config.projects.roots[index]);
+					writer.EndObject();
+				}
+				writer.EndArray();
+				writer.Key("count");
+				writer.Uint64(context.config.projects.roots.size());
+				writer.EndObject();
+				return ToolCallSuccess(context, {buffer.GetString(), buffer.GetSize()});
+			}
+
+			FoundationResult LocalProjectDirectoryImport(const ToolCallContext& context)
+			{
+				if (!context.jobs || !context.projectCoordinator || !context.projects)
+					return ToolCallSuccess(context, detail::ErrorJson("project and job services are required"), true);
+				const auto project = detail::RequiredString(context.arguments, "project");
+				if (!context.projects->Find(project))
+					return ToolCallSuccess(context, detail::ErrorJson("local project not found"), true);
+				const std::filesystem::path source(detail::RequiredString(context.arguments, "source"));
+				std::error_code filesystemError;
+				const auto sourceStatus = std::filesystem::symlink_status(source, filesystemError);
+				if (!source.is_absolute() || filesystemError || std::filesystem::is_symlink(sourceStatus)
+					|| !std::filesystem::is_directory(sourceStatus))
+					return ToolCallInvalidArguments(context, "source must be an absolute non-symlink local directory");
+
+				std::string folder;
+				if (const auto requested = detail::OptionalString(context.arguments, "folder"))
+				{
+					const auto normalized = detail::ProjectPath(*requested);
+					if (!normalized)
+						return ToolCallInvalidArguments(context, "folder must be a contained project-relative path");
+					folder = *normalized;
+				}
+				std::string startAfter;
+				if (const auto requested = detail::OptionalString(context.arguments, "startAfter"))
+				{
+					const auto normalized = detail::ProjectPath(*requested);
+					if (!normalized)
+						return ToolCallInvalidArguments(context, "startAfter must be a contained source-relative path");
+					startAfter = *normalized;
+				}
+				const auto description = detail::OptionalString(context.arguments, "description")
+					.value_or("Imported local directory file");
+
+				const auto owner = context.principal.id;
+				const auto created = context.jobs->Create(owner,
+					context.currentSession ? std::optional(context.currentSession->reference) : std::nullopt, {},
+					"project_directory_import", context.unixNow, context.now);
+				if (!created.job)
+					return ToolCallSuccess(context, detail::ErrorJson(created.error), true);
+				const auto job = created.job->reference;
+				context.jobs->Start(owner, job, context.unixNow);
+				if (context.attached)
+					context.attached(job, [jobs = context.jobs, owner, job] { (void)jobs->Cancel(owner, job); });
+
+				const auto workerError = context.jobs->StartWorker([jobs = context.jobs,
+					projectCoordinator = context.projectCoordinator, owner, job, project, source, folder, startAfter,
+					description, progress = context.progress]() {
+					try
+					{
+						auto scan = ScanImportDirectory(source, startAfter);
+						const auto existingFiles = projectCoordinator->ListFiles(project);
+						if (!existingFiles.value)
+							throw std::runtime_error(existingFiles.error);
+						const auto existingFolders = projectCoordinator->ListFolders(project);
+						if (!existingFolders.value)
+							throw std::runtime_error(existingFolders.error);
+						std::unordered_set<std::string> filePaths;
+						std::unordered_map<std::string, std::string> folderIds;
+						for (const auto& file : *existingFiles.value)
+							filePaths.insert(file.path);
+						for (const auto& item : *existingFolders.value)
+							folderIds.emplace(item.path, item.internalId);
+
+						std::set<std::string> desiredFolders;
+						if (!folder.empty())
+							AddPathAndParents(desiredFolders, folder);
+						for (const auto& directory : scan.directories)
+							AddPathAndParents(desiredFolders, JoinProjectPath(folder, directory));
+						for (const auto& file : scan.files)
+						{
+							const auto destination = JoinProjectPath(folder, file.relative);
+							if (filePaths.contains(destination) || folderIds.contains(destination))
+								throw std::runtime_error("project destination already exists: " + destination);
+							const auto parent = std::filesystem::path(destination).parent_path().generic_string();
+							if (!parent.empty())
+								AddPathAndParents(desiredFolders, parent);
+						}
+						for (const auto& directory : desiredFolders)
+							if (filePaths.contains(directory))
+								throw std::runtime_error("project file blocks destination folder: " + directory);
+
+						std::vector<std::string> orderedFolders(desiredFolders.begin(), desiredFolders.end());
+						std::sort(orderedFolders.begin(), orderedFolders.end(), [](const auto& left, const auto& right) {
+							const std::filesystem::path leftPath(left);
+							const std::filesystem::path rightPath(right);
+							const auto leftDepth = std::distance(leftPath.begin(), leftPath.end());
+							const auto rightDepth = std::distance(rightPath.begin(), rightPath.end());
+							return leftDepth < rightDepth || (leftDepth == rightDepth && left < right);
+						});
+						for (const auto& directory : orderedFolders)
+						{
+							if (folderIds.contains(directory))
+								continue;
+							const auto path = std::filesystem::path(directory);
+							const auto parentPath = path.parent_path().generic_string();
+							std::optional<std::string_view> parentId;
+							if (!parentPath.empty())
+							{
+								const auto parent = folderIds.find(parentPath);
+								if (parent == folderIds.end())
+									throw std::runtime_error("project destination parent folder was not created");
+								parentId = parent->second;
+							}
+							const auto createdFolder = projectCoordinator->CreateFolder(
+								project, parentId, path.filename().string(), "Imported local directory");
+							if (!createdFolder.value)
+								throw std::runtime_error(createdFolder.error);
+							folderIds.emplace(directory, createdFolder.value->internalId);
+						}
+
+						std::size_t imported = 0;
+						std::string lastCompleted;
+						for (const auto& file : scan.files)
+						{
+							if (JobCancelled(*jobs, owner, job))
+							{
+								jobs->MarkCancelled(owner, job,
+									DirectoryImportResult(project, scan.files.size(), imported,
+										scan.skippedSymlinks, lastCompleted, file.relative, "job cancelled"),
+									detail::CurrentUnixSeconds());
+								return;
+							}
+							jobs->ReportProgress(owner, job, "import", imported, scan.files.size(), file.relative,
+								detail::CurrentUnixSeconds());
+							if (progress)
+							{
+								const auto current = jobs->Info(owner, job);
+								if (current.job)
+									progress(*current.job);
+							}
+							const auto committed = projectCoordinator->CommitFile(project,
+								JoinProjectPath(folder, file.relative), file.source, false, true, description);
+							if (!committed.value)
+							{
+								jobs->Fail(owner, job,
+									DirectoryImportResult(project, scan.files.size(), imported,
+										scan.skippedSymlinks, lastCompleted, file.relative, committed.error),
+									detail::CurrentUnixSeconds());
+								return;
+							}
+							++imported;
+							lastCompleted = file.relative;
+						}
+						jobs->Complete(owner, job,
+							DirectoryImportResult(project, scan.files.size(), imported,
+								scan.skippedSymlinks, lastCompleted), detail::CurrentUnixSeconds());
+					}
+					catch (const std::exception& exception)
+					{
+						jobs->Fail(owner, job, detail::ErrorJson(exception.what()), detail::CurrentUnixSeconds());
+					}
+				});
+				if (!workerError.empty())
+					context.jobs->Fail(owner, job, detail::ErrorJson(workerError), context.unixNow);
+				return WaitForProjectJob(context, owner, job);
+			}
+
+			bool LexicallyContained(const std::filesystem::path& path, const std::filesystem::path& root)
+			{
+				const auto relative = path.lexically_normal().lexically_relative(root.lexically_normal());
+				return !relative.empty() && !relative.is_absolute() && *relative.begin() != "..";
+			}
+
+			struct CopyResult
+			{
+				bool copied = false;
+				bool cancelled = false;
+				std::string error;
+			};
+
+			CopyResult CopyProjectPath(const std::filesystem::path& source, const std::filesystem::path& destination,
+				session::JobRegistry& jobs, std::string_view owner, std::string_view job,
+				const Foundation::JobProgressCallback& progress)
+			{
+				struct CopyFile { std::filesystem::path source; std::filesystem::path relative; std::uint64_t size; };
+				std::vector<CopyFile> files;
+				std::vector<std::filesystem::path> directories;
+				std::uint64_t totalBytes = 0;
+				try
+				{
+					if (std::filesystem::is_directory(source))
+					{
+						for (std::filesystem::recursive_directory_iterator iterator(source), end; iterator != end; ++iterator)
+						{
+							const auto status = iterator->symlink_status();
+							if (std::filesystem::is_symlink(status))
+								return {false, false, "project storage contains a symbolic link"};
+							const auto relative = iterator->path().lexically_relative(source);
+							if (std::filesystem::is_directory(status))
+								directories.push_back(relative);
+							else if (std::filesystem::is_regular_file(status))
+							{
+								const auto size = std::filesystem::file_size(iterator->path());
+								if (size > std::numeric_limits<std::uint64_t>::max() - totalBytes)
+									return {false, false, "project storage size exceeds supported bounds"};
+								files.push_back({iterator->path(), relative, size});
+								totalBytes += size;
+							}
+							else
+								return {false, false, "project storage contains an unsupported file type"};
+						}
+						std::filesystem::create_directories(destination);
+						for (const auto& directory : directories)
+							std::filesystem::create_directories(destination / directory);
+					}
+					else if (std::filesystem::is_regular_file(source))
+					{
+						const auto size = std::filesystem::file_size(source);
+						files.push_back({source, {}, size});
+						totalBytes = size;
+					}
+					else
+						return {false, false, "project source storage is not a regular file or directory"};
+
+					std::vector<char> buffer(1024 * 1024);
+					std::uint64_t copiedBytes = 0;
+					for (const auto& file : files)
+					{
+						const auto target = file.relative.empty() ? destination : destination / file.relative;
+						std::ifstream input(file.source, std::ios::binary);
+						std::ofstream output(target, std::ios::binary | std::ios::trunc);
+						if (!input || !output)
+							return {false, false, "cannot open project storage while copying"};
+						while (input)
+						{
+							if (JobCancelled(jobs, owner, job))
+								return {false, true, "job cancelled"};
+							input.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
+							const auto count = input.gcount();
+							if (count > 0)
+								output.write(buffer.data(), count);
+							if (!output)
+								return {false, false, "cannot write copied project storage"};
+							copiedBytes += static_cast<std::uint64_t>(count);
+							jobs.ReportProgress(owner, job, "copy", copiedBytes, totalBytes,
+								file.relative.empty() ? source.filename().string() : file.relative.generic_string(),
+								detail::CurrentUnixSeconds());
+							if (progress)
+							{
+								const auto current = jobs.Info(owner, job);
+								if (current.job)
+									progress(*current.job);
+							}
+						}
+						if (input.bad())
+							return {false, false, "cannot read project storage while copying"};
+					}
+					return {true, false, {}};
+				}
+				catch (const std::exception& exception)
+				{
+					return {false, false, exception.what()};
+				}
+			}
+
+			std::string RelocatedProjectJson(const project::LocalProjectRecord& project, std::size_t root,
+				std::string_view path)
+			{
+				StringBuffer buffer;
+				Writer<StringBuffer> writer(buffer);
+				writer.StartObject();
+				writer.Key("project");
+				catalog_tools::WriteLocalProject(writer, project);
+				writer.Key("root");
+				writer.Uint64(root);
+				writer.Key("path");
+				writer.String(path.data(), static_cast<rapidjson::SizeType>(path.size()));
+				writer.Key("sourceRetained");
+				writer.Bool(true);
+				writer.EndObject();
+				return {buffer.GetString(), buffer.GetSize()};
+			}
+
+			FoundationResult LocalProjectRelocate(const ToolCallContext& context)
+			{
+				if (!context.jobs || !context.projectCoordinator || !context.projects || !context.openItems)
+					return ToolCallSuccess(context, detail::ErrorJson("project, open-item, and job services are required"), true);
+				const auto projectReference = detail::RequiredString(context.arguments, "project");
+				const auto project = context.projects->Find(projectReference);
+				if (!project)
+					return ToolCallSuccess(context, detail::ErrorJson("local project not found"), true);
+				if (context.openItems->HasProject(projectReference))
+					return ToolCallSuccess(context, detail::ErrorJson("close every open item from this project before relocating it"), true);
+				const auto rootIndex = static_cast<std::size_t>(context.arguments["root"].GetUint64());
+				if (rootIndex >= context.config.projects.roots.size())
+					return ToolCallInvalidArguments(context, "root does not identify a configured project root");
+				for (const auto& root : context.config.projects.roots)
+					if (LexicallyContained(project->storagePath, root))
+						return ToolCallSuccess(context,
+							detail::ErrorJson("source project is already inside a configured root and cannot be untracked while retained"), true);
+				const auto relative = detail::ProjectPath(detail::RequiredString(context.arguments, "path"));
+				if (!relative)
+					return ToolCallInvalidArguments(context, "path must be a contained project-relative path");
+				const auto sourceExtension = project->storagePath.extension();
+				if ((sourceExtension != ".bnpr" && sourceExtension != ".bnpm")
+					|| std::filesystem::path(*relative).extension() != sourceExtension)
+					return ToolCallInvalidArguments(context, "path extension must match the source .bnpr or .bnpm project");
+
+				const auto destination = (context.config.projects.roots[rootIndex] / *relative).lexically_normal();
+				if (LexicallyContained(destination, project->storagePath))
+					return ToolCallInvalidArguments(context, "project destination cannot be inside the source project storage");
+				std::error_code filesystemError;
+				if (std::filesystem::exists(destination, filesystemError) || filesystemError)
+					return ToolCallSuccess(context, detail::ErrorJson(filesystemError ?
+						"cannot inspect project destination: " + filesystemError.message() :
+						"project destination already exists"), true);
+				auto random = security::GenerateHex256();
+				if (!random.value)
+					return ToolCallSuccess(context, detail::ErrorJson(random.error), true);
+				const auto stagingDirectory = destination.parent_path() / (".binjad-staging-" + *random.value);
+				const auto stagingPath = stagingDirectory / destination.filename();
+
+				const auto owner = context.principal.id;
+				const auto created = context.jobs->Create(owner,
+					context.currentSession ? std::optional(context.currentSession->reference) : std::nullopt, {},
+					"project_relocate", context.unixNow, context.now);
+				if (!created.job)
+					return ToolCallSuccess(context, detail::ErrorJson(created.error), true);
+				const auto job = created.job->reference;
+				context.jobs->Start(owner, job, context.unixNow);
+				if (context.attached)
+					context.attached(job, [jobs = context.jobs, owner, job] { (void)jobs->Cancel(owner, job); });
+
+				const auto workerError = context.jobs->StartWorker([jobs = context.jobs,
+					projectCoordinator = context.projectCoordinator, openItems = context.openItems, owner, job,
+					projectReference, source = project->storagePath, destination, stagingDirectory, stagingPath,
+					rootIndex, relative = *relative, progress = context.progress]() {
+					std::error_code ignored;
+					try
+					{
+						if (openItems->HasProject(projectReference))
+							throw std::runtime_error("project gained an open item before relocation started");
+						std::filesystem::create_directories(stagingDirectory);
+						const auto copied = CopyProjectPath(source, stagingPath, *jobs, owner, job, progress);
+						if (!copied.copied)
+						{
+							std::filesystem::remove_all(stagingDirectory, ignored);
+							if (copied.cancelled)
+								jobs->MarkCancelled(owner, job, detail::ErrorJson(copied.error), detail::CurrentUnixSeconds());
+							else
+								jobs->Fail(owner, job, detail::ErrorJson(copied.error), detail::CurrentUnixSeconds());
+							return;
+						}
+						if (openItems->HasProject(projectReference))
+							throw std::runtime_error("project gained an open item while it was being copied");
+						const auto relocated = projectCoordinator->RelocateProject(projectReference, stagingPath, destination);
+						if (!relocated.value)
+							throw std::runtime_error(relocated.error);
+						std::filesystem::remove_all(stagingDirectory, ignored);
+						jobs->Complete(owner, job, RelocatedProjectJson(*relocated.value, rootIndex, relative),
+							detail::CurrentUnixSeconds());
+					}
+					catch (const std::exception& exception)
+					{
+						std::filesystem::remove_all(stagingDirectory, ignored);
+						jobs->Fail(owner, job, detail::ErrorJson(exception.what()), detail::CurrentUnixSeconds());
+					}
+				});
+				if (!workerError.empty())
+					context.jobs->Fail(owner, job, detail::ErrorJson(workerError), context.unixNow);
+				return WaitForProjectJob(context, owner, job);
 			}
 
 			struct ImportRequest
@@ -1366,28 +1787,14 @@ namespace binjad::mcp {
 				detail::Pagination(context.arguments, offset, limit);
 				ScopedWorkingDirectory cleanup;
 				std::filesystem::path documentPath;
-				if (context.config.EffectiveMode() == Mode::Local)
-				{
-					if (!context.projectCoordinator)
-						return ToolCallSuccess(
-							context, detail::ErrorJson("local project service is unavailable"), true);
-					auto exported = context.projectCoordinator->ExportFile(project, path);
-					if (!exported.value)
-						return ToolCallSuccess(context, detail::ErrorJson(exported.error), true);
-					cleanup.path = exported.value->workingDirectory;
-					documentPath = exported.value->path;
-				}
-				else
-				{
-					if (!context.collaborationManager)
-						return ToolCallSuccess(
-							context, detail::ErrorJson("collaboration project service is unavailable"), true);
-					auto downloaded = context.collaborationManager->DownloadFile(context.principal, project, path);
-					if (!downloaded.value)
-						return ToolCallSuccess(context, detail::ErrorJson(downloaded.error), true);
-					cleanup.path = downloaded.value->workingDirectory;
-					documentPath = downloaded.value->path;
-				}
+				if (!context.projectCoordinator)
+					return ToolCallSuccess(
+						context, detail::ErrorJson("local project service is unavailable"), true);
+				auto exported = context.projectCoordinator->ExportFile(project, path);
+				if (!exported.value)
+					return ToolCallSuccess(context, detail::ErrorJson(exported.error), true);
+				cleanup.path = exported.value->workingDirectory;
+				documentPath = exported.value->path;
 				std::string error;
 				const auto output = json ?
 					ReadJson(documentPath, path, selector, offset, limit, error) :
@@ -1409,7 +1816,10 @@ namespace binjad::mcp {
 
 			BINJAD_RESTRICTED_PROJECT_TOOL(LocalProjectRegisterTool, "bn_local_project_register",
 				"Register an existing local .bnpr or .bnpm project by absolute path.", ProjectManagement, "Projects",
-				kLocalAdminPaths, LocalProjectRegister, schema::String("path", true));
+				kLocalAdminRegistration, LocalProjectRegister, schema::String("path", true));
+			BINJAD_PROJECT_TOOL(LocalProjectRootListTool, "bn_local_project_root_list",
+				"List configured project roots by config-order index without exposing filesystem paths.", ProjectManagement,
+				"Projects", kLocal, LocalProjectRootList);
 			BINJAD_RESTRICTED_PROJECT_TOOL(LocalProjectFileImportTool, "bn_local_project_file_import",
 				"Import one server-local regular file with optional project-file name and description; administrator "
 				"only.",
@@ -1431,6 +1841,22 @@ namespace binjad::mcp {
 						schema::String(
 							"description", false, "Initial project-file description for this imported file.")},
 					1, 1000));
+			BINJAD_RESTRICTED_PROJECT_TOOL(LocalProjectDirectoryImportTool, "bn_local_project_directory_import",
+				"Import a server-local directory recursively as an attached or detached job, preserving hierarchy, "
+				"including hidden files, skipping symlinks, and rejecting destination file collisions.",
+				ProjectManagement, "Projects", kLocalAdminPaths, LocalProjectDirectoryImport,
+				schema::String("project", true), schema::String("source", true),
+				schema::NonEmptyString("folder", false, "Optional project-relative destination folder."),
+				schema::NonEmptyString("startAfter", false,
+					"Resume after this exact source-relative path from a prior result's lastCompleted field."),
+				schema::String("description", false, "Description assigned to every imported project file."));
+			BINJAD_PROJECT_TOOL(LocalProjectRelocateTool, "bn_local_project_relocate",
+				"Copy an outside-root local project into a configured root, verify its durable ID, retain the source "
+				"on disk, and remove the source registration; administrator only.",
+				ProjectManagement, "Projects", ToolCallAvailability::LocalMode | ToolCallAvailability::Admin,
+				LocalProjectRelocate, schema::String("project", true), schema::Integer("root", true, 0),
+				schema::NonEmptyString("path", true,
+					"Contained destination path beneath the selected root, ending in the source project extension."));
 			BINJAD_PROJECT_TOOL(LocalProjectUpdateTool, "bn_local_project_update", "Update local project metadata.",
 				ProjectManagement, "Projects", kLocal, LocalProjectUpdate, schema::String("project", true),
 				schema::NonEmptyString("name"), schema::String("description"));
@@ -1647,9 +2073,6 @@ namespace binjad::mcp {
 				case session::OpenItemSourceKind::LocalProject:
 					writer.String("local_project");
 					break;
-				case session::OpenItemSourceKind::CollaborationProject:
-					writer.String("collaboration_project");
-					break;
 				}
 				writer.Key("source");
 				writer.String(item.source.data(), static_cast<rapidjson::SizeType>(item.source.size()));
@@ -1807,9 +2230,7 @@ namespace binjad::mcp {
 
 			FoundationResult UploadCommit(const ToolCallContext& context)
 			{
-				if (!context.currentSession || !context.uploads || !context.jobs
-					|| (context.config.EffectiveMode() == Mode::Local && !context.projectCoordinator)
-					|| (context.config.EffectiveMode() == Mode::Collaboration && !context.collaborationManager))
+				if (!context.currentSession || !context.uploads || !context.jobs || !context.projectCoordinator)
 					return ToolCallSuccess(context,
 						detail::ErrorJson("analysis session, upload, project, and job services are required"), true);
 				const auto id = detail::RequiredString(context.arguments, "id");
@@ -1858,8 +2279,6 @@ namespace binjad::mcp {
 				}
 				const auto workerError = context.jobs->StartWorker(
 					[jobs = context.jobs, uploads = context.uploads, projectCoordinator = context.projectCoordinator,
-						collaborationManager = context.collaborationManager, principal = context.principal,
-						collaborationMode = context.config.EffectiveMode() == Mode::Collaboration,
 						fileCoordinator = context.fileCoordinator, scheduler = context.scheduler,
 						openItems = context.openItems, owner, analysisSession, id, folder = std::move(folder), open,
 						analyze, job, progress = context.progress, payload = std::move(*payload.first)]() mutable {
@@ -1875,34 +2294,16 @@ namespace binjad::mcp {
 							(std::filesystem::path(*folder) / payload.upload.filename).generic_string() :
 							payload.upload.filename;
 						project::LocalProjectFileRecord committedFile;
-						session::OpenItemSourceKind sourceKind = session::OpenItemSourceKind::LocalProject;
+						constexpr auto sourceKind = session::OpenItemSourceKind::LocalProject;
 						std::string commitError;
-						if (collaborationMode)
-						{
-							const auto committed = collaborationManager->UploadFile(principal, payload.upload.project,
-								payload.path, folder.value_or(""), payload.upload.filename);
-							if (committed.value)
-							{
-								committedFile.internalId = committed.value->internalId;
-								committedFile.path = committed.value->path;
-								committedFile.name = committed.value->name;
-								committedFile.description = committed.value->description;
-							}
-							else
-								commitError = committed.error;
-							sourceKind = session::OpenItemSourceKind::CollaborationProject;
-						}
+						const auto committed = projectCoordinator->CommitFile(
+							payload.upload.project, target, payload.path, false, true, "Uploaded file");
+						if (committed.value)
+							committedFile = *committed.value;
 						else
-						{
-							const auto committed = projectCoordinator->CommitFile(
-								payload.upload.project, target, payload.path, false, true, "Uploaded file");
-							if (committed.value)
-								committedFile = *committed.value;
-							else
-								commitError = committed.error
-									+ "; the completed upload remains staged; retry bn_upload_commit with the same id after "
-									  "resolving the project write failure";
-						}
+							commitError = committed.error
+								+ "; the completed upload remains staged; retry bn_upload_commit with the same id after "
+								  "resolving the project write failure";
 						if (!commitError.empty())
 						{
 							uploads->CommitFailed(owner, id);
@@ -2055,17 +2456,17 @@ namespace binjad::mcp {
 		tools.emplace_back(std::make_unique<catalog_tools::LocalProjectInfoTool>());
 		tools.emplace_back(std::make_unique<catalog_tools::LocalProjectFileListTool>());
 		tools.emplace_back(std::make_unique<catalog_tools::LocalProjectCreateTool>());
-		tools.emplace_back(std::make_unique<catalog_tools::CollaborationProjectListTool>());
-		tools.emplace_back(std::make_unique<catalog_tools::CollaborationProjectInfoTool>());
-		tools.emplace_back(std::make_unique<catalog_tools::CollaborationProjectFileListTool>());
 		tools.emplace_back(std::make_unique<catalog_tools::ProjectFileOpenTool>());
 	}
 
 	void RegisterProjectManagementTools(std::vector<std::unique_ptr<ToolCall>>& tools)
 	{
 		tools.emplace_back(std::make_unique<management_tools::LocalProjectRegisterTool>());
+		tools.emplace_back(std::make_unique<management_tools::LocalProjectRootListTool>());
 		tools.emplace_back(std::make_unique<management_tools::LocalProjectFileImportTool>());
 		tools.emplace_back(std::make_unique<management_tools::LocalProjectFileImportBatchTool>());
+		tools.emplace_back(std::make_unique<management_tools::LocalProjectDirectoryImportTool>());
+		tools.emplace_back(std::make_unique<management_tools::LocalProjectRelocateTool>());
 		tools.emplace_back(std::make_unique<management_tools::LocalProjectUpdateTool>());
 		tools.emplace_back(std::make_unique<management_tools::LocalProjectFolderListTool>());
 		tools.emplace_back(std::make_unique<management_tools::LocalProjectFolderCreateTool>());

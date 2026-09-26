@@ -1,18 +1,16 @@
-#include "binjad/mcp/foundation.hpp"
+#include "binjad/mcp/Foundation.hpp"
 
-#include "tool_call.hpp"
+#include "ToolCall.hpp"
 
-#include "binjad/overseer/file_child_coordinator.hpp"
-#include "binjad/overseer/analysis_scheduler.hpp"
-#include "binjad/overseer/collaboration_child_manager.hpp"
-#include "binjad/overseer/project_child_coordinator.hpp"
-#include "binjad/platform/cpu.hpp"
-#include "binjad/platform/paths.hpp"
-#include "binjad/project/local_project_registry.hpp"
-#include "binjad/project/collaboration_project_registry.hpp"
-#include "binjad/session/open_item_registry.hpp"
-#include "binjad/session/job_registry.hpp"
-#include "binjad/upload/upload_registry.hpp"
+#include "binjad/overseer/FileChildCoordinator.hpp"
+#include "binjad/overseer/AnalysisScheduler.hpp"
+#include "binjad/overseer/ProjectChildCoordinator.hpp"
+#include "binjad/platform/Cpu.hpp"
+#include "binjad/platform/Paths.hpp"
+#include "binjad/project/LocalProjectRegistry.hpp"
+#include "binjad/session/OpenItemRegistry.hpp"
+#include "binjad/session/JobRegistry.hpp"
+#include "binjad/upload/UploadRegistry.hpp"
 
 #include <rapidjsonwrapper.h>
 #include <binaryninjacore.h>
@@ -112,8 +110,6 @@ namespace binjad::mcp {
 				return "path";
 			case session::OpenItemSourceKind::LocalProject:
 				return "local_project";
-			case session::OpenItemSourceKind::CollaborationProject:
-				return "collaboration_project";
 			}
 			return {};
 		}
@@ -340,36 +336,6 @@ namespace binjad::mcp {
 			});
 		}
 
-
-		template <typename WriterType>
-		void WriteCollaborationProject(WriterType& writer, const project::CollaborationProjectRecord& project)
-		{
-			writer.StartObject();
-			writer.Key("project");
-			writer.String(project.reference.data(), static_cast<rapidjson::SizeType>(project.reference.size()));
-			writer.Key("name");
-			writer.String(project.name.data(), static_cast<rapidjson::SizeType>(project.name.size()));
-			writer.Key("description");
-			writer.String(project.description.data(), static_cast<rapidjson::SizeType>(project.description.size()));
-			writer.Key("createdAt");
-			writer.Int64(project.created);
-			writer.Key("lastModified");
-			writer.Int64(project.lastModified);
-			writer.Key("admin");
-			writer.Bool(project.admin);
-			writer.EndObject();
-		}
-
-
-		std::string CollaborationProjectsJson(
-			const std::vector<project::CollaborationProjectRecord>& projects, std::size_t offset, std::size_t limit)
-		{
-			return PaginatedJson("projects", projects, offset, limit, [](auto& writer, const auto& project) {
-				WriteCollaborationProject(writer, project);
-			});
-		}
-
-
 		std::string SessionsJson(
 			const std::vector<session::AnalysisSessionRecord>& sessions, std::size_t offset, std::size_t limit)
 		{
@@ -546,8 +512,8 @@ namespace binjad::mcp {
 
 
 		std::string RegisteredToolsResponse(const ValidatedRequest& request, std::string_view serverVersion,
-			bool localProjects, bool collaborationProjects, const ToolConfig& tools, bool adminAllowed,
-			bool arbitraryLocalProjects)
+			bool localProjects, const ToolConfig& tools, bool adminAllowed,
+			bool arbitraryLocalProjects, bool projectRegistration)
 		{
 			const auto available = [&](const ToolCall& tool) {
 				if (!ToolCallCategoryEnabled(tool.Category(), tools))
@@ -557,11 +523,11 @@ namespace binjad::mcp {
 					return false;
 				if (HasAvailability(requirements, ToolCallAvailability::LocalMode) && !localProjects)
 					return false;
-				if (HasAvailability(requirements, ToolCallAvailability::CollaborationMode) && !collaborationProjects)
-					return false;
 				if (HasAvailability(requirements, ToolCallAvailability::Admin) && !adminAllowed)
 					return false;
 				if (HasAvailability(requirements, ToolCallAvailability::ArbitraryPaths) && !arbitraryLocalProjects)
+					return false;
+				if (HasAvailability(requirements, ToolCallAvailability::ProjectRegistration) && !projectRegistration)
 					return false;
 				return true;
 			};
@@ -583,14 +549,14 @@ namespace binjad::mcp {
 
 
 		std::string ToolsResponse(const ValidatedRequest& request, std::string_view serverVersion, bool localProjects,
-			bool collaborationProjects, const ToolConfig& tools, bool adminAllowed, bool arbitraryLocalProjects)
+			const ToolConfig& tools, bool adminAllowed, bool arbitraryLocalProjects, bool projectRegistration)
 		{
-			return RegisteredToolsResponse(request, serverVersion, localProjects, collaborationProjects, tools,
-				adminAllowed, arbitraryLocalProjects);
+			return RegisteredToolsResponse(request, serverVersion, localProjects, tools,
+				adminAllowed, arbitraryLocalProjects, projectRegistration);
 		}
 
 		std::string ResourcesResponse(const ValidatedRequest& request, std::string_view serverVersion,
-			bool localProjects, bool collaborationProjects)
+			bool localProjects)
 		{
 			return Response(request, [&](auto& writer) {
 				writer.Key("resources");
@@ -633,19 +599,6 @@ namespace binjad::mcp {
 					writer.String("Local projects");
 					writer.Key("description");
 					writer.String("Shared local Binary Ninja project catalog.");
-					writer.Key("mimeType");
-					writer.String("application/json");
-					writer.EndObject();
-				}
-				if (collaborationProjects)
-				{
-					writer.StartObject();
-					writer.Key("uri");
-					writer.String("binjad://collaboration-projects");
-					writer.Key("name");
-					writer.String("Collaboration projects");
-					writer.Key("description");
-					writer.String("Projects visible to this collaboration identity.");
 					writer.Key("mimeType");
 					writer.String("application/json");
 					writer.EndObject();
@@ -749,7 +702,9 @@ namespace binjad::mcp {
 			"Uploads: bn_upload_get_url returns a one-time PUT capability and explicit authorization requirements; "
 			"commit to a project-relative folder path; import-only commits return JSON and successful retries return "
 			"the original result; use bn_upload_list/cancel for cleanup. Local administrators should prefer "
-			"bn_local_project_file_import_batch for files already on the server.\n"
+			"bn_local_project_file_import_batch for explicit files already on the server, or "
+			"bn_local_project_directory_import to preserve a directory tree; resume a partial directory import with "
+			"the returned lastCompleted value as startAfter.\n"
 			"Project files: project-relative paths are unique and select files together with project; imports accept "
 			"an initial description; bn_local_project_file_list returns descriptions; bn_local_project_file_update "
 			"sets or replaces one, and an empty description string clears it.\n"
@@ -759,8 +714,18 @@ namespace binjad::mcp {
 			"Project writes: if a mutation says the project may be open or read-only, ask the user to close that "
 			"project in the Binary Ninja GUI, then retry. Failed upload commits remain staged and may be retried with "
 			"the same id without re-uploading.\n"
+			"Project recovery: bn_local_project_root_list returns private root indexes. "
+			"bn_local_project_relocate copies a closed outside-root project beneath one selected root, verifies its "
+			"durable ID, retains the old source on disk, and removes the old registration.\n"
+			"Headers: bn_binary_header_info summarizes Mach-O, ELF, or PE identity and security fields; use "
+			"bn_linked_library_list for dependencies and the format-specific Header Parsing lists for low-level rows.\n"
 			"Functions: FunctionSymbol is annotation only; use bn_entry_point_add for an analysis root and "
 			"bn_function_create for a persistent user function, then update analysis and save the BinaryView.\n"
+			"URLs: bn_url_open_item links owned arbitrary-path provenance. For a local-project item, call "
+			"bn_binary_view_save after the latest changes, then call bn_url_project_file with "
+			"updated_bndb_has_been_saved:true; its URL opens the committed project backing file, never unsaved child state. "
+			"Use bn_url_remote_file for an absolute http, https, or file URL, and bn_url_navigate for a Binary Ninja "
+			"report-relative expression link. These tools percent-encode expr values.\n"
 			"Raw firmware: open only discovers candidates; select Mapped rather than Raw, call "
 			"bn_binary_view_load_settings, then pass fully qualified loader.platform, loader.imageBase, and "
 			"loader.entryPointOffset options to bn_binary_view_open. Thumb vector values have bit zero set, but Mapped "
@@ -892,7 +857,7 @@ namespace binjad::mcp {
 				"results.");
 			contract("persistence_failure",
 				"Storage is locked, read-only, collides with an unrelated destination, upload state is invalid, or a "
-				"collaboration merge needs resolutions.",
+				"a persistence operation fails.",
 				"Tool result or terminal job with structured error/conflict data; documented retryable uploads retain "
 				"their staged id.");
 			contract("service_failure",
@@ -943,27 +908,38 @@ namespace binjad::mcp {
 		session::OpenItemRegistry* openItems, overseer::FileChildCoordinator* fileCoordinator,
 		session::JobRegistry* jobs, project::LocalProjectRegistry* projects,
 		overseer::ProjectChildCoordinator* projectCoordinator, overseer::AnalysisScheduler* scheduler,
-		upload::UploadRegistry* uploads, project::CollaborationProjectRegistry* collaborationProjects,
-		overseer::CollaborationChildManager* collaborationManager) :
-		config_(std::move(config)), sessions_(sessions), serverVersion_(std::move(serverVersion)),
+		upload::UploadRegistry* uploads) :
+		config_(std::move(config)), toolConfig_(config_.tools), sessions_(sessions),
+		serverVersion_(std::move(serverVersion)),
 		openItems_(openItems), fileCoordinator_(fileCoordinator), jobs_(jobs), projects_(projects),
-		projectCoordinator_(projectCoordinator), scheduler_(scheduler), uploads_(uploads),
-		collaborationProjects_(collaborationProjects), collaborationManager_(collaborationManager)
+		projectCoordinator_(projectCoordinator), scheduler_(scheduler), uploads_(uploads)
 	{}
+
+	void Foundation::SetToolConfig(ToolConfig config)
+	{
+		std::lock_guard lock(toolConfigMutex_);
+		toolConfig_ = std::move(config);
+	}
+
+	Config Foundation::EffectiveConfig() const
+	{
+		Config result = config_;
+		std::lock_guard lock(toolConfigMutex_);
+		result.tools = toolConfig_;
+		return result;
+	}
 
 	std::string Foundation::ToolDocumentation(ProtocolVersion version, security::TokenRole role) const
 	{
+		const auto config = EffectiveConfig();
 		const auto request = DocumentationRequest(version, 1, "tools/list");
-		const auto currentPayload = ToolsResponse(request, serverVersion_, config_.EffectiveMode() == Mode::Local,
-			config_.EffectiveMode() == Mode::Collaboration, config_.tools, role == security::TokenRole::Admin,
-			config_.projects.allowArbitraryPaths);
+		const auto currentPayload = ToolsResponse(request, serverVersion_, true,
+			config.tools, role == security::TokenRole::Admin,
+			config.projects.allowArbitraryPaths, config.projects.allowProjectRegistration);
 		ToolConfig allTools;
-		const auto localPayload = ToolsResponse(request, serverVersion_, true, false, allTools, true, true);
-		const auto collaborationPayload = ToolsResponse(request, serverVersion_, false, true, allTools, true, true);
+		const auto localPayload = ToolsResponse(request, serverVersion_, true, allTools, true, true, true);
 		const auto modernRequest = DocumentationRequest(ProtocolVersion::V2026_07_28, 1, "tools/list");
-		const auto modernLocalPayload = ToolsResponse(modernRequest, serverVersion_, true, false, allTools, true, true);
-		const auto modernCollaborationPayload =
-			ToolsResponse(modernRequest, serverVersion_, false, true, allTools, true, true);
+		const auto modernLocalPayload = ToolsResponse(modernRequest, serverVersion_, true, allTools, true, true, true);
 
 		struct DocumentedTool
 		{
@@ -996,14 +972,12 @@ namespace binjad::mcp {
 		};
 		collect(currentPayload, true);
 		collect(localPayload, false);
-		collect(collaborationPayload, false);
 		collect(modernLocalPayload, false);
-		collect(modernCollaborationPayload, false);
 
 		const auto unavailableReason = [&](std::string_view name) -> std::string {
 			const auto* tool = FindToolCall(name);
 			return tool ?
-				tool->UnavailableReason(config_, version, role) :
+				tool->UnavailableReason(config, version, role) :
 				"Not advertised for the selected protocol, role, mode, or running options.";
 		};
 
@@ -1016,7 +990,7 @@ namespace binjad::mcp {
 		writer.Key("role");
 		writer.String(role == security::TokenRole::Admin ? "admin" : "user");
 		writer.Key("mode");
-		writer.String(config_.EffectiveMode() == Mode::Local ? "local" : "collaboration");
+		writer.String("local");
 		writer.Key("availableCount");
 		writer.Uint64(availableNames.size());
 		writer.Key("totalCount");
@@ -1062,16 +1036,15 @@ namespace binjad::mcp {
 	std::string Foundation::ContextDocumentation(
 		ProtocolVersion version, security::TokenRole role, std::string_view clientName) const
 	{
+		const auto config = EffectiveConfig();
 		const auto admin = role == security::TokenRole::Admin;
-		const auto local = config_.EffectiveMode() == Mode::Local;
-		const auto collaboration = config_.EffectiveMode() == Mode::Collaboration;
 		const auto toolsRequest = DocumentationRequest(version, 1, "tools/list");
 		const auto resourcesRequest = DocumentationRequest(version, 2, "resources/list");
 		const auto templatesRequest = DocumentationRequest(version, 3, "resources/templates/list");
 		const auto docsRequest = DocumentationRequest(version, 4, "resources/read", "binjad://docs");
-		const auto tools = ToolsResponse(toolsRequest, serverVersion_, local, collaboration, config_.tools, admin,
-			config_.projects.allowArbitraryPaths);
-		const auto resources = ResourcesResponse(resourcesRequest, serverVersion_, local, collaboration);
+		const auto tools = ToolsResponse(toolsRequest, serverVersion_, true, config.tools, admin,
+			config.projects.allowArbitraryPaths, config.projects.allowProjectRegistration);
+		const auto resources = ResourcesResponse(resourcesRequest, serverVersion_, true);
 		const auto templates = TemplatesResponse(templatesRequest, serverVersion_);
 		const auto docs = ResourceResponse(docsRequest, kQuickStartDocs, serverVersion_, "text/markdown");
 
@@ -1086,39 +1059,45 @@ namespace binjad::mcp {
 		writer.Key("role");
 		writer.String(admin ? "admin" : "user");
 		writer.Key("mode");
-		writer.String(local ? "local" : "collaboration");
+		writer.String("local");
 		writer.Key("runningOptions");
 		writer.StartObject();
 		writer.Key("allowArbitraryPaths");
-		writer.Bool(config_.projects.allowArbitraryPaths);
+		writer.Bool(config.projects.allowArbitraryPaths);
+		writer.Key("allowProjectRegistration");
+		writer.Bool(config.projects.allowProjectRegistration);
 		writer.Key("tools");
 		writer.StartObject();
 		writer.Key("coreWorkflow");
 		writer.Bool(true);
 		writer.Key("projectManagement");
-		writer.Bool(config_.tools.projectManagement);
+		writer.Bool(config.tools.projectManagement);
 		writer.Key("functionAnalysis");
-		writer.Bool(config_.tools.functionAnalysis);
+		writer.Bool(config.tools.functionAnalysis);
 		writer.Key("binaryData");
-		writer.Bool(config_.tools.binaryData);
+		writer.Bool(config.tools.binaryData);
 		writer.Key("search");
-		writer.Bool(config_.tools.search);
+		writer.Bool(config.tools.search);
 		writer.Key("types");
-		writer.Bool(config_.tools.types);
+		writer.Bool(config.tools.types);
 		writer.Key("annotations");
-		writer.Bool(config_.tools.annotations);
+		writer.Bool(config.tools.annotations);
 		writer.Key("binaryEditing");
-		writer.Bool(config_.tools.binaryEditing);
+		writer.Bool(config.tools.binaryEditing);
 		writer.Key("history");
-		writer.Bool(config_.tools.history);
+		writer.Bool(config.tools.history);
+		writer.Key("headerParsing");
+		writer.Bool(config.tools.headerParsing);
+		writer.Key("urlGeneration");
+		writer.Bool(config.tools.urlGeneration);
 		writer.Key("diffing");
-		writer.Bool(config_.tools.diffing);
+		writer.Bool(config.tools.diffing);
 		writer.Key("kernelCache");
-		writer.Bool(config_.tools.kernelCache);
+		writer.Bool(config.tools.kernelCache);
 		writer.Key("sharedCache");
-		writer.Bool(config_.tools.sharedCache);
+		writer.Bool(config.tools.sharedCache);
 		writer.Key("debugger");
-		writer.Bool(config_.tools.debugger);
+		writer.Bool(config.tools.debugger);
 		writer.EndObject();
 		writer.EndObject();
 		writer.Key("mcpWire");
@@ -1177,16 +1156,16 @@ namespace binjad::mcp {
 		session::AnalysisSessionRegistry::Clock::time_point now, std::uint64_t unixNow, JobProgressCallback progress,
 		AttachedJobCallback attached)
 	{
+		const auto config = EffectiveConfig();
 		if (request.method == "tools/list")
 			return {true, 200,
-				ToolsResponse(request, serverVersion_, config_.EffectiveMode() == Mode::Local,
-					config_.EffectiveMode() == Mode::Collaboration, config_.tools,
-					principal.role == security::TokenRole::Admin, config_.projects.allowArbitraryPaths),
+				ToolsResponse(request, serverVersion_, true, config.tools,
+					principal.role == security::TokenRole::Admin, config.projects.allowArbitraryPaths,
+					config.projects.allowProjectRegistration),
 				{}};
 		if (request.method == "resources/list")
 			return {true, 200,
-				ResourcesResponse(request, serverVersion_, config_.EffectiveMode() == Mode::Local,
-					config_.EffectiveMode() == Mode::Collaboration),
+				ResourcesResponse(request, serverVersion_, true),
 				{}};
 		if (request.method == "resources/templates/list")
 			return {true, 200, TemplatesResponse(request, serverVersion_), {}};
@@ -1198,7 +1177,7 @@ namespace binjad::mcp {
 			}
 			if (request.uri == "binjad://compute")
 			{
-				const auto compute = ComputeJson(config_, scheduler_);
+				const auto compute = ComputeJson(config, scheduler_);
 				if (!compute.error.empty())
 					return {true, 500, {}, ProtocolError {-32603, 500, compute.error, request.id, {}}};
 				return {true, 200, ResourceResponse(request, compute.json, serverVersion_), {}};
@@ -1227,27 +1206,13 @@ namespace binjad::mcp {
 			}
 			if (request.uri == "binjad://local-projects")
 			{
-				if (config_.EffectiveMode() != Mode::Local || !projects_)
+				if (!projects_)
 					return {true, IsModern(request.version) ? 404 : 200, {},
 						ProtocolError {
 							-32004, IsModern(request.version) ? 404 : 200, "resource not found", request.id, {}}};
 				const auto projects = projects_->List();
 				return {true, 200,
 					ResourceResponse(request, ProjectsJson(projects, 0, projects.size()), serverVersion_), {}};
-			}
-			if (request.uri == "binjad://collaboration-projects")
-			{
-				if (config_.EffectiveMode() != Mode::Collaboration || !collaborationManager_)
-					return {true, IsModern(request.version) ? 404 : 200, {},
-						ProtocolError {
-							-32004, IsModern(request.version) ? 404 : 200, "resource not found", request.id, {}}};
-				const auto projects = collaborationManager_->ListProjects(principal);
-				if (!projects.value)
-					return {true, 200, ResourceResponse(request, ErrorJson(projects.error), serverVersion_), {}};
-				return {true, 200,
-					ResourceResponse(
-						request, CollaborationProjectsJson(*projects.value, 0, projects.value->size()), serverVersion_),
-					{}};
 			}
 			constexpr std::string_view prefix = "binjad://analysis-sessions/";
 			if (request.uri.starts_with(prefix))
@@ -1271,14 +1236,14 @@ namespace binjad::mcp {
 				ProtocolError {-32602, IsModern(request.version) ? 400 : 200, schemaError, request.id, {}}};
 
 		const auto* tool = FindToolCall(request.name);
-		if (!tool || !tool->CanExecute(config_, request.version, principal.role))
+		if (!tool || !tool->CanExecute(config, request.version, principal.role))
 			return {true, IsModern(request.version) ? 404 : 200, {},
 				ProtocolError {-32602, IsModern(request.version) ? 404 : 200, "unknown tool", request.id, {}}};
 		if (!tool->ValidateArguments(*arguments, schemaError))
 			return {true, IsModern(request.version) ? 400 : 200, {},
 				ProtocolError {-32602, IsModern(request.version) ? 400 : 200, schemaError, request.id, {}}};
-		return tool->Execute({config_, sessions_, serverVersion_, openItems_, fileCoordinator_, jobs_, projects_,
-			projectCoordinator_, scheduler_, uploads_, collaborationProjects_, collaborationManager_, request,
+		return tool->Execute({config, sessions_, serverVersion_, openItems_, fileCoordinator_, jobs_, projects_,
+			projectCoordinator_, scheduler_, uploads_, request,
 			principal, currentSession, now, unixNow, progress, attached, *arguments});
 	}
 }  // namespace binjad::mcp

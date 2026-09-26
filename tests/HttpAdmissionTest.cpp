@@ -1,6 +1,6 @@
-#include "binjad/http/mcp_admission.hpp"
+#include "binjad/http/McpAdmission.hpp"
 
-#include "binjad/security/crypto.hpp"
+#include "binjad/security/Crypto.hpp"
 
 #include <gtest/gtest.h>
 

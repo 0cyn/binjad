@@ -1,6 +1,6 @@
-#include "binjad/session/analysis_session_registry.hpp"
+#include "binjad/session/AnalysisSessionRegistry.hpp"
 
-#include "binjad/security/random.hpp"
+#include "binjad/security/Random.hpp"
 
 #include <algorithm>
 #include <stdexcept>

@@ -1,14 +1,14 @@
 #pragma once
 
-#include "binjad/config.hpp"
-#include "binjad/http/mcp_admission.hpp"
-#include "binjad/mcp/protocol.hpp"
-#include "binjad/portal/service.hpp"
+#include "binjad/Config.hpp"
+#include "binjad/http/McpAdmission.hpp"
+#include "binjad/mcp/Protocol.hpp"
+#include "binjad/portal/Service.hpp"
 
-#include <optional>
-#include <functional>
 #include <filesystem>
+#include <functional>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -46,9 +46,12 @@ struct ApiRequest
 class Api
 {
   public:
+    using ProjectCreate = std::function<Result<ProjectSummary>(
+        std::string, std::optional<std::string>, std::string)>;
     using ProjectDelete = std::function<Result<bool>(std::string_view)>;
     using ProjectList = std::function<std::vector<ProjectSummary>()>;
     using RuntimeStatusProvider = std::function<RuntimeStatus()>;
+    using ToolConfigApply = std::function<void(const ToolConfig&)>;
     using McpContextProvider = std::function<std::string(
         mcp::ProtocolVersion, security::TokenRole, std::string_view)>;
     using McpToolsProvider = std::function<std::string(
@@ -56,9 +59,11 @@ class Api
     static constexpr std::size_t kMaxBodyBytes = 1024 * 1024;
 
     Api(Config config, Service& service, std::filesystem::path configPath = {});
+    void SetProjectCreateCallback(ProjectCreate callback);
     void SetProjectDeleteCallback(ProjectDelete callback);
     void SetProjectListCallback(ProjectList callback);
     void SetRuntimeStatusProvider(RuntimeStatusProvider callback);
+    void SetToolConfigCallback(ToolConfigApply callback);
     void SetMcpDocumentationProviders(
         McpContextProvider context, McpToolsProvider tools);
     http::ImmediateResponse Handle(const ApiRequest& request);
@@ -74,9 +79,11 @@ class Api
     Service& service_;
     std::string apiPath_;
     std::filesystem::path configPath_;
+    ProjectCreate projectCreate_;
     ProjectDelete projectDelete_;
     ProjectList projectList_;
     RuntimeStatusProvider runtimeStatus_;
+    ToolConfigApply toolConfigApply_;
     McpContextProvider mcpContext_;
     McpToolsProvider mcpTools_;
     std::string activeConfiguration_;

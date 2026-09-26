@@ -1,4 +1,4 @@
-#include "tool_call.hpp"
+#include "ToolCall.hpp"
 
 #include <stdexcept>
 #include <unordered_map>
@@ -27,15 +27,13 @@ namespace binjad::mcp {
 			return false;
 		if (HasAvailability(availability_, ToolCallAvailability::ModernProtocol) && !IsModern(version))
 			return false;
-		if (HasAvailability(availability_, ToolCallAvailability::LocalMode) && config.EffectiveMode() != Mode::Local)
-			return false;
-		if (HasAvailability(availability_, ToolCallAvailability::CollaborationMode)
-			&& config.EffectiveMode() != Mode::Collaboration)
-			return false;
 		if (HasAvailability(availability_, ToolCallAvailability::Admin) && role != security::TokenRole::Admin)
 			return false;
 		if (HasAvailability(availability_, ToolCallAvailability::ArbitraryPaths)
 			&& !config.projects.allowArbitraryPaths)
+			return false;
+		if (HasAvailability(availability_, ToolCallAvailability::ProjectRegistration)
+			&& !config.projects.allowProjectRegistration)
 			return false;
 		return true;
 	}
@@ -45,10 +43,6 @@ namespace binjad::mcp {
 		if (IsAvailable(config, version, role))
 			return true;
 		return allowRestrictedExecution_ && ToolCallCategoryEnabled(category_, config.tools)
-			&& (!HasAvailability(availability_, ToolCallAvailability::LocalMode)
-				|| config.EffectiveMode() == Mode::Local)
-			&& (!HasAvailability(availability_, ToolCallAvailability::CollaborationMode)
-				|| config.EffectiveMode() == Mode::Collaboration)
 			&& (!HasAvailability(availability_, ToolCallAvailability::ModernProtocol) || IsModern(version));
 	}
 
@@ -116,16 +110,14 @@ namespace binjad::mcp {
 			return std::string(ToolCallCategoryName(category_)) + " tools are disabled in the running configuration.";
 		if (HasAvailability(availability_, ToolCallAvailability::ModernProtocol) && !IsModern(version))
 			return "Requires the modern MCP protocol session model.";
-		if (HasAvailability(availability_, ToolCallAvailability::LocalMode) && config.EffectiveMode() != Mode::Local)
-			return "Requires local project mode.";
-		if (HasAvailability(availability_, ToolCallAvailability::CollaborationMode)
-			&& config.EffectiveMode() != Mode::Collaboration)
-			return "Requires collaboration project mode.";
 		if (HasAvailability(availability_, ToolCallAvailability::Admin) && role != security::TokenRole::Admin)
 			return "Requires an admin bearer token.";
 		if (HasAvailability(availability_, ToolCallAvailability::ArbitraryPaths)
 			&& !config.projects.allowArbitraryPaths)
 			return "Requires projects.allow_arbitrary_paths in local mode.";
+		if (HasAvailability(availability_, ToolCallAvailability::ProjectRegistration)
+			&& !config.projects.allowProjectRegistration)
+			return "Requires projects.allow_project_registration in local mode.";
 		return "Not advertised for the selected protocol, role, mode, or running options.";
 	}
 
@@ -151,6 +143,10 @@ namespace binjad::mcp {
 			return "Binary Editing";
 		case ToolCallCategory::History:
 			return "Transactions & History";
+		case ToolCallCategory::HeaderParsing:
+			return "Header Parsing";
+		case ToolCallCategory::UrlGeneration:
+			return "URL Generation";
 		case ToolCallCategory::Diffing:
 			return "Diffing";
 		case ToolCallCategory::KernelCache:
@@ -185,6 +181,10 @@ namespace binjad::mcp {
 			return config.binaryEditing;
 		case ToolCallCategory::History:
 			return config.history;
+		case ToolCallCategory::HeaderParsing:
+			return config.headerParsing;
+		case ToolCallCategory::UrlGeneration:
+			return config.urlGeneration;
 		case ToolCallCategory::Diffing:
 			return config.diffing;
 		case ToolCallCategory::KernelCache:
@@ -222,6 +222,8 @@ namespace binjad::mcp {
 				RegisterAnnotationTools(result.tools);
 				RegisterBinaryEditingTools(result.tools);
 				RegisterHistoryTools(result.tools);
+				RegisterHeaderParsingTools(result.tools);
+				RegisterUrlGenerationTools(result.tools);
 				RegisterDiffingTools(result.tools);
 				RegisterKernelCacheTools(result.tools);
 				RegisterSharedCacheTools(result.tools);

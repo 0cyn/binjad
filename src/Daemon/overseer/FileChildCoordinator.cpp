@@ -1,8 +1,8 @@
-#include "binjad/overseer/file_child_coordinator.hpp"
+#include "binjad/overseer/FileChildCoordinator.hpp"
 
-#include "binjad/ipc/envelope.hpp"
-#include "binjad/platform/paths.hpp"
-#include "binjad/security/random.hpp"
+#include "binjad/ipc/Envelope.hpp"
+#include "binjad/platform/Paths.hpp"
+#include "binjad/security/Random.hpp"
 
 #include <rapidjsonwrapper.h>
 

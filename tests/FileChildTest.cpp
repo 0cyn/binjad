@@ -1,5 +1,5 @@
-#include "binjad/ipc/envelope.hpp"
-#include "binjad/worker/file_child.hpp"
+#include "binjad/ipc/Envelope.hpp"
+#include "binjad/worker/FileChild.hpp"
 
 #include <rapidjsonwrapper.h>
 
@@ -1605,6 +1605,164 @@ TEST(FileChildTest, OpensQueriesClosesAndShutsDown)
     EXPECT_EQ(searchResults, 7U);
     EXPECT_TRUE(std::filesystem::is_regular_file(database));
     std::filesystem::remove(database, ignored);
+}
+
+TEST(FileChildTest, ParsesMachOHeadersAndLinkedLibraries)
+{
+    std::deque<std::vector<std::uint8_t>> requests;
+    requests.push_back(Command(1, [](binjad::ipc::Command& command) {
+        auto* open = command.mutable_open_file();
+        open->set_path(BINJAD_ANALYSIS_FIXTURE);
+        open->set_options_json("{}");
+    }));
+    requests.push_back(Command(2, [](binjad::ipc::Command& command) {
+        auto* open = command.mutable_open_binary_view();
+        open->set_view_type("Mach-O");
+        open->set_options_json("{}");
+        open->set_analyze(false);
+    }));
+    requests.push_back(Command(3, [](binjad::ipc::Command& command) {
+        auto* execute = command.mutable_execute_analysis_tool();
+        execute->set_view_type("Mach-O");
+        execute->set_name("bn_binary_header_info");
+        execute->set_arguments_json("{}");
+    }));
+    requests.push_back(Command(4, [](binjad::ipc::Command& command) {
+        auto* execute = command.mutable_execute_analysis_tool();
+        execute->set_view_type("Mach-O");
+        execute->set_name("bn_linked_library_list");
+        execute->set_arguments_json(R"({"offset":0,"limit":100})");
+    }));
+    requests.push_back(Command(5, [](binjad::ipc::Command& command) {
+        auto* execute = command.mutable_execute_analysis_tool();
+        execute->set_view_type("Mach-O");
+        execute->set_name("bn_macho_load_command_list");
+        execute->set_arguments_json(R"({"query":"segment","offset":0,"limit":100})");
+    }));
+    requests.push_back(Command(6, [](binjad::ipc::Command& command) {
+        command.mutable_close_file()->set_discard_uncommitted(true);
+    }));
+    requests.push_back(Command(7, [](binjad::ipc::Command& command) { command.mutable_shutdown(); }));
+
+    const auto responses = std::make_shared<std::vector<std::vector<std::uint8_t>>>();
+    EXPECT_EQ(binjad::RunFileChild(std::make_unique<QueueChannel>(std::move(requests), responses)), EXIT_SUCCESS);
+
+    std::size_t parsed = 0;
+    for (const auto& payload : *responses)
+    {
+        const auto envelope = binjad::ipc::ParseEnvelope(payload);
+        if (envelope.request_id() < 3 || envelope.request_id() > 5)
+            continue;
+        ASSERT_TRUE(envelope.has_reply());
+        ASSERT_TRUE(envelope.reply().success()) << envelope.reply().error();
+        ASSERT_TRUE(envelope.reply().has_analysis_tool_result());
+        rapidjson::Document result;
+        const auto& json = envelope.reply().analysis_tool_result().json();
+        result.Parse(json.data(), json.size());
+        ASSERT_FALSE(result.HasParseError()) << json;
+        if (envelope.request_id() == 3)
+        {
+            EXPECT_STREQ(result["format"].GetString(), "Mach-O");
+            EXPECT_TRUE(result["header"].HasMember("loadCommandCount"));
+            EXPECT_TRUE(result["header"].HasMember("uuid"));
+        }
+        else if (envelope.request_id() == 4)
+        {
+            EXPECT_TRUE(result["libraries"].IsArray());
+            EXPECT_GE(result["total"].GetUint64(), 1U);
+        }
+        else
+        {
+            EXPECT_TRUE(result["loadCommands"].IsArray());
+            EXPECT_GE(result["total"].GetUint64(), 1U);
+        }
+        ++parsed;
+    }
+    EXPECT_EQ(parsed, 3U);
+}
+
+namespace
+{
+    void ExerciseHeaderFixture(const std::filesystem::path& fixture, std::string_view viewType,
+        std::initializer_list<std::pair<std::string_view, std::string_view>> tools)
+    {
+        std::deque<std::vector<std::uint8_t>> requests;
+        requests.push_back(Command(1, [&](binjad::ipc::Command& command) {
+            auto* open = command.mutable_open_file();
+            open->set_path(fixture.string());
+            open->set_options_json("{}");
+        }));
+        requests.push_back(Command(2, [&](binjad::ipc::Command& command) {
+            auto* open = command.mutable_open_binary_view();
+            open->set_view_type(std::string(viewType));
+            open->set_options_json("{}");
+            open->set_analyze(false);
+        }));
+        std::uint64_t requestId = 3;
+        for (const auto& [tool, key] : tools)
+        {
+            (void)key;
+            requests.push_back(Command(requestId++, [&, tool](binjad::ipc::Command& command) {
+                auto* execute = command.mutable_execute_analysis_tool();
+                execute->set_view_type(std::string(viewType));
+                execute->set_name(std::string(tool));
+                execute->set_arguments_json(R"({"offset":0,"limit":100})");
+            }));
+        }
+        requests.push_back(Command(requestId++, [](binjad::ipc::Command& command) {
+            command.mutable_close_file()->set_discard_uncommitted(true);
+        }));
+        requests.push_back(Command(requestId, [](binjad::ipc::Command& command) { command.mutable_shutdown(); }));
+
+        const auto responses = std::make_shared<std::vector<std::vector<std::uint8_t>>>();
+        EXPECT_EQ(binjad::RunFileChild(std::make_unique<QueueChannel>(std::move(requests), responses)), EXIT_SUCCESS);
+
+        std::size_t parsed = 0;
+        for (const auto& payload : *responses)
+        {
+            const auto envelope = binjad::ipc::ParseEnvelope(payload);
+            if (envelope.request_id() < 3 || envelope.request_id() >= 3 + tools.size())
+                continue;
+            ASSERT_TRUE(envelope.reply().success()) << envelope.reply().error();
+            ASSERT_TRUE(envelope.reply().has_analysis_tool_result());
+            rapidjson::Document result;
+            const auto& json = envelope.reply().analysis_tool_result().json();
+            result.Parse(json.data(), json.size());
+            ASSERT_FALSE(result.HasParseError()) << json;
+            const auto& expected = *(tools.begin() + (envelope.request_id() - 3));
+            if (expected.first == "bn_binary_header_info")
+            {
+                EXPECT_EQ(std::string_view(result["format"].GetString()), viewType);
+                EXPECT_TRUE(result["header"].IsObject());
+            }
+            else
+            {
+                EXPECT_TRUE(result[expected.second.data()].IsArray()) << json;
+                EXPECT_GE(result["total"].GetUint64(), 1U) << json;
+            }
+            ++parsed;
+        }
+        EXPECT_EQ(parsed, tools.size());
+    }
+}
+
+TEST(FileChildTest, ParsesElfHeadersAndLinkedLibraries)
+{
+    const auto sourceDirectory = std::filesystem::path(__FILE__).parent_path().parent_path();
+    ExerciseHeaderFixture(sourceDirectory /
+            "vendor/debugger/test/binaries/Linux-x86_64/helloworld",
+        "ELF", {{"bn_binary_header_info", ""}, {"bn_linked_library_list", "libraries"},
+                   {"bn_elf_program_header_list", "programHeaders"},
+                   {"bn_elf_dynamic_entry_list", "dynamicEntries"}});
+}
+
+TEST(FileChildTest, ParsesPeHeadersAndLinkedLibraries)
+{
+    const auto sourceDirectory = std::filesystem::path(__FILE__).parent_path().parent_path();
+    ExerciseHeaderFixture(sourceDirectory /
+            "vendor/debugger/test/binaries/Windows-x86_64/helloworld.exe",
+        "PE", {{"bn_binary_header_info", ""}, {"bn_linked_library_list", "libraries"},
+                  {"bn_pe_data_directory_list", "dataDirectories"}});
 }
 
 TEST(FileChildTest, MapsRawFirmwareWithAuthoritativeLoaderSettings)

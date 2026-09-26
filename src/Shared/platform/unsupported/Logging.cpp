@@ -1,4 +1,4 @@
-#include "binjad/logging.hpp"
+#include "binjad/Logging.hpp"
 
 #include <iostream>
 

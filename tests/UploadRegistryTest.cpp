@@ -1,6 +1,6 @@
-#include "binjad/upload/upload_registry.hpp"
+#include "binjad/upload/UploadRegistry.hpp"
 
-#include "binjad/platform/paths.hpp"
+#include "binjad/platform/Paths.hpp"
 
 #include <gtest/gtest.h>
 

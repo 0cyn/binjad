@@ -1,4 +1,4 @@
-#include "binjad/session/job_registry.hpp"
+#include "binjad/session/JobRegistry.hpp"
 
 #include <gtest/gtest.h>
 

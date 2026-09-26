@@ -1,5 +1,5 @@
-#include "../tool_call.hpp"
-#include "../tool_schema.hpp"
+#include "../ToolCall.hpp"
+#include "../ToolSchema.hpp"
 
 namespace binjad::mcp {
 	namespace {

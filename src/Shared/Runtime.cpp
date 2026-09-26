@@ -1,4 +1,4 @@
-#include "binjad/binary_ninja/runtime.hpp"
+#include "binjad/binary_ninja/Runtime.hpp"
 
 #include <binaryninjaapi.h>
 

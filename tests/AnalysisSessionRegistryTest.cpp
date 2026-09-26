@@ -1,4 +1,4 @@
-#include "binjad/session/analysis_session_registry.hpp"
+#include "binjad/session/AnalysisSessionRegistry.hpp"
 
 #include <gtest/gtest.h>
 

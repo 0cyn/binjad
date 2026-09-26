@@ -1,7 +1,7 @@
-#include "binjad/process/supervisor.hpp"
+#include "binjad/process/Supervisor.hpp"
 
-#include "binjad/ipc/channel.hpp"
-#include "binjad/platform/macos/process_supervisor.hpp"
+#include "binjad/ipc/Channel.hpp"
+#include "binjad/platform/macos/ProcessSupervisor.hpp"
 
 extern "C"
 {

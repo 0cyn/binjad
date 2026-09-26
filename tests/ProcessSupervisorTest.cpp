@@ -1,4 +1,4 @@
-#include "binjad/process/supervisor.hpp"
+#include "binjad/process/Supervisor.hpp"
 
 #include <gtest/gtest.h>
 

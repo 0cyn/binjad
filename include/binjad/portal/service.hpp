@@ -1,9 +1,7 @@
 #pragma once
 
-#include "binjad/config.hpp"
-#include "binjad/security/account_registry.hpp"
-#include "binjad/security/bootstrap_credential.hpp"
-#include "binjad/security/token_registry.hpp"
+#include "binjad/security/AccountRegistry.hpp"
+#include "binjad/security/TokenRegistry.hpp"
 
 #include <cstdint>
 #include <functional>
@@ -14,8 +12,7 @@
 
 namespace binjad::portal
 {
-template <typename T>
-struct Result
+template <typename T> struct Result
 {
     std::optional<T> value;
     std::string error;
@@ -23,63 +20,38 @@ struct Result
 
 struct TokenRequest
 {
-    std::optional<std::string> label;
-    std::optional<security::TokenRole> role;
-    std::optional<std::uint64_t> ttlSeconds;
+    std::uint64_t ttlSeconds = 7 * 24 * 60 * 60;
 };
 
-struct AccountDeletionResult
+struct TokenStatus
 {
-    bool deleted = false;
-    std::size_t revokedTokens = 0;
+    std::optional<security::TokenRecord> token;
 };
 
 class Service
 {
-  public:
+public:
     using UnixNow = std::function<std::uint64_t()>;
     using TokenRevoked = std::function<void(std::string_view)>;
 
-    Service(Config config, security::AccountRegistry& accounts,
-        security::TokenRegistry& tokens, security::BootstrapCredential& bootstrap,
-        UnixNow unixNow = {});
+    Service(security::AccountRegistry& accounts, security::TokenRegistry& tokens, UnixNow unixNow = {});
     void SetTokenRevokedCallback(TokenRevoked callback);
 
-    Result<security::AccountRecord> CreateBootstrapAdministrator(
-        std::string_view credential, std::string username, std::string password);
-    Result<bool> BootstrapAvailable();
-    security::AccountAuthenticationResult Authenticate(
-        std::string_view username, std::string_view password) const;
-    Result<security::AccountRecord> AuthenticateAdminBearer(
-        std::string_view token) const;
-    Result<security::AccountRecord> UnauthenticatedAdministrator() const;
-    Result<std::vector<security::AccountRecord>> ListAccounts(
-        const security::AccountRecord& actor) const;
-    Result<security::AccountRecord> CreateAccount(const security::AccountRecord& actor,
-        std::string username, std::string password, security::PortalRole role);
-    Result<security::AccountRecord> UpdateAccount(const security::AccountRecord& actor,
-        std::string_view accountId, const security::AccountUpdateRequest& update);
-    Result<AccountDeletionResult> DeleteAccount(const security::AccountRecord& actor,
-        std::string_view accountId, bool revokeTokens);
-    Result<security::AccountRecord> SetCollaborationBinding(
-        const security::AccountRecord& actor, std::string_view accountId,
-        std::string collaborationUsername, std::string accessToken);
-    Result<security::TokenIssueResult> IssueToken(
-        const security::AccountRecord& actor, const TokenRequest& request);
-    Result<std::vector<security::TokenRecord>> ListTokens(
-        const security::AccountRecord& actor) const;
-    Result<bool> RevokeToken(
-        const security::AccountRecord& actor, std::string_view tokenId);
+    Result<security::AccountRecord> CreateInitialAccount(std::string username, std::string password);
+    Result<bool> SetupRequired() const;
+    security::AccountAuthenticationResult Authenticate(std::string_view username, std::string_view password) const;
+    Result<security::AccountRecord> CurrentAccount(const security::AccountRecord& actor) const;
+    Result<security::AccountRecord> UpdatePassword(const security::AccountRecord& actor, std::string password);
+    Result<security::TokenIssueResult> RotateToken(const security::AccountRecord& actor, const TokenRequest& request);
+    Result<TokenStatus> Token(const security::AccountRecord& actor) const;
+    Result<bool> RevokeToken(const security::AccountRecord& actor);
 
-  private:
-    std::optional<security::AccountRecord> Account(std::string_view accountId) const;
-    bool CanManage(const security::AccountRecord& actor, std::string_view accountId) const;
+private:
+    bool IsCurrent(const security::AccountRecord& actor) const;
 
-    Config config_;
     security::AccountRegistry& accounts_;
     security::TokenRegistry& tokens_;
-    security::BootstrapCredential& bootstrap_;
     UnixNow unixNow_;
     TokenRevoked tokenRevoked_;
 };
-}
+} // namespace binjad::portal

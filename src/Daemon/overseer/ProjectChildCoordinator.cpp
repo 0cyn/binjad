@@ -1,11 +1,12 @@
-#include "binjad/overseer/project_child_coordinator.hpp"
+#include "binjad/overseer/ProjectChildCoordinator.hpp"
 
-#include "binjad/ipc/envelope.hpp"
-#include "binjad/platform/paths.hpp"
-#include "binjad/security/random.hpp"
+#include "binjad/ipc/Envelope.hpp"
+#include "binjad/platform/Paths.hpp"
+#include "binjad/security/Random.hpp"
 
 #include <algorithm>
 #include <stdexcept>
+#include <unordered_set>
 #include <utility>
 
 namespace binjad::overseer
@@ -36,6 +37,12 @@ bool ValidProjectPath(std::string_view path)
     const auto normalized = value.lexically_normal();
     return normalized != "." && !normalized.empty() &&
         *normalized.begin() != "..";
+}
+
+bool LexicallyContained(const std::filesystem::path& path, const std::filesystem::path& root)
+{
+    const auto relative = path.lexically_normal().lexically_relative(root.lexically_normal());
+    return !relative.empty() && !relative.is_absolute() && *relative.begin() != "..";
 }
 
 }
@@ -155,19 +162,45 @@ void ProjectChildCoordinator::LoadCatalog()
     auto* scan = command.mutable_scan_local_projects();
     for (const auto& root : config_.projects.roots)
         scan->add_roots(root.string());
-    if (knownProjects_)
-    {
-        for (const auto& project : knownProjects_->Paths())
-            scan->add_projects(project.string());
-    }
     const auto reply = Call(command);
     if (!reply.success() || !reply.has_local_project_catalog())
         throw std::runtime_error(reply.success()
             ? "project child returned no catalog" : reply.error());
     std::vector<project::LocalProjectRecord> records;
     records.reserve(reply.local_project_catalog().projects_size());
+    std::unordered_set<std::string> rootIds;
     for (const auto& item : reply.local_project_catalog().projects())
+    {
         records.push_back({{}, item.id(), item.path(), item.name(), item.description()});
+        rootIds.insert(item.id());
+    }
+    if (knownProjects_)
+    {
+        for (const auto& path : knownProjects_->Paths())
+        {
+            ipc::Command registeredCommand;
+            registeredCommand.mutable_scan_local_projects()->add_projects(path.string());
+            const auto registeredReply = Call(registeredCommand);
+            if (!registeredReply.success() || !registeredReply.has_local_project_catalog()
+                || registeredReply.local_project_catalog().projects_size() != 1)
+                throw std::runtime_error(registeredReply.success()
+                    ? "project child returned an invalid registered-project catalog" : registeredReply.error());
+            const auto& item = registeredReply.local_project_catalog().projects(0);
+            const auto existing = std::find_if(records.begin(), records.end(), [&](const auto& record) {
+                return record.internalId == item.id();
+            });
+            if (existing != records.end())
+            {
+                if (!rootIds.contains(item.id()))
+                    throw std::runtime_error("duplicate registered project ID at " + existing->storagePath.string()
+                        + " and " + path.string());
+                if (const auto error = knownProjects_->Remove(path); !error.empty())
+                    throw std::runtime_error("cannot remove redundant rooted-project registration: " + error);
+                continue;
+            }
+            records.push_back({{}, item.id(), item.path(), item.name(), item.description()});
+        }
+    }
     if (const auto error = projects_.Replace(std::move(records)); !error.empty())
         throw std::runtime_error("cannot register local project catalog: " + error);
 }
@@ -194,7 +227,7 @@ ProjectChildCoordinator::ListFiles(std::string_view projectReference)
         result.reserve(reply.local_project_files().files_size());
         for (const auto& file : reply.local_project_files().files())
             result.push_back({file.id(), file.path(), file.name(), file.description(),
-                file.creation_timestamp(), {}, file.folder_id(), {}});
+                file.creation_timestamp(), {}, file.folder_id(), {}, file.backing_path()});
         if (const auto assigned = projects_.AssignFiles(projectReference, result);
             !assigned.empty())
             return {{}, assigned};
@@ -279,7 +312,7 @@ ProjectChildCoordinator::CommitFile(std::string_view projectReference,
         const auto& result = reply.local_project_file_committed();
         return {project::LocalProjectFileRecord{
             result.id(), result.path(), std::filesystem::path(result.path()).filename().string(),
-            {}, 0, std::string(projectReference), {}, {}}, {}};
+            {}, 0, std::string(projectReference), {}, {}, {}}, {}};
     }
     catch (const std::exception& exception)
     {
@@ -311,7 +344,9 @@ ProjectChildCoordinator::CreateProject(const std::filesystem::path& path,
         project::LocalProjectRecord result{{}, reply.local_project().id(),
             reply.local_project().path(), reply.local_project().name(),
             reply.local_project().description()};
-        if (knownProjects_)
+        const bool rooted = std::any_of(config_.projects.roots.begin(), config_.projects.roots.end(),
+            [&](const auto& root) { return LexicallyContained(result.storagePath, root); });
+        if (knownProjects_ && !rooted)
         {
             if (const auto error = knownProjects_->Add(result.storagePath); !error.empty())
                 return {{}, "project was created but registration could not be persisted: " + error};
@@ -335,6 +370,9 @@ ProjectChildCoordinator::RegisterProject(const std::filesystem::path& path)
     if (!normalized.is_absolute() ||
         (normalized.extension() != ".bnpr" && normalized.extension() != ".bnpm"))
         return {{}, "project path must be an absolute .bnpr or .bnpm path"};
+    if (std::any_of(config_.projects.roots.begin(), config_.projects.roots.end(),
+            [&](const auto& root) { return LexicallyContained(normalized, root); }))
+        return {{}, "project is already managed by a configured project root"};
     ProjectQueueGuard queue(*this);
     try
     {
@@ -359,6 +397,65 @@ ProjectChildCoordinator::RegisterProject(const std::filesystem::path& path)
         {
             (void)knownProjects_->Remove(result.storagePath);
             return {{}, error};
+        }
+        return {std::move(result), {}};
+    }
+    catch (const std::exception& exception)
+    {
+        return {{}, exception.what()};
+    }
+}
+
+ProjectCoordinatorResult<project::LocalProjectRecord>
+ProjectChildCoordinator::RelocateProject(std::string_view projectReference,
+    const std::filesystem::path& stagingPath, const std::filesystem::path& destination)
+{
+    const auto project = projects_.Find(projectReference);
+    if (!project)
+        return {{}, "project not found"};
+    if (!knownProjects_)
+        return {{}, "known project registry is unavailable"};
+    std::error_code filesystemError;
+    if (std::filesystem::exists(destination, filesystemError) || filesystemError)
+        return {{}, filesystemError ? "cannot inspect project destination: " + filesystemError.message()
+                                    : "project destination already exists"};
+
+    ProjectQueueGuard queue(*this);
+    try
+    {
+        ipc::Command command;
+        command.mutable_scan_local_projects()->add_projects(stagingPath.string());
+        const auto reply = CallWithRecovery(command);
+        if (!reply.success() || !reply.has_local_project_catalog())
+            return {{}, reply.success() ? "project child returned no catalog" : reply.error()};
+        if (reply.local_project_catalog().projects_size() != 1)
+            return {{}, "project child returned an unexpected project count"};
+        const auto& inspected = reply.local_project_catalog().projects(0);
+        if (inspected.id() != project->internalId)
+            return {{}, "copied project durable ID does not match the source project"};
+
+        std::filesystem::rename(stagingPath, destination, filesystemError);
+        if (filesystemError)
+            return {{}, "cannot install copied project: " + filesystemError.message()};
+
+        if (const auto error = knownProjects_->Remove(project->storagePath); !error.empty())
+        {
+            std::error_code rollbackError;
+            std::filesystem::rename(destination, stagingPath, rollbackError);
+            return {{}, "copied project was not adopted because registration removal failed: " + error
+                    + (rollbackError ? "; destination rollback also failed: " + rollbackError.message() : "")};
+        }
+
+        project::LocalProjectRecord result{
+            {}, inspected.id(), destination, inspected.name(), inspected.description()};
+        if (const auto error = projects_.Upsert(result); !error.empty())
+        {
+            const auto registrationError = knownProjects_->Add(project->storagePath);
+            std::error_code rollbackError;
+            std::filesystem::rename(destination, stagingPath, rollbackError);
+            return {{}, "copied project catalog update failed: " + error
+                    + (registrationError.empty() ? "" : "; source re-registration failed: " + registrationError)
+                    + (rollbackError ? "; destination rollback also failed: " + rollbackError.message() : "")};
         }
         return {std::move(result), {}};
     }

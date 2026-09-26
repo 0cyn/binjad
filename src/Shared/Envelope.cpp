@@ -1,4 +1,4 @@
-#include "binjad/ipc/envelope.hpp"
+#include "binjad/ipc/Envelope.hpp"
 
 #include <limits>
 

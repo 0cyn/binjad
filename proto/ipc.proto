@@ -28,6 +28,7 @@ message RegisterChild {
 message RegisterAccepted {}
 
 message Command {
+  reserved 40 to 45;
   oneof action {
     OpenFile open_file = 1;
     CloseFile close_file = 2;
@@ -51,12 +52,6 @@ message Command {
     UpdateLocalProjectFile update_local_project_file = 30;
     DeleteLocalProjectFile delete_local_project_file = 31;
     DeleteLocalProject delete_local_project = 32;
-    ConfigureCollaboration configure_collaboration = 40;
-    ListCollaborationProjects list_collaboration_projects = 41;
-    ListCollaborationFiles list_collaboration_files = 42;
-    DownloadCollaborationFile download_collaboration_file = 43;
-    SaveCollaborationDatabase save_collaboration_database = 44;
-    UploadCollaborationFile upload_collaboration_file = 45;
     ExecuteAnalysisTool execute_analysis_tool = 50;
   }
 }
@@ -176,41 +171,6 @@ message DeleteLocalProject {
   string project_path = 1;
 }
 
-message ConfigureCollaboration {
-  string remote_name = 1;
-  string remote_url = 2;
-  string username = 3;
-  string access_token = 4;
-}
-
-message ListCollaborationProjects {}
-
-message ListCollaborationFiles {
-  string project_id = 1;
-}
-
-message DownloadCollaborationFile {
-  string project_id = 1;
-  string file_id = 2;
-  string destination = 3;
-}
-
-message SaveCollaborationDatabase {
-  string project_id = 1;
-  string file_id = 2;
-  string database_path = 3;
-  bool created_database = 4;
-  string message = 5;
-  string resolutions_json = 6;
-}
-
-message UploadCollaborationFile {
-  string project_id = 1;
-  string source_path = 2;
-  string folder = 3;
-  string filename = 4;
-}
-
 message ExecuteAnalysisTool {
   string view_type = 1;
   string name = 2;
@@ -220,6 +180,7 @@ message ExecuteAnalysisTool {
 }
 
 message Reply {
+  reserved 40 to 44;
   bool success = 1;
   string error = 2;
 
@@ -236,11 +197,6 @@ message Reply {
     LocalProjectFolders local_project_folders = 25;
     LocalProjectFolder local_project_folder = 26;
     LocalProjectFile local_project_file = 27;
-    CollaborationProjectCatalog collaboration_project_catalog = 40;
-    CollaborationFiles collaboration_files = 41;
-    CollaborationFileDownloaded collaboration_file_downloaded = 42;
-    CollaborationDatabaseSaved collaboration_database_saved = 43;
-    CollaborationFile collaboration_file = 44;
     AnalysisToolResult analysis_tool_result = 50;
   }
 }
@@ -297,6 +253,7 @@ message LocalProjectFile {
   string description = 4;
   int64 creation_timestamp = 5;
   string folder_id = 6;
+  string backing_path = 7;
 }
 
 message LocalProjectFileExported {
@@ -319,44 +276,6 @@ message LocalProjectFolder {
   string path = 3;
   string name = 4;
   string description = 5;
-}
-
-message CollaborationProjectCatalog {
-  repeated CollaborationProject projects = 1;
-}
-
-message CollaborationProject {
-  string id = 1;
-  string name = 2;
-  string description = 3;
-  int64 created = 4;
-  int64 last_modified = 5;
-  bool admin = 6;
-}
-
-message CollaborationFiles {
-  repeated CollaborationFile files = 1;
-}
-
-message CollaborationFile {
-  string id = 1;
-  string path = 2;
-  string name = 3;
-  string description = 4;
-  uint64 size = 5;
-  uint32 type = 6;
-}
-
-message CollaborationFileDownloaded {
-  string id = 1;
-  string path = 2;
-  bool database_backed = 3;
-}
-
-message CollaborationDatabaseSaved {
-  bool synchronized = 1;
-  string path = 2;
-  string conflicts_json = 3;
 }
 
 message AnalysisToolResult {

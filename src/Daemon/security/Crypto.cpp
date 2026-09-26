@@ -1,4 +1,7 @@
-#include "binjad/security/crypto.hpp"
+#include "binjad/security/Crypto.hpp"
+
+#include "binjad/security/Random.hpp"
+#include "PlatformRandom.hpp"
 
 #include <trantor/utils/Utilities.h>
 #include <trantor/utils/crypto/sha256.h>
@@ -6,6 +9,8 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <span>
+#include <utility>
 
 namespace binjad::security
 {
@@ -101,4 +106,63 @@ std::string Sha256Hasher::FinalHex()
     impl_->finalized = true;
     return Hex(digest.data(), digest.size());
 }
+
+namespace
+{
+std::string Hex(std::span<const unsigned char> bytes)
+{
+    return Hex(bytes.data(), bytes.size());
 }
+
+std::string Base64Url(std::span<const unsigned char> bytes)
+{
+    static constexpr char alphabet[] =
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    std::string output;
+    output.reserve((bytes.size() * 4 + 2) / 3);
+    std::size_t offset = 0;
+    while (offset + 3 <= bytes.size())
+    {
+        const std::uint32_t value = (static_cast<std::uint32_t>(bytes[offset]) << 16) |
+            (static_cast<std::uint32_t>(bytes[offset + 1]) << 8) | bytes[offset + 2];
+        output.push_back(alphabet[(value >> 18) & 0x3f]);
+        output.push_back(alphabet[(value >> 12) & 0x3f]);
+        output.push_back(alphabet[(value >> 6) & 0x3f]);
+        output.push_back(alphabet[value & 0x3f]);
+        offset += 3;
+    }
+    if (offset < bytes.size())
+    {
+        std::uint32_t value = static_cast<std::uint32_t>(bytes[offset]) << 16;
+        if (offset + 1 < bytes.size())
+            value |= static_cast<std::uint32_t>(bytes[offset + 1]) << 8;
+        output.push_back(alphabet[(value >> 18) & 0x3f]);
+        output.push_back(alphabet[(value >> 12) & 0x3f]);
+        if (offset + 1 < bytes.size())
+            output.push_back(alphabet[(value >> 6) & 0x3f]);
+    }
+    return output;
+}
+
+template <typename Encode>
+RandomStringResult Generate(Encode encode)
+{
+    std::array<unsigned char, 32> bytes{};
+    if (auto error = FillSecureRandom(bytes); !error.empty())
+        return {{}, std::move(error)};
+    return {encode(bytes), {}};
+}
+}
+
+RandomStringResult GenerateHex256()
+{
+    return Generate([](const auto& bytes) { return Hex(bytes); });
+}
+
+RandomStringResult GenerateBase64Url256()
+{
+    return Generate([](const auto& bytes) { return Base64Url(bytes); });
+}
+}
+
+

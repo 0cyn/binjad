@@ -1,8 +1,8 @@
-#include "binjad/worker/project_child.hpp"
+#include "binjad/worker/ProjectChild.hpp"
 
-#include "binjad/binary_ninja/runtime.hpp"
-#include "binjad/ipc/envelope.hpp"
-#include "binjad/platform/paths.hpp"
+#include "binjad/binary_ninja/Runtime.hpp"
+#include "binjad/ipc/Envelope.hpp"
+#include "binjad/platform/Paths.hpp"
 
 #include <binaryninjaapi.h>
 #include <rapidjsonwrapper.h>
@@ -49,53 +49,6 @@ std::string FolderPath(BinaryNinja::Ref<BinaryNinja::ProjectFolder> folder)
         result /= component;
     return result.generic_string();
 }
-
-std::string RemoteFolderPath(BinaryNinja::Ref<BinaryNinja::Collaboration::RemoteFolder> folder)
-{
-    std::vector<std::string> components;
-    while (folder)
-    {
-        components.push_back(folder->GetName());
-        folder = folder->GetParent();
-    }
-    std::reverse(components.begin(), components.end());
-    std::filesystem::path result;
-    for (const auto& component : components)
-        result /= component;
-    return result.generic_string();
-}
-
-class RemoteProjectScope
-{
-  public:
-    explicit RemoteProjectScope(
-        BinaryNinja::Ref<BinaryNinja::Collaboration::RemoteProject> project)
-        : project_(std::move(project))
-    {
-        if (!project_)
-            throw std::runtime_error("collaboration project not found");
-        if (!project_->IsOpen() && !project_->Open())
-            throw std::runtime_error("cannot open collaboration project");
-    }
-    ~RemoteProjectScope()
-    {
-        if (project_ && project_->IsOpen())
-            project_->Close();
-    }
-    BinaryNinja::Collaboration::RemoteProject* operator->() const
-    {
-        return project_.GetPtr();
-    }
-    void Close()
-    {
-        if (project_ && project_->IsOpen())
-            project_->Close();
-        project_ = nullptr;
-    }
-
-  private:
-    BinaryNinja::Ref<BinaryNinja::Collaboration::RemoteProject> project_;
-};
 
 class ProjectScope
 {
@@ -162,6 +115,7 @@ void FillFile(ipc::LocalProjectFile& row,
     row.set_name(file->GetName());
     row.set_description(file->GetDescription());
     row.set_creation_timestamp(file->GetCreationTimestamp());
+    row.set_backing_path(file->GetPathOnDisk());
     if (const auto folder = file->GetFolder())
         row.set_folder_id(folder->GetId());
 }
@@ -193,7 +147,11 @@ std::vector<std::filesystem::path> Discover(const ipc::ScanLocalProjects& comman
             const auto entry = *iterator;
             const auto extension = entry.path().extension();
             std::error_code statusError;
-            if (entry.is_directory(statusError) && extension == ".bnpr")
+            if (entry.is_directory(statusError) && entry.path().filename().string().starts_with(".binjad-staging-"))
+            {
+                iterator.disable_recursion_pending();
+            }
+            else if (!statusError && entry.is_directory(statusError) && extension == ".bnpr")
             {
                 projects.push_back(entry.path().lexically_normal());
                 iterator.disable_recursion_pending();
@@ -231,12 +189,6 @@ class ProjectChild
     explicit ProjectChild(std::unique_ptr<ipc::ByteChannel> channel)
         : channel_(std::move(channel)), runtime_(true)
     {
-    }
-
-    ~ProjectChild()
-    {
-        if (remote_ && remote_->IsConnected())
-            remote_->Disconnect();
     }
 
     int Run()
@@ -302,22 +254,6 @@ class ProjectChild
                 DeleteFile(command.delete_local_project_file());
             else if (command.has_delete_local_project())
                 DeleteProject(command.delete_local_project());
-            else if (command.has_configure_collaboration())
-                ConfigureCollaboration(command.configure_collaboration());
-            else if (command.has_list_collaboration_projects())
-                ListCollaborationProjects(*reply.mutable_collaboration_project_catalog());
-            else if (command.has_list_collaboration_files())
-                ListCollaborationFiles(command.list_collaboration_files(),
-                    *reply.mutable_collaboration_files());
-            else if (command.has_download_collaboration_file())
-                DownloadCollaborationFile(command.download_collaboration_file(),
-                    *reply.mutable_collaboration_file_downloaded());
-            else if (command.has_save_collaboration_database())
-                SaveCollaborationDatabase(command.save_collaboration_database(),
-                    *reply.mutable_collaboration_database_saved());
-            else if (command.has_upload_collaboration_file())
-                UploadCollaborationFile(command.upload_collaboration_file(),
-                    *reply.mutable_collaboration_file());
             else if (command.has_shutdown())
                 running = false;
             else
@@ -599,256 +535,6 @@ class ProjectChild
                 : "local project storage was not found");
     }
 
-    void ConfigureCollaboration(const ipc::ConfigureCollaboration& command)
-    {
-        if (remote_ && remote_->IsConnected())
-            remote_->Disconnect();
-        remote_ = BinaryNinja::Collaboration::CreateRemote(
-            command.remote_name(), command.remote_url());
-        if (!remote_ || !remote_->LoadMetadata())
-            throw std::runtime_error("cannot load collaboration remote metadata");
-        remote_->Connect(command.username(), command.access_token());
-        if (!remote_->IsConnected())
-            throw std::runtime_error("cannot authenticate collaboration remote");
-    }
-
-    void ListCollaborationProjects(ipc::CollaborationProjectCatalog& result)
-    {
-        if (!remote_ || !remote_->IsConnected())
-            throw std::runtime_error("collaboration remote is not configured");
-        remote_->PullProjects();
-        auto projects = remote_->GetProjects();
-        std::sort(projects.begin(), projects.end(), [](const auto& left, const auto& right) {
-            return left->GetName() < right->GetName();
-        });
-        for (const auto& project : projects)
-        {
-            auto* row = result.add_projects();
-            row->set_id(project->GetId());
-            row->set_name(project->GetName());
-            row->set_description(project->GetDescription());
-            row->set_created(project->GetCreated());
-            row->set_last_modified(project->GetLastModified());
-            row->set_admin(project->IsAdmin());
-        }
-    }
-
-    void ListCollaborationFiles(const ipc::ListCollaborationFiles& command,
-        ipc::CollaborationFiles& result)
-    {
-        if (!remote_ || !remote_->IsConnected())
-            throw std::runtime_error("collaboration remote is not configured");
-        RemoteProjectScope project(remote_->GetProjectById(command.project_id()));
-        project->PullFolders();
-        project->PullFiles();
-        auto files = project->GetFiles();
-        std::sort(files.begin(), files.end(), [](const auto& left, const auto& right) {
-            return left->GetName() < right->GetName();
-        });
-        for (const auto& file : files)
-        {
-            auto* row = result.add_files();
-            row->set_id(file->GetId());
-            const auto folder = RemoteFolderPath(file->GetFolder());
-            row->set_path(folder.empty()
-                ? file->GetName() : (std::filesystem::path(folder) / file->GetName()).generic_string());
-            row->set_name(file->GetName());
-            row->set_description(file->GetDescription());
-            row->set_size(file->GetSize());
-            row->set_type(static_cast<std::uint32_t>(file->GetType()));
-        }
-        files.clear();
-        project.Close();
-    }
-
-    void DownloadCollaborationFile(const ipc::DownloadCollaborationFile& command,
-        ipc::CollaborationFileDownloaded& result)
-    {
-        if (!remote_ || !remote_->IsConnected())
-            throw std::runtime_error("collaboration remote is not configured");
-        RemoteProjectScope project(remote_->GetProjectById(command.project_id()));
-        project->PullFolders();
-        project->PullFiles();
-        auto file = project->GetFileById(command.file_id());
-        if (!file)
-            throw std::runtime_error("collaboration file not found");
-        const bool database = file->GetType() == BinaryViewAnalysisFileType;
-        if (database)
-        {
-            BinaryNinja::Collaboration::DownloadDatabaseForFile(
-                file, command.destination(), true);
-        }
-        else
-        {
-            const auto contents = file->DownloadContents();
-            std::ofstream stream(command.destination(), std::ios::binary | std::ios::trunc);
-            stream.write(reinterpret_cast<const char*>(contents.data()),
-                static_cast<std::streamsize>(contents.size()));
-            if (!stream)
-                throw std::runtime_error("cannot write downloaded collaboration file");
-        }
-        result.set_id(file->GetId());
-        result.set_path(command.destination());
-        result.set_database_backed(database);
-        file = nullptr;
-        project.Close();
-    }
-
-    void SaveCollaborationDatabase(const ipc::SaveCollaborationDatabase& command,
-        ipc::CollaborationDatabaseSaved& result)
-    {
-        if (!remote_ || !remote_->IsConnected())
-            throw std::runtime_error("collaboration remote is not configured");
-        RemoteProjectScope project(remote_->GetProjectById(command.project_id()));
-        project->PullFolders();
-        project->PullFiles();
-        auto file = project->GetFileById(command.file_id());
-        if (!file)
-            throw std::runtime_error("collaboration file not found");
-        auto view = BinaryNinja::Load(command.database_path(), false);
-        if (!view)
-            throw std::runtime_error("cannot open saved collaboration database");
-        BinaryNinja::Ref<BinaryNinja::FileMetadata> metadata = view->GetFile();
-        const auto nameChangeset = [message = command.message()](
-            BinaryNinja::Ref<BinaryNinja::Collaboration::CollabChangeset> changeset) {
-            changeset->SetName(message);
-            return true;
-        };
-        std::string remotePath;
-        if (command.created_database())
-        {
-            const auto folder = file->GetFolder();
-            const auto filename = file->GetName() + ".bndb";
-            const auto folderPath = RemoteFolderPath(folder);
-            for (const auto& existing : project->GetFiles())
-            {
-                if (existing->GetName() == filename &&
-                    RemoteFolderPath(existing->GetFolder()) == folderPath)
-                    throw std::runtime_error("collaboration destination already exists");
-            }
-            metadata->SetFilename(filename);
-            auto uploaded = BinaryNinja::Collaboration::UploadDatabase(
-                metadata, project.operator->(), folder, {}, nameChangeset);
-            if (!uploaded)
-                throw std::runtime_error("cannot upload collaboration database");
-            remotePath = folderPath.empty() ? uploaded->GetName()
-                : (std::filesystem::path(folderPath) / uploaded->GetName()).generic_string();
-        }
-        else
-        {
-            nlohmann::json resolutions = nlohmann::json::object();
-            if (!command.resolutions_json().empty())
-                resolutions = nlohmann::json::parse(command.resolutions_json());
-            nlohmann::json unresolved = nlohmann::json::object();
-            const auto conflictHandler = [&](const std::unordered_map<std::string,
-                                             BinaryNinja::Ref<BinaryNinja::Collaboration::AnalysisMergeConflict>>& conflicts) {
-                bool success = true;
-                for (const auto& [key, conflict] : conflicts)
-                {
-                    if (resolutions.contains(key))
-                    {
-                        const auto& resolution = resolutions.at(key);
-                        if (resolution.is_string() && resolution.get<std::string>() == "first")
-                            success = conflict->Success(conflict->GetFirst()) && success;
-                        else if (resolution.is_string() && resolution.get<std::string>() == "second")
-                            success = conflict->Success(conflict->GetSecond()) && success;
-                        else
-                            success = conflict->Success(
-                                std::optional<nlohmann::json>(resolution)) && success;
-                        continue;
-                    }
-                    nlohmann::json detail;
-                    detail["type"] = conflict->GetType();
-                    detail["base"] = conflict->GetBase().value_or(nlohmann::json(nullptr));
-                    detail["first"] = conflict->GetFirst().value_or(nlohmann::json(nullptr));
-                    detail["second"] = conflict->GetSecond().value_or(nlohmann::json(nullptr));
-                    unresolved[key] = std::move(detail);
-                    success = false;
-                }
-                return success;
-            };
-            BinaryNinja::Collaboration::SyncDatabase(
-                metadata, file, conflictHandler, {}, nameChangeset);
-            if (!unresolved.empty())
-            {
-                result.set_synchronized(false);
-                result.set_conflicts_json(unresolved.dump());
-                metadata->Close();
-                view = nullptr;
-                file = nullptr;
-                project.Close();
-                return;
-            }
-            const auto folderPath = RemoteFolderPath(file->GetFolder());
-            remotePath = folderPath.empty() ? file->GetName()
-                : (std::filesystem::path(folderPath) / file->GetName()).generic_string();
-        }
-        result.set_synchronized(true);
-        result.set_path(remotePath);
-        metadata->Close();
-        view = nullptr;
-        file = nullptr;
-        project.Close();
-    }
-
-    void UploadCollaborationFile(const ipc::UploadCollaborationFile& command,
-        ipc::CollaborationFile& result)
-    {
-        if (!remote_ || !remote_->IsConnected())
-            throw std::runtime_error("collaboration remote is not configured");
-        RemoteProjectScope project(remote_->GetProjectById(command.project_id()));
-        project->PullFolders();
-        project->PullFiles();
-        for (const auto& existing : project->GetFiles())
-        {
-            const auto folder = RemoteFolderPath(existing->GetFolder());
-            const auto path = folder.empty() ? existing->GetName()
-                : (std::filesystem::path(folder) / existing->GetName()).generic_string();
-            const auto target = command.folder().empty() ? command.filename()
-                : (std::filesystem::path(command.folder()) / command.filename()).generic_string();
-            if (path == target)
-                throw std::runtime_error("collaboration file destination already exists");
-        }
-        BinaryNinja::Ref<BinaryNinja::Collaboration::RemoteFolder> parent;
-        std::filesystem::path current;
-        for (const auto& component : std::filesystem::path(command.folder()))
-        {
-            current /= component;
-            BinaryNinja::Ref<BinaryNinja::Collaboration::RemoteFolder> found;
-            for (const auto& folder : project->GetFolders())
-            {
-                if (RemoteFolderPath(folder) == current.generic_string())
-                {
-                    found = folder;
-                    break;
-                }
-            }
-            if (!found)
-                found = project->CreateFolder(component.string(), "", parent);
-            if (!found)
-                throw std::runtime_error("cannot create collaboration destination folder");
-            parent = found;
-        }
-        std::ifstream stream(command.source_path(), std::ios::binary);
-        if (!stream)
-            throw std::runtime_error("cannot open staged upload");
-        std::vector<std::uint8_t> contents(
-            (std::istreambuf_iterator<char>(stream)), std::istreambuf_iterator<char>());
-        auto file = project->CreateFile(command.filename(), contents,
-            command.filename(), "Uploaded by binjad", parent, RawDataFileType);
-        if (!file)
-            throw std::runtime_error("cannot create collaboration file");
-        result.set_id(file->GetId());
-        result.set_name(file->GetName());
-        result.set_description(file->GetDescription());
-        result.set_size(file->GetSize());
-        result.set_type(static_cast<std::uint32_t>(file->GetType()));
-        result.set_path(command.folder().empty() ? file->GetName()
-            : (std::filesystem::path(command.folder()) / file->GetName()).generic_string());
-        file = nullptr;
-        project.Close();
-    }
-
     void Send(std::uint64_t requestId, const ipc::Reply& reply)
     {
         ipc::Envelope envelope;
@@ -868,7 +554,6 @@ class ProjectChild
 
     std::unique_ptr<ipc::ByteChannel> channel_;
     BinaryNinjaRuntime runtime_;
-    BinaryNinja::Ref<BinaryNinja::Collaboration::Remote> remote_;
 };
 }
 

@@ -1,14 +1,13 @@
-#include "../tool_call.hpp"
-#include "../tool_schema.hpp"
+#include "../ToolCall.hpp"
+#include "../ToolSchema.hpp"
 
-#include "binjad/overseer/analysis_scheduler.hpp"
-#include "binjad/overseer/collaboration_child_manager.hpp"
-#include "binjad/overseer/file_child_coordinator.hpp"
-#include "binjad/overseer/project_child_coordinator.hpp"
-#include "binjad/platform/cpu.hpp"
-#include "binjad/platform/paths.hpp"
-#include "binjad/session/job_registry.hpp"
-#include "binjad/session/open_item_registry.hpp"
+#include "binjad/overseer/AnalysisScheduler.hpp"
+#include "binjad/overseer/FileChildCoordinator.hpp"
+#include "binjad/overseer/ProjectChildCoordinator.hpp"
+#include "binjad/platform/Cpu.hpp"
+#include "binjad/platform/Paths.hpp"
+#include "binjad/session/JobRegistry.hpp"
+#include "binjad/session/OpenItemRegistry.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -283,8 +282,6 @@ namespace binjad::mcp {
 					return "path";
 				case session::OpenItemSourceKind::LocalProject:
 					return "local_project";
-				case session::OpenItemSourceKind::CollaborationProject:
-					return "collaboration_project";
 				}
 				return {};
 			}
@@ -431,111 +428,56 @@ namespace binjad::mcp {
 				overseer::CoordinatorResult<session::OpenItemRecord> opened;
 				if (project)
 				{
-					if (context.config.EffectiveMode() == Mode::Local)
+					if (!context.projectCoordinator)
+						return ToolCallSuccess(
+							context, detail::ErrorJson("local project service is unavailable"), true);
+					auto exported = context.projectCoordinator->ExportFile(*project, path);
+					if (!exported.value)
+						return ToolCallSuccess(context, detail::ErrorJson(exported.error), true);
+					if (IsSharedCachePrimaryPath(path))
 					{
-						if (!context.projectCoordinator)
-							return ToolCallSuccess(
-								context, detail::ErrorJson("local project service is unavailable"), true);
-						auto exported = context.projectCoordinator->ExportFile(*project, path);
-						if (!exported.value)
-							return ToolCallSuccess(context, detail::ErrorJson(exported.error), true);
-						if (IsSharedCachePrimaryPath(path))
+						const auto files = context.projectCoordinator->ListFiles(*project);
+						if (!files.value)
 						{
-							const auto files = context.projectCoordinator->ListFiles(*project);
-							if (!files.value)
+							std::error_code ignored;
+							std::filesystem::remove_all(exported.value->workingDirectory, ignored);
+							return ToolCallSuccess(
+								context, detail::ErrorJson(files.error), true);
+						}
+						std::string companionError;
+						for (const auto& file : *files.value)
+						{
+							if (!IsSharedCacheCompanionPath(path, file.path))
+								continue;
+							auto companion = context.projectCoordinator->ExportFile(*project, file.path);
+							if (!companion.value)
 							{
-								std::error_code ignored;
-								std::filesystem::remove_all(exported.value->workingDirectory, ignored);
-								return ToolCallSuccess(context, detail::ErrorJson(files.error), true);
+								companionError = companion.error;
+								break;
 							}
-							std::string companionError;
-							for (const auto& file : *files.value)
+							const auto copied = platform::CopyRegularFilePrivate(companion.value->path,
+								exported.value->workingDirectory / std::filesystem::path(file.path).filename());
+							std::error_code ignored;
+							std::filesystem::remove_all(companion.value->workingDirectory, ignored);
+							if (!copied.bytesCopied || !copied.error.empty())
 							{
-								if (!IsSharedCacheCompanionPath(path, file.path))
-									continue;
-								auto companion = context.projectCoordinator->ExportFile(*project, file.path);
-								if (!companion.value)
-								{
-									companionError = companion.error;
-									break;
-								}
-								const auto copied = platform::CopyRegularFilePrivate(companion.value->path,
-									exported.value->workingDirectory / std::filesystem::path(file.path).filename());
-								std::error_code ignored;
-								std::filesystem::remove_all(companion.value->workingDirectory, ignored);
-								if (!copied.bytesCopied || !copied.error.empty())
-								{
-									companionError = copied.error;
-									break;
-								}
-							}
-							if (!companionError.empty())
-							{
-								std::error_code ignored;
-								std::filesystem::remove_all(exported.value->workingDirectory, ignored);
-								return ToolCallSuccess(context,
-									detail::ErrorJson("cannot stage SharedCache companions: " + companionError), true);
+								companionError = copied.error;
+								break;
 							}
 						}
-						opened = context.fileCoordinator->OpenManagedPath(context.principal,
-							context.currentSession->reference, exported.value->path, options, reuseDatabase,
-							session::OpenItemSourceKind::LocalProject, path, *project);
-						std::error_code ignored;
-						std::filesystem::remove_all(exported.value->workingDirectory, ignored);
-					}
-					else
-					{
-						if (!context.collaborationManager)
-							return ToolCallSuccess(
-								context, detail::ErrorJson("collaboration project service is unavailable"), true);
-						auto downloaded = context.collaborationManager->DownloadFile(context.principal, *project, path);
-						if (!downloaded.value)
-							return ToolCallSuccess(context, detail::ErrorJson(downloaded.error), true);
-						if (IsSharedCachePrimaryPath(path))
+						if (!companionError.empty())
 						{
-							const auto files = context.collaborationManager->ListFiles(context.principal, *project);
-							if (!files.value)
-							{
-								std::error_code ignored;
-								std::filesystem::remove_all(downloaded.value->workingDirectory, ignored);
-								return ToolCallSuccess(context, detail::ErrorJson(files.error), true);
-							}
-							std::string companionError;
-							for (const auto& file : *files.value)
-							{
-								if (!IsSharedCacheCompanionPath(path, file.path))
-									continue;
-								auto companion =
-									context.collaborationManager->DownloadFile(context.principal, *project, file.path);
-								if (!companion.value)
-								{
-									companionError = companion.error;
-									break;
-								}
-								const auto copied = platform::CopyRegularFilePrivate(companion.value->path,
-									downloaded.value->workingDirectory / std::filesystem::path(file.path).filename());
-								std::error_code ignored;
-								std::filesystem::remove_all(companion.value->workingDirectory, ignored);
-								if (!copied.bytesCopied || !copied.error.empty())
-								{
-									companionError = copied.error;
-									break;
-								}
-							}
-							if (!companionError.empty())
-							{
-								std::error_code ignored;
-								std::filesystem::remove_all(downloaded.value->workingDirectory, ignored);
-								return ToolCallSuccess(context,
-									detail::ErrorJson("cannot stage SharedCache companions: " + companionError), true);
-							}
+							std::error_code ignored;
+							std::filesystem::remove_all(exported.value->workingDirectory, ignored);
+							return ToolCallSuccess(context,
+								detail::ErrorJson("cannot stage SharedCache companions: " + companionError), true);
 						}
-						opened = context.fileCoordinator->OpenManagedPath(context.principal,
-							context.currentSession->reference, downloaded.value->path, options, reuseDatabase,
-							session::OpenItemSourceKind::CollaborationProject, path, *project);
-						std::error_code ignored;
-						std::filesystem::remove_all(downloaded.value->workingDirectory, ignored);
 					}
+					opened = context.fileCoordinator->OpenManagedPath(context.principal,
+						context.currentSession->reference, exported.value->path, options, reuseDatabase,
+						session::OpenItemSourceKind::LocalProject, path, *project);
+					std::error_code ignored;
+					std::filesystem::remove_all(exported.value->workingDirectory, ignored);
 				}
 				else
 				{
@@ -724,19 +666,6 @@ namespace binjad::mcp {
 				return {buffer.GetString(), buffer.GetSize()};
 			}
 
-			std::string CollaborationConflictJson(std::string_view conflicts)
-			{
-				StringBuffer buffer;
-				Writer<StringBuffer> writer(buffer);
-				writer.StartObject();
-				writer.Key("error");
-				writer.String("collaboration merge conflicts require resolutions");
-				writer.Key("conflicts");
-				writer.RawValue(conflicts.data(), conflicts.size(), rapidjson::kObjectType);
-				writer.EndObject();
-				return {buffer.GetString(), buffer.GetSize()};
-			}
-
 			FoundationResult BinaryViewSave(const ToolCallContext& context)
 			{
 				if (!context.currentSession || !context.openItems || !context.fileCoordinator || !context.jobs)
@@ -744,11 +673,6 @@ namespace binjad::mcp {
 						detail::ErrorJson("analysis session, file-child, and job services are required"), true);
 				const auto binaryView = detail::RequiredString(context.arguments, "binaryView");
 				const auto destination = detail::OptionalString(context.arguments, "destination");
-				const auto message = detail::OptionalString(context.arguments, "message");
-				const auto resolutionsMember = context.arguments.FindMember("resolutions");
-				const auto resolutions = resolutionsMember == context.arguments.MemberEnd() ?
-					"{}" :
-					detail::Serialize(resolutionsMember->value);
 				const auto view =
 					context.openItems->FindView(context.principal.id, context.currentSession->reference, binaryView);
 				if (!view || !view->created)
@@ -757,9 +681,6 @@ namespace binjad::mcp {
 				const auto item = context.openItems->FindOpenItem(context.principal.id, view->openItem);
 				if (!item)
 					return ToolCallSuccess(context, detail::ErrorJson("open item not found"), true);
-				if (item->sourceKind == session::OpenItemSourceKind::CollaborationProject && !message)
-					return ToolCallInvalidArguments(context, "message is required for collaboration saves");
-
 				const bool async = context.request.name == "bn_binary_view_save_async";
 				const auto owner = context.principal.id;
 				const auto analysisSession = context.currentSession->reference;
@@ -782,8 +703,7 @@ namespace binjad::mcp {
 				const auto workerError = context.jobs->StartWorker(
 					[jobs = context.jobs, fileCoordinator = context.fileCoordinator,
 						projectCoordinator = context.projectCoordinator, openItems = context.openItems, owner,
-						analysisSession, binaryView, item = *item, destination, message, resolutions,
-						principal = context.principal, collaborationManager = context.collaborationManager, job,
+						analysisSession, binaryView, item = *item, destination, job,
 						progress = async ? Foundation::JobProgressCallback {} : context.progress] {
 						const auto cancelled = [&] {
 							const auto info = jobs->Info(owner, job);
@@ -870,43 +790,6 @@ namespace binjad::mcp {
 							openItems->UpdateSource(owner, item.reference, session::OpenItemSourceKind::LocalProject,
 								committedDestination, item.project);
 						}
-						else
-						{
-							if (!item.project || !collaborationManager || !message)
-							{
-								discardCreatedDatabase();
-								jobs->Fail(owner, job,
-									detail::ErrorJson("collaboration project service is unavailable"),
-									detail::CurrentUnixSeconds());
-								return;
-							}
-							if (destination)
-							{
-								discardCreatedDatabase();
-								jobs->Fail(owner, job, detail::ErrorJson("collaboration Save As is not implemented"),
-									detail::CurrentUnixSeconds());
-								return;
-							}
-							const auto synchronized = collaborationManager->SaveDatabase(principal, *item.project,
-								item.source, saved.value->path(), saved.value->created_database(), *message,
-								resolutions);
-							if (!synchronized.value)
-							{
-								discardCreatedDatabase();
-								jobs->Fail(
-									owner, job, detail::ErrorJson(synchronized.error), detail::CurrentUnixSeconds());
-								return;
-							}
-							if (!synchronized.value->synchronized)
-							{
-								jobs->Fail(owner, job, CollaborationConflictJson(synchronized.value->conflictsJson),
-									detail::CurrentUnixSeconds());
-								return;
-							}
-							committedDestination = synchronized.value->path;
-							openItems->UpdateSource(owner, item.reference,
-								session::OpenItemSourceKind::CollaborationProject, committedDestination, item.project);
-						}
 						if (saved.value->created_database())
 						{
 							const auto promoted = fileCoordinator->PromoteSavedBinaryView(
@@ -980,13 +863,11 @@ namespace binjad::mcp {
 				schema::Object("options"), schema::Boolean("analyze"));
 			BINJAD_ANALYSIS_TOOL(BinaryViewSaveTool, "bn_binary_view_save", "Save and commit an explicit BinaryView.",
 				Core, "Files and views", ToolCallAvailability::None, BinaryViewSave, schema::String("binaryView", true),
-				schema::NonEmptyString("destination"), schema::NonEmptyString("message"),
-				schema::Object("resolutions"));
+				schema::NonEmptyString("destination"));
 			BINJAD_ANALYSIS_TOOL(BinaryViewSaveAsyncTool, "bn_binary_view_save_async",
 				"Save and commit an explicit BinaryView as an immediately detached job.", Core, "Files and views",
 				ToolCallAvailability::None, BinaryViewSave, schema::String("binaryView", true),
-				schema::NonEmptyString("destination"), schema::NonEmptyString("message"),
-				schema::Object("resolutions"));
+				schema::NonEmptyString("destination"));
 		}  // namespace file_tools
 
 		namespace core_analysis_tools {

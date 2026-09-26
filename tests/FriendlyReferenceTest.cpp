@@ -1,4 +1,4 @@
-#include "binjad/reference/friendly_reference.hpp"
+#include "binjad/reference/FriendlyReference.hpp"
 
 #include <gtest/gtest.h>
 

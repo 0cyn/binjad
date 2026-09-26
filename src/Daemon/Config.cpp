@@ -1,5 +1,5 @@
-#include "binjad/config.hpp"
-#include "binjad/platform/paths.hpp"
+#include "binjad/Config.hpp"
+#include "binjad/platform/Paths.hpp"
 
 #include <rapidjsonwrapper.h>
 
@@ -78,8 +78,7 @@ std::optional<bool> ReadBool(
     return member->value.GetBool();
 }
 
-std::filesystem::path ResolvePath(
-    const std::filesystem::path& value, const std::filesystem::path& configDirectory)
+std::filesystem::path ResolvePath(const std::filesystem::path& value, const std::filesystem::path& configDirectory)
 {
     if (value.is_absolute())
         return value.lexically_normal();
@@ -93,8 +92,7 @@ bool IsIpv4Loopback(std::string_view address)
     for (std::size_t octet = 0; octet < 4; ++octet)
     {
         const auto end = address.find('.', start);
-        if ((octet < 3 && end == std::string_view::npos) ||
-            (octet == 3 && end != std::string_view::npos))
+        if ((octet < 3 && end == std::string_view::npos) || (octet == 3 && end != std::string_view::npos))
             return false;
         const auto part = address.substr(start, end == std::string_view::npos ? end : end - start);
         if (part.empty() || part.size() > 3)
@@ -123,10 +121,12 @@ bool IsLoopbackAddress(std::string_view address)
 
 bool HasWhitespaceOrControl(std::string_view value)
 {
-    return std::any_of(value.begin(), value.end(), [](const char character) {
-        return std::isspace(static_cast<unsigned char>(character)) ||
-            std::iscntrl(static_cast<unsigned char>(character));
-    });
+    return std::any_of(value.begin(), value.end(),
+        [](const char character)
+        {
+            return std::isspace(static_cast<unsigned char>(character))
+                || std::iscntrl(static_cast<unsigned char>(character));
+        });
 }
 
 std::optional<std::string> HttpOrigin(std::string_view url)
@@ -233,10 +233,6 @@ void ParseHttp(const Value& root, Config& config, std::vector<ConfigError>& erro
             else
                 config.http.mcpMaxBodyBytes = *value;
         }
-        if (const auto value = ReadBool(*section,
-                "very_dangerous_unauthenticated_portal", "$.http", errors))
-            config.http.veryDangerousUnauthenticatedPortal = *value;
-
         if (const auto origins = section->FindMember("allowed_origins"); origins != section->MemberEnd())
         {
             if (!origins->value.IsArray())
@@ -296,23 +292,6 @@ void ParseHttp(const Value& root, Config& config, std::vector<ConfigError>& erro
     }
 }
 
-void ParseAuthentication(const Value& root, Config& config, std::vector<ConfigError>& errors)
-{
-    const auto* section = ReadObject(root, "authentication", "$", errors);
-    if (!section)
-        return;
-    if (const auto value = ReadUnsigned(
-        *section, "default_token_ttl_seconds", "$.authentication", errors))
-    {
-        if (*value == 0 || *value > static_cast<std::uint64_t>(std::chrono::seconds::max().count()))
-            AddError(errors, "$.authentication.default_token_ttl_seconds", "must be greater than zero");
-        else
-            config.authentication.defaultTokenTtl = std::chrono::seconds(*value);
-    }
-    if (const auto value = ReadBool(*section, "allow_infinite_tokens", "$.authentication", errors))
-        config.authentication.allowInfiniteTokens = *value;
-}
-
 void ParseCpu(const Value& root, Config& config, std::vector<ConfigError>& errors)
 {
     const auto* section = ReadObject(root, "cpu", "$", errors);
@@ -368,13 +347,10 @@ void ParseDurationsAndUploads(const Value& root, Config& config, std::vector<Con
             else
                 config.jobs.detachAfter = std::chrono::seconds(*value);
         }
-        if (const auto value = ReadUnsigned(
-                *section, "cancellation_grace_seconds", "$.jobs", errors))
+        if (const auto value = ReadUnsigned(*section, "cancellation_grace_seconds", "$.jobs", errors))
         {
-            if (*value == 0 ||
-                *value > static_cast<std::uint64_t>(std::chrono::seconds::max().count()))
-                AddError(errors, "$.jobs.cancellation_grace_seconds",
-                    "must be greater than zero");
+            if (*value == 0 || *value > static_cast<std::uint64_t>(std::chrono::seconds::max().count()))
+                AddError(errors, "$.jobs.cancellation_grace_seconds", "must be greater than zero");
             else
                 config.jobs.cancellationGrace = std::chrono::seconds(*value);
         }
@@ -397,16 +373,15 @@ void ParseDurationsAndUploads(const Value& root, Config& config, std::vector<Con
             else
                 config.uploads.urlTtl = std::chrono::seconds(*value);
         }
-        if (const auto value = ReadBool(
-                *section, "require_bearer_authentication", "$.uploads", errors))
+        if (const auto value = ReadBool(*section, "require_bearer_authentication", "$.uploads", errors))
             config.uploads.requireBearerAuthentication = *value;
     }
     if (config.uploads.memoryThresholdBytes > config.uploads.maxBytes)
         AddError(errors, "$.uploads.memory_threshold_bytes", "must not exceed max_bytes");
 }
 
-void ParseProjects(const Value& root, Config& config, const std::filesystem::path& configDirectory,
-    std::vector<ConfigError>& errors)
+void ParseProjects(
+    const Value& root, Config& config, const std::filesystem::path& configDirectory, std::vector<ConfigError>& errors)
 {
     const auto* section = ReadObject(root, "projects", "$", errors);
     if (!section)
@@ -430,8 +405,7 @@ void ParseProjects(const Value& root, Config& config, const std::filesystem::pat
                     AddError(errors, path, "must be a string");
                     continue;
                 }
-                const std::filesystem::path raw(
-                    std::string(value.GetString(), value.GetStringLength()));
+                const std::filesystem::path raw(std::string(value.GetString(), value.GetStringLength()));
                 if (raw.empty())
                 {
                     AddError(errors, path, "must not be empty");
@@ -451,38 +425,17 @@ void ParseProjects(const Value& root, Config& config, const std::filesystem::pat
         config.projects.defaultRoot = ResolvePath(std::filesystem::path(*value), configDirectory);
     if (const auto value = ReadBool(*section, "allow_arbitrary_paths", "$.projects", errors))
         config.projects.allowArbitraryPaths = *value;
+    if (const auto value = ReadBool(*section, "allow_project_registration", "$.projects", errors))
+        config.projects.allowProjectRegistration = *value;
 
-    if (config.projects.defaultRoot &&
-        std::find(config.projects.roots.begin(), config.projects.roots.end(), *config.projects.defaultRoot)
+    if (config.projects.defaultRoot
+        && std::find(config.projects.roots.begin(), config.projects.roots.end(), *config.projects.defaultRoot)
             == config.projects.roots.end())
         AddError(errors, "$.projects.default_root", "must name one of projects.roots");
 }
 
-void ParseCollaboration(const Value& root, Config& config, std::vector<ConfigError>& errors)
-{
-    const auto* section = ReadObject(root, "collaboration", "$", errors);
-    if (!section)
-        return;
-    const auto* remote = ReadObject(*section, "remote", "$.collaboration", errors);
-    if (!remote)
-        return;
-
-    const auto name = ReadString(*remote, "name", "$.collaboration.remote", errors).value_or("");
-    const auto url = ReadString(*remote, "url", "$.collaboration.remote", errors).value_or("");
-    if (name.empty() && url.empty())
-        return;
-    if (name.empty())
-        AddError(errors, "$.collaboration.remote.name", "is required when a remote URL is configured");
-    if (url.empty())
-        AddError(errors, "$.collaboration.remote.url", "is required when a remote name is configured");
-    else if (!HttpOrigin(url))
-        AddError(errors, "$.collaboration.remote.url", "must be an absolute HTTP or HTTPS URL");
-    if (!name.empty() && !url.empty())
-        config.collaboration.remote = CollaborationRemoteConfig{name, url};
-}
-
-void ParseStorage(const Value& root, Config& config, const std::filesystem::path& configDirectory,
-    std::vector<ConfigError>& errors)
+void ParseStorage(
+    const Value& root, Config& config, const std::filesystem::path& configDirectory, std::vector<ConfigError>& errors)
 {
     std::string tokens;
     std::string accounts;
@@ -523,6 +476,10 @@ void ParseTools(const Value& root, Config& config, std::vector<ConfigError>& err
             config.tools.binaryEditing = *value;
         if (const auto value = ReadBool(*section, "history", path, errors))
             config.tools.history = *value;
+        if (const auto value = ReadBool(*section, "header_parsing", path, errors))
+            config.tools.headerParsing = *value;
+        if (const auto value = ReadBool(*section, "url_generation", path, errors))
+            config.tools.urlGeneration = *value;
         if (const auto value = ReadBool(*section, "diffing", path, errors))
             config.tools.diffing = *value;
     }
@@ -533,14 +490,7 @@ void ParseTools(const Value& root, Config& config, std::vector<ConfigError>& err
     if (const auto value = ReadBool(*section, "debugger", path, errors))
         config.tools.debugger = *value;
 }
-}
-
-Mode Config::EffectiveMode() const
-{
-    if (mode != Mode::Auto)
-        return mode;
-    return collaboration.remote ? Mode::Collaboration : Mode::Local;
-}
+} // namespace
 
 ConfigResult ParseConfig(std::string_view json, const std::filesystem::path& configPath)
 {
@@ -552,16 +502,16 @@ ConfigResult ParseConfig(std::string_view json, const std::filesystem::path& con
     }
     catch (const ParseException& exception)
     {
-        AddError(result.errors, "$", std::string("invalid JSON at byte ") +
-            std::to_string(exception.Offset()) + ": " +
-            rapidjson::GetParseError_En(exception.Code()));
+        AddError(result.errors, "$",
+            std::string("invalid JSON at byte ") + std::to_string(exception.Offset()) + ": "
+                + rapidjson::GetParseError_En(exception.Code()));
         return result;
     }
     if (document.HasParseError())
     {
-        AddError(result.errors, "$", std::string("invalid JSON at byte ") +
-            std::to_string(document.GetErrorOffset()) + ": " +
-            rapidjson::GetParseError_En(document.GetParseError()));
+        AddError(result.errors, "$",
+            std::string("invalid JSON at byte ") + std::to_string(document.GetErrorOffset()) + ": "
+                + rapidjson::GetParseError_En(document.GetParseError()));
         return result;
     }
     if (!document.IsObject())
@@ -571,18 +521,6 @@ ConfigResult ParseConfig(std::string_view json, const std::filesystem::path& con
     }
 
     Config config;
-    if (const auto mode = ReadString(document, "mode", "$", result.errors))
-    {
-        if (*mode == "auto")
-            config.mode = Mode::Auto;
-        else if (*mode == "local")
-            config.mode = Mode::Local;
-        else if (*mode == "collaboration")
-            config.mode = Mode::Collaboration;
-        else
-            AddError(result.errors, "$.mode", "must be auto, local, or collaboration");
-    }
-
     std::filesystem::path configDirectory;
     try
     {
@@ -595,11 +533,9 @@ ConfigResult ParseConfig(std::string_view json, const std::filesystem::path& con
     }
     ParseListener(document, config, result.errors);
     ParseHttp(document, config, result.errors);
-    ParseAuthentication(document, config, result.errors);
     ParseCpu(document, config, result.errors);
     ParseDurationsAndUploads(document, config, result.errors);
     ParseProjects(document, config, configDirectory, result.errors);
-    ParseCollaboration(document, config, result.errors);
     ParseStorage(document, config, configDirectory, result.errors);
     ParseTools(document, config, result.errors);
 
@@ -613,8 +549,7 @@ ConfigResult LoadConfig(const std::filesystem::path& configPath)
     std::ifstream stream(configPath, std::ios::binary);
     if (!stream)
         return {std::nullopt, {{"$", "cannot open configuration file: " + configPath.string()}}};
-    const std::string contents{
-        std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>()};
+    const std::string contents{std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>()};
     if (stream.bad())
         return {std::nullopt, {{"$", "cannot read configuration file: " + configPath.string()}}};
     return ParseConfig(contents, configPath);
@@ -632,7 +567,6 @@ std::string_view DefaultConfigJson()
 {
     return R"json({
   "_comment": "Unknown fields such as _comment are ignored. Known fields are validated strictly.",
-  "mode": "auto",
   "listener": {
     "addresses": [
       "127.0.0.1",
@@ -648,12 +582,7 @@ std::string_view DefaultConfigJson()
     "portal_path": "/portal",
     "health_path": "/healthz",
     "allowed_origins": [],
-    "mcp_max_body_bytes": 8388608,
-    "very_dangerous_unauthenticated_portal": false
-  },
-  "authentication": {
-    "default_token_ttl_seconds": 604800,
-    "allow_infinite_tokens": false
+    "mcp_max_body_bytes": 8388608
   },
   "cpu": {
     "percentage": 75,
@@ -674,17 +603,11 @@ std::string_view DefaultConfigJson()
     "require_bearer_authentication": false
   },
   "projects": {
-    "_comment": "Relative roots are resolved against this file's directory.",
+    "_comment": "Relative roots are resolved against this file's directory. Outside-root project creation and registration are disabled unless allow_project_registration is true.",
     "roots": [],
     "default_root": "",
-    "allow_arbitrary_paths": true
-  },
-  "collaboration": {
-    "_comment": "A non-empty remote makes auto mode select collaboration.",
-    "remote": {
-      "name": "",
-      "url": ""
-    }
+    "allow_arbitrary_paths": true,
+    "allow_project_registration": false
   },
   "storage": {
     "_comment": "Empty paths default beside this file.",
@@ -693,7 +616,7 @@ std::string_view DefaultConfigJson()
     "spool_path": ""
   },
   "tools": {
-    "_comment": "Core workflow tools are always enabled. These extended tool packs can be disabled to reduce MCP context. Changes require restart.",
+    "_comment": "Core workflow tools are always enabled. Extended tool-pack changes are persisted and applied immediately.",
     "project_management": true,
     "function_analysis": true,
     "binary_data": true,
@@ -702,6 +625,8 @@ std::string_view DefaultConfigJson()
     "annotations": true,
     "binary_editing": true,
     "history": true,
+    "header_parsing": true,
+    "url_generation": true,
     "diffing": true,
     "kernel_cache": true,
     "shared_cache": true,
@@ -710,4 +635,4 @@ std::string_view DefaultConfigJson()
 }
 )json";
 }
-}
+} // namespace binjad

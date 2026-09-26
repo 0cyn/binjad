@@ -1,4 +1,4 @@
-#include "binjad/mcp/protocol.hpp"
+#include "binjad/mcp/Protocol.hpp"
 
 #include <gtest/gtest.h>
 

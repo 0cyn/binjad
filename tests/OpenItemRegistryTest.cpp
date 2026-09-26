@@ -1,4 +1,4 @@
-#include "binjad/session/open_item_registry.hpp"
+#include "binjad/session/OpenItemRegistry.hpp"
 
 #include <gtest/gtest.h>
 

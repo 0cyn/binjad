@@ -1,7 +1,7 @@
-#include "binjad/platform/macos/mach_bootstrap.hpp"
+#include "binjad/platform/macos/MachBootstrap.hpp"
 
-#include "binjad/ipc/envelope.hpp"
-#include "binjad/platform/macos/process_supervisor.hpp"
+#include "binjad/ipc/Envelope.hpp"
+#include "binjad/platform/macos/ProcessSupervisor.hpp"
 
 #include <bootstrap.h>
 #include <bsm/libbsm.h>

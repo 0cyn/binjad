@@ -141,9 +141,12 @@ if(TARGET trantor AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     target_compile_options(trantor PRIVATE -Wno-unused-result)
 endif()
 
-configure_file(
-    include/binjad/version.hpp.in
+file(REMOVE
     "${CMAKE_CURRENT_BINARY_DIR}/generated/include/binjad/version.hpp"
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/include/binjad/reference/friendly_words_data.hpp")
+configure_file(
+    include/binjad/Version.hpp.in
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/include/binjad/Version.hpp"
     @ONLY)
 file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/generated/include/binjad/reference")
 file(SHA256 "${CMAKE_CURRENT_SOURCE_DIR}/resources/friendly_words.txt" BINJAD_FRIENDLY_WORDS_SHA256)
@@ -157,7 +160,7 @@ if(NOT BINJAD_FRIENDLY_WORD_COUNT EQUAL 16384)
     message(FATAL_ERROR "resources/friendly_words.txt must contain exactly 16384 words")
 endif()
 set(BINJAD_FRIENDLY_WORDS_HEADER
-    "${CMAKE_CURRENT_BINARY_DIR}/generated/include/binjad/reference/friendly_words_data.hpp")
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/include/binjad/reference/FriendlyWordsData.hpp")
 file(WRITE "${BINJAD_FRIENDLY_WORDS_HEADER}"
     "#pragma once\n\n#include <array>\n#include <string_view>\n\n"
     "namespace binjad::reference::detail\n{\n"
@@ -207,21 +210,13 @@ target_include_directories(binjad_foundation
 target_compile_features(binjad_foundation PUBLIC cxx_std_20)
 
 add_library(binjad_security STATIC
-    src/Daemon/security/AccountRegistry.cpp
-    src/Daemon/security/BootstrapCredential.cpp
+    src/Daemon/security/Authentication.cpp
     src/Daemon/security/CredentialStore.cpp
-    src/Daemon/security/CredentialVault.cpp
     src/Daemon/security/Crypto.cpp
-    src/Daemon/security/IntegrityFile.cpp
-    src/Daemon/security/Password.cpp
-    src/Daemon/security/Random.cpp
-    src/Daemon/security/TokenAuthenticator.cpp
-    src/Daemon/security/TokenRegistry.cpp
     src/Daemon/FriendlyReference.cpp
     src/Daemon/portal/Service.cpp
     src/Daemon/portal/Api.cpp
-    src/Daemon/project/LocalProjectRegistry.cpp
-    src/Daemon/project/CollaborationProjectRegistry.cpp
+    src/Daemon/LocalProjectRegistry.cpp
     src/Daemon/session/AnalysisSessionRegistry.cpp
     src/Daemon/session/JobRegistry.cpp
     src/Daemon/session/OpenItemRegistry.cpp
@@ -255,9 +250,11 @@ add_library(binjad_http STATIC
     src/Daemon/mcp/ToolCall.cpp
     src/Daemon/mcp/tools/Analysis.cpp
     src/Daemon/mcp/tools/Diffing.cpp
+    src/Daemon/mcp/tools/HeaderParsing.cpp
     src/Daemon/mcp/tools/KernelCache.cpp
     src/Daemon/mcp/tools/Projects.cpp
-    src/Daemon/mcp/tools/SharedCache.cpp)
+    src/Daemon/mcp/tools/SharedCache.cpp
+    src/Daemon/mcp/tools/UrlGeneration.cpp)
 target_include_directories(binjad_http PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
 target_link_libraries(binjad_http
     PUBLIC binjad_security Drogon::Drogon
@@ -312,9 +309,21 @@ add_library(binjad_binaryninja STATIC
     src/FileProcess/binary_ninja/Language.cpp
     src/FileProcess/binary_ninja/DiffTools.cpp
     src/Shared/Runtime.cpp
-    src/FileProcess/binary_ninja/PluginTools.cpp
     src/FileProcess/binary_ninja/StringCodec.cpp
+    vendor/binaryninja-api/view/kernelcache/api/kernelcache.cpp
+    vendor/binaryninja-api/view/sharedcache/api/sharedcache.cpp
+    vendor/debugger/api/debugadaptertype.cpp
+    vendor/debugger/api/debuggercontroller.cpp
+    src/FileProcess/ToolCall.cpp
+    src/FileProcess/ToolSupport.cpp
     src/FileProcess/FileChild.cpp
+    src/FileProcess/tools/Analysis.cpp
+    src/FileProcess/tools/AnalysisMutations.cpp
+    src/FileProcess/tools/Diffing.cpp
+    src/FileProcess/tools/HeaderParsing.cpp
+    src/FileProcess/tools/KernelCache.cpp
+    src/FileProcess/tools/SharedCache.cpp
+    src/FileProcess/tools/Debugger.cpp
     src/ProjectProcess/ProjectChild.cpp)
 target_include_directories(binjad_binaryninja
     PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include"
@@ -325,9 +334,54 @@ target_include_directories(binjad_binaryninja
 target_link_libraries(binjad_binaryninja PUBLIC binjad_runtime binaryninjaapi PRIVATE binjad_foundation)
 target_compile_features(binjad_binaryninja PUBLIC cxx_std_20)
 
+if(BN_INSTALL_DIR)
+    if(APPLE)
+        set(BINJAD_BN_PLUGIN_DIR "${BN_INSTALL_DIR}/Contents/MacOS/plugins")
+    else()
+        set(BINJAD_BN_PLUGIN_DIR "${BN_INSTALL_DIR}/plugins")
+    endif()
+    find_library(BINJAD_KERNELCACHE_LIBRARY NAMES kernelcache
+        PATHS "${BINJAD_BN_PLUGIN_DIR}" NO_DEFAULT_PATH REQUIRED)
+    find_library(BINJAD_SHAREDCACHE_LIBRARY NAMES sharedcache
+        PATHS "${BINJAD_BN_PLUGIN_DIR}" NO_DEFAULT_PATH REQUIRED)
+    find_library(BINJAD_DEBUGGERCORE_LIBRARY NAMES debuggercore
+        PATHS "${BINJAD_BN_PLUGIN_DIR}" NO_DEFAULT_PATH REQUIRED)
+else()
+    find_package(Python3 COMPONENTS Interpreter REQUIRED)
+    function(binjad_add_plugin_api_stub target output_name header api_macro library_macro include_dir)
+        set(output "${CMAKE_CURRENT_BINARY_DIR}/${target}/stubs.cpp")
+        add_custom_command(
+            OUTPUT "${output}"
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/cmake/GeneratePluginApiStubs.py"
+                "${header}" "${api_macro}" "${output}"
+            DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/cmake/GeneratePluginApiStubs.py" "${header}"
+            VERBATIM)
+        add_library(${target} SHARED "${output}")
+        target_include_directories(${target} PRIVATE
+            "${BINJAD_BN_API_SOURCE_DIR}" "${include_dir}")
+        target_compile_definitions(${target} PRIVATE "${library_macro}")
+        set_target_properties(${target} PROPERTIES OUTPUT_NAME "${output_name}")
+    endfunction()
+    binjad_add_plugin_api_stub(binjad_kernelcache_stubs kernelcache
+        "${BINJAD_BN_API_SOURCE_DIR}/view/kernelcache/api/kernelcachecore.h"
+        KERNELCACHE_FFI_API KERNELCACHE_LIBRARY "${BINJAD_BN_API_SOURCE_DIR}/view/kernelcache/api")
+    binjad_add_plugin_api_stub(binjad_sharedcache_stubs sharedcache
+        "${BINJAD_BN_API_SOURCE_DIR}/view/sharedcache/api/sharedcachecore.h"
+        SHAREDCACHE_FFI_API SHAREDCACHE_LIBRARY "${BINJAD_BN_API_SOURCE_DIR}/view/sharedcache/api")
+    binjad_add_plugin_api_stub(binjad_debuggercore_stubs debuggercore
+        "${BINJAD_DEBUGGER_SOURCE_DIR}/api/ffi.h"
+        DEBUGGER_FFI_API DEBUGGER_LIBRARY "${BINJAD_DEBUGGER_SOURCE_DIR}/api")
+    set(BINJAD_KERNELCACHE_LIBRARY binjad_kernelcache_stubs)
+    set(BINJAD_SHAREDCACHE_LIBRARY binjad_sharedcache_stubs)
+    set(BINJAD_DEBUGGERCORE_LIBRARY binjad_debuggercore_stubs)
+endif()
+target_link_libraries(binjad_binaryninja PRIVATE
+    "${BINJAD_KERNELCACHE_LIBRARY}"
+    "${BINJAD_SHAREDCACHE_LIBRARY}"
+    "${BINJAD_DEBUGGERCORE_LIBRARY}")
+
 add_library(binjad_overseer STATIC
     src/Daemon/overseer/AnalysisScheduler.cpp
-    src/Daemon/overseer/CollaborationChildManager.cpp
     src/Daemon/overseer/FileChildCoordinator.cpp
     src/Daemon/overseer/ProjectChildCoordinator.cpp)
 target_include_directories(binjad_overseer
@@ -383,7 +437,8 @@ if(APPLE)
     else()
         set(BINJAD_BN_CORE_RPATH "/Applications/Binary Ninja.app/Contents/MacOS")
     endif()
-    set_target_properties(binjad PROPERTIES INSTALL_RPATH "${BINJAD_BN_CORE_RPATH}")
+    set_target_properties(binjad PROPERTIES INSTALL_RPATH
+        "${BINJAD_BN_CORE_RPATH};${BINJAD_BN_CORE_RPATH}/plugins")
 endif()
 
 install(TARGETS binjad RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
@@ -410,9 +465,10 @@ install(CODE [[
         "${binjad_install_root}/*")
     foreach(binjad_installed_file IN LISTS binjad_installed_files)
         get_filename_component(binjad_installed_name "${binjad_installed_file}" NAME)
-        if(binjad_installed_name MATCHES "^(lib)?binaryninjacore(([.][0-9]+)*[.]dylib|[.]so([.][0-9]+)*|[.](dll|lib))$")
+        if(binjad_installed_name MATCHES
+            "^(lib)?(binaryninjacore|kernelcache|sharedcache|debuggercore)(([.][0-9]+)*[.]dylib|[.]so([.][0-9]+)*|[.](dll|lib))$")
             message(FATAL_ERROR
-                "Binary Ninja core library must not be installed or packaged: "
+                "Binary Ninja runtime library must not be installed or packaged: "
                 "${binjad_installed_file}")
         endif()
     endforeach()
@@ -431,9 +487,7 @@ if(BINJAD_BUILD_TESTS)
         tests/AnalysisSchedulerTest.cpp
         tests/AccountRegistryTest.cpp
         tests/AnalysisSessionRegistryTest.cpp
-        tests/BootstrapCredentialTest.cpp
         tests/ConfigTest.cpp
-        tests/CollaborationManagerTest.cpp
         tests/DrogonRoutesTest.cpp
         tests/FriendlyReferenceTest.cpp
         tests/FileChildCoordinatorTest.cpp
