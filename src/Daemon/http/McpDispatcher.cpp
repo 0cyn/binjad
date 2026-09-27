@@ -260,7 +260,14 @@ namespace binjad::http {
 		if (foundation.handled)
 		{
 			callback(JsonResponse(foundation.httpStatus, foundation.body));
-			PublishChanges(message, request.principal, analysisSession);
+			if (foundation.invokedTool.empty())
+				PublishChanges(message, request.principal, analysisSession);
+			else
+			{
+				auto invoked = message;
+				invoked.name = foundation.invokedTool;
+				PublishChanges(invoked, request.principal, analysisSession);
+			}
 			return;
 		}
 		callback(ErrorResponse(

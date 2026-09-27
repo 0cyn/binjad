@@ -10,6 +10,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <utility>
 
 namespace binjad::overseer {
 	class FileChildCoordinator;
@@ -34,10 +35,18 @@ namespace binjad::session {
 namespace binjad::mcp {
 	struct FoundationResult
 	{
+		FoundationResult() = default;
+		FoundationResult(bool handled, int httpStatus, std::string body, std::optional<ProtocolError> error,
+			std::string invokedTool = {}) :
+			handled(handled), httpStatus(httpStatus), body(std::move(body)), error(std::move(error)),
+			invokedTool(std::move(invokedTool))
+		{}
+
 		bool handled = false;
 		int httpStatus = 200;
 		std::string body;
 		std::optional<ProtocolError> error;
+		std::string invokedTool;
 	};
 
 	class Foundation

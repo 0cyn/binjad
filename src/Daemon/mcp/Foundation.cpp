@@ -516,6 +516,8 @@ namespace binjad::mcp {
 			bool projectRegistration)
 		{
 			const auto available = [&](const ToolCall& tool) {
+				if (!ToolCallAdvertised(tool, tools.discoveryMode))
+					return false;
 				if (!ToolCallCategoryEnabled(tool.Category(), tools))
 					return false;
 				const auto requirements = tool.Availability();
@@ -697,6 +699,8 @@ namespace binjad::mcp {
 		}
 
 		constexpr std::string_view kQuickStartDocs =
+			"Tool discovery: when bn_tools is advertised, use categories, list, and describe before calling an omitted "
+			"tool through bn_tools with operation=call. Only the minimal setup and lifecycle surface remains direct.\n"
 			"Flow: project_list -> file_list -> project_file_open -> binary_view_open(recommended) -> "
 			"analysis_update_and_wait -> query/mutate -> binary_view_save(if changed) -> open_item_close.\n"
 			"Uploads: bn_upload_get_url returns a one-time PUT capability and explicit authorization requirements; "
@@ -933,11 +937,19 @@ namespace binjad::mcp {
 	{
 		const auto config = EffectiveConfig();
 		const auto request = DocumentationRequest(version, 1, "tools/list");
-		const auto currentPayload = ToolsResponse(request, serverVersion_, true, config.tools,
+		const auto advertisedPayload = ToolsResponse(request, serverVersion_, true, config.tools,
+			role == security::TokenRole::Admin, config.projects.allowArbitraryPaths,
+			config.projects.allowProjectRegistration);
+		auto capabilityTools = config.tools;
+		capabilityTools.discoveryMode = ToolDiscoveryMode::Full;
+		const auto currentPayload = ToolsResponse(request, serverVersion_, true, capabilityTools,
 			role == security::TokenRole::Admin, config.projects.allowArbitraryPaths,
 			config.projects.allowProjectRegistration);
 		ToolConfig allTools;
 		const auto localPayload = ToolsResponse(request, serverVersion_, true, allTools, true, true, true);
+		allTools.discoveryMode = ToolDiscoveryMode::Brokered;
+		const auto brokerPayload = ToolsResponse(request, serverVersion_, true, allTools, true, true, true);
+		allTools.discoveryMode = ToolDiscoveryMode::Full;
 		const auto modernRequest = DocumentationRequest(ProtocolVersion::V2026_07_28, 1, "tools/list");
 		const auto modernLocalPayload = ToolsResponse(modernRequest, serverVersion_, true, allTools, true, true, true);
 
@@ -951,7 +963,8 @@ namespace binjad::mcp {
 		std::vector<DocumentedTool> documentedTools;
 		std::unordered_set<std::string> names;
 		std::unordered_set<std::string> availableNames;
-		const auto collect = [&](const std::string& payload, bool available) {
+		std::unordered_set<std::string> advertisedNames;
+		const auto collect = [&](const std::string& payload, bool available, bool advertised) {
 			Document discovery;
 			discovery.Parse(payload.data(), payload.size());
 			if (discovery.HasParseError() || !discovery.IsObject() || !discovery.HasMember("result")
@@ -963,6 +976,8 @@ namespace binjad::mcp {
 				std::string name(tool["name"].GetString(), tool["name"].GetStringLength());
 				if (available)
 					availableNames.insert(name);
+				if (advertised)
+					advertisedNames.insert(name);
 				if (!names.insert(name).second)
 					continue;
 				documentedTools.push_back({std::move(name),
@@ -970,11 +985,15 @@ namespace binjad::mcp {
 					SerializeValue(tool["inputSchema"]), available});
 			}
 		};
-		collect(currentPayload, true);
-		collect(localPayload, false);
-		collect(modernLocalPayload, false);
+		collect(currentPayload, true, false);
+		collect(advertisedPayload, config.tools.discoveryMode == ToolDiscoveryMode::Brokered, true);
+		collect(localPayload, false, false);
+		collect(brokerPayload, false, false);
+		collect(modernLocalPayload, false, false);
 
 		const auto unavailableReason = [&](std::string_view name) -> std::string {
+			if (name == kToolBrokerName && config.tools.discoveryMode != ToolDiscoveryMode::Brokered)
+				return "Requires tools.discovery_mode to be 'brokered'.";
 			const auto* tool = FindToolCall(name);
 			return tool ?
 				tool->UnavailableReason(config, version, role) :
@@ -1014,6 +1033,8 @@ namespace binjad::mcp {
 			writer.String(pack.data(), static_cast<rapidjson::SizeType>(pack.size()));
 			writer.Key("available");
 			writer.Bool(availableNames.contains(tool.name));
+			writer.Key("advertised");
+			writer.Bool(advertisedNames.contains(tool.name));
 			if (!availableNames.contains(tool.name))
 			{
 				writer.Key("availability");
@@ -1062,6 +1083,9 @@ namespace binjad::mcp {
 		writer.String("local");
 		writer.Key("runningOptions");
 		writer.StartObject();
+		writer.Key("toolDiscoveryMode");
+		const auto discoveryMode = ToolDiscoveryModeName(config.tools.discoveryMode);
+		writer.String(discoveryMode.data(), static_cast<rapidjson::SizeType>(discoveryMode.size()));
 		writer.Key("allowArbitraryPaths");
 		writer.Bool(config.projects.allowArbitraryPaths);
 		writer.Key("allowProjectRegistration");

@@ -1,11 +1,7 @@
 ![logo](.github/img/logo.png)
 
 <p align="center">
-<super>this readme was fully written by a human, u can read it <3</super>
-</p>
-
-<p align="center">
-  <a href="#install">install</a> | <a href="#update">update</a> | <a href="#restart">restart</a> <br>
+  <a href="#install">install</a> | <a href="#restart-stop">restart</a> <br>
 <a href="#why-is-this-better-than-having-an-agent-write-api-scripts">why is this better than having an agent write API scripts</a>
 </p>
 
@@ -33,10 +29,11 @@ I am not currently an employee or affiliate of Vector 35 and this project is not
 * Files are loaded in individual processes, so crashes do not destroy other unsaved work.
 * Project support is forced, so local LLM agents can work fully sandboxed. 
 * Categories of tools can be disabled to save context. 
+* Optional "reduced mode" that reduces the list of force-advertised toolcalls to 6, if you need that. Still allows querying tools and using all of them. 
 
 > "Extract these two KDKs from their dmgs, add them to a project named 'KDKs', then use Qwen subagents w/ binjad to
 > diff every file in them and report anything that looks like a vulnerability fix. Save your results to a markdown file
-> within that project, and generate binaryninja URL links to all mentioned functions. Present the contents of the file to
+> within that project, and generate binaryninja URL links to all mentioned functions. Present the contents of the report to
 > me afterwards"
 
 Use this with the `bntextviews` plugin to allow your agents to write markdown/json content into projects you can then display in
@@ -79,7 +76,22 @@ Please thumbs-up the [Windows Support]() or [Linux Support]() issues if you need
 #### install
 
 ```
+INSTALLED_VERSION=/Applications/Binary\ Ninja.app/Contents/MacOS/bnpython3 -c "print(__import__('binaryninja').core_version().split('-')[0])"
+brew install 0cyn/tap/binjad@$INSTALLED_VERSION
+brew services start binjad
+# open configuration panel
+open http://127.0.0.1:8712
+```
 
+#### restart/stop
+
+``` 
+# restart the daemon
+brew services restart binjad
+# stop it
+brew services stop binjad
+# start it again
+brew services start binjad
 ```
 
 ### commercial license
@@ -142,19 +154,20 @@ cheaper work with a lot less paid compute usage.
 This is a particular gripe I have with IDA's whole official "code mode" (read: completely useless?) MCP. Using proper
 context management, the tools can serve as a framework to guide a model through whatever you asked it to do, _and_ as a sandbox
 to keep agents that are aligned just fine from accidentally doing something really stupid. And in a case where a SOtA model 
-doesn't need guidance, why on earth does it need an MCP to execute ida scripts. IDK man.
+doesn't need guidance, why on earth does it need an MCP to execute ida scripts. 
 
 from their blog: 
 > We also tested Qwen 3.8 27B, which can run (quantized) on a single consumer GPU (24GB NVIDIA RTX 3090). This class of models can perform reverse engineering tasks, but tends to get stuck and overthink, so you need a more hands-on approach. That being said, a minimal harness like Pi and the small footprint of the IDA MCP tools make a suitable combination for consumer hardware where prefill speeds are relatively low.
 
-maybe it's because you're just handing it a script runner bro ;_;
+maybe it's because you're just handing it a script runner bro ;_; IDK man. We're not always going to have these
+3T param models available this cheap.
 `</opinion>`
 
 ##### LLM disclosure
 
 A lot of work has gone into making this solid, a lot of care went into the architecture and design of this, any
 graphics you see were made with AI (Adobe Illustrator,) and I do give a fuck about this working. This was not oneshotted
-in a week. But also yes, heavy LLM usage occurred. It's an MCP man.
+in a week. But also yes, heavy LLM usage occurred for code. It's an MCP man.
 
 ---
 

@@ -49,7 +49,8 @@
     "spool_path": ""
   },
   "tools": {
-    "_comment": "Core workflow tools are always enabled. Extended tool-pack changes are persisted and applied immediately.",
+    "_comment": "Tool discovery and extended tool-pack changes are persisted and applied immediately. Brokered discovery advertises six setup/lifecycle calls and routes every other enabled tool through bn_tools.",
+    "discovery_mode": "full",
     "project_management": true,
     "function_analysis": true,
     "binary_data": true,

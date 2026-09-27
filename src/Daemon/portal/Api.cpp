@@ -223,13 +223,13 @@ namespace binjad::portal {
 
 		bool SameTools(const ToolConfig& left, const ToolConfig& right)
 		{
-			return left.projectManagement == right.projectManagement && left.functionAnalysis == right.functionAnalysis
-				&& left.binaryData == right.binaryData && left.search == right.search && left.types == right.types
-				&& left.annotations == right.annotations && left.binaryEditing == right.binaryEditing
-				&& left.history == right.history && left.headerParsing == right.headerParsing
-				&& left.urlGeneration == right.urlGeneration && left.diffing == right.diffing
-				&& left.kernelCache == right.kernelCache && left.sharedCache == right.sharedCache
-				&& left.debugger == right.debugger;
+			return left.discoveryMode == right.discoveryMode && left.projectManagement == right.projectManagement
+				&& left.functionAnalysis == right.functionAnalysis && left.binaryData == right.binaryData
+				&& left.search == right.search && left.types == right.types && left.annotations == right.annotations
+				&& left.binaryEditing == right.binaryEditing && left.history == right.history
+				&& left.headerParsing == right.headerParsing && left.urlGeneration == right.urlGeneration
+				&& left.diffing == right.diffing && left.kernelCache == right.kernelCache
+				&& left.sharedCache == right.sharedCache && left.debugger == right.debugger;
 		}
 
 		bool SameRestartGatedConfig(const Config& left, const Config& right)
@@ -259,9 +259,9 @@ namespace binjad::portal {
 
 		bool ApplyToolFields(const Value& object, ToolConfig& tools, std::string& error)
 		{
-			constexpr std::string_view fields[] {"project_management", "function_analysis", "binary_data", "search",
-				"types", "annotations", "binary_editing", "history", "header_parsing", "url_generation", "diffing",
-				"kernel_cache", "shared_cache", "debugger"};
+			constexpr std::string_view fields[] {"discovery_mode", "project_management", "function_analysis",
+				"binary_data", "search", "types", "annotations", "binary_editing", "history", "header_parsing",
+				"url_generation", "diffing", "kernel_cache", "shared_cache", "debugger"};
 			if (object.MemberCount() == 0)
 			{
 				error = "at least one tool pack is required";
@@ -280,6 +280,23 @@ namespace binjad::portal {
 				{
 					error = "duplicate field '" + std::string(name) + "'";
 					return false;
+				}
+				if (name == "discovery_mode")
+				{
+					if (!member.value.IsString())
+					{
+						error = "discovery_mode must be a string";
+						return false;
+					}
+					const auto mode = ParseToolDiscoveryMode(
+						std::string_view(member.value.GetString(), member.value.GetStringLength()));
+					if (!mode)
+					{
+						error = "discovery_mode must be 'full' or 'brokered'";
+						return false;
+					}
+					tools.discoveryMode = *mode;
+					continue;
 				}
 				if (!member.value.IsBool())
 				{
@@ -323,6 +340,9 @@ namespace binjad::portal {
 		void WriteToolConfig(WriterType& writer, const ToolConfig& tools)
 		{
 			writer.StartObject();
+			writer.Key("discovery_mode");
+			const auto discoveryMode = ToolDiscoveryModeName(tools.discoveryMode);
+			writer.String(discoveryMode.data(), static_cast<rapidjson::SizeType>(discoveryMode.size()));
 			writer.Key("project_management");
 			writer.Bool(tools.projectManagement);
 			writer.Key("function_analysis");
@@ -358,7 +378,13 @@ namespace binjad::portal {
 		{
 			Value result(rapidjson::kObjectType);
 			result.AddMember("_comment",
-				Value("Core workflow tools are always enabled. Extended tool packs apply immediately.", allocator),
+				Value("Tool discovery and extended tool packs apply immediately. Brokered discovery advertises six "
+					  "setup/lifecycle calls and routes every other enabled tool through bn_tools.",
+					allocator),
+				allocator);
+			const auto discoveryMode = ToolDiscoveryModeName(tools.discoveryMode);
+			result.AddMember("discovery_mode",
+				Value(discoveryMode.data(), static_cast<rapidjson::SizeType>(discoveryMode.size()), allocator),
 				allocator);
 			result.AddMember("project_management", tools.projectManagement, allocator);
 			result.AddMember("function_analysis", tools.functionAnalysis, allocator);

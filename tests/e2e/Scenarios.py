@@ -395,6 +395,61 @@ class Workflows(unittest.TestCase):
                         primaryFunction=pair["primaryAddress"], secondaryFunction=pair["secondaryAddress"])
         require(self.function(primary, "packet_dispatch") == pair["primaryAddress"], "matched function name was not transferred")
 
+    def test_brokered_tool_discovery_and_calls(self):
+        self.addCleanup(lambda: self.service.portal("PATCH", "/tools", {"discovery_mode": "full"}))
+        configured = self.service.portal("PATCH", "/tools", {"discovery_mode": "brokered"})["tools"]
+        require(configured["discovery_mode"] == "brokered", "portal did not hot-apply brokered discovery")
+
+        tools = self.agent.rpc("tools/list")["tools"]
+        names = {tool["name"] for tool in tools}
+        require(len(names) == 6, f"brokered discovery exposed an unexpected direct surface: {sorted(names)}")
+        for name in ("bn_tools", "bn_analysis_session_create", "bn_analysis_session_close", "bn_open_item_open",
+                     "bn_open_item_close", "bn_binary_view_open"):
+            require(name in names, f"brokered discovery omitted lifecycle tool {name}")
+        for name in ("bn_analysis_update_and_wait", "bn_binary_view_save", "bn_job_result", "bn_local_project_list",
+                     "bn_function_list", "bn_comment_set", "bn_binary_header_info"):
+            require(name not in names, f"brokered discovery directly exposed {name}")
+
+        legacy = Agent(self.service.http, self.service.token, "2025-11-25").start()
+        legacy_names = {tool["name"] for tool in legacy.rpc("tools/list")["tools"]}
+        require(legacy_names == {"bn_tools", "bn_open_item_open", "bn_open_item_close", "bn_binary_view_open"},
+                f"brokered legacy discovery exposed an unexpected surface: {sorted(legacy_names)}")
+
+        categories = self.agent.call("bn_tools", operation="categories")["categories"]
+        category_ids = {category["id"] for category in categories}
+        require({"core", "function_analysis", "annotations", "debugger"}.issubset(category_ids),
+                "broker omitted documented categories")
+        listed = self.agent.call("bn_tools", operation="list", category="function_analysis", query="IL")
+        require(any(tool["name"] == "bn_function_il" for tool in listed["tools"]),
+                "broker category query did not find function IL")
+        described = self.agent.call("bn_tools", operation="describe", name="bn_local_project_list")
+        require(described["inputSchema"]["type"] == "object", "broker did not return the registered input schema")
+        brokered = self.agent.call("bn_tools", operation="call", name="bn_local_project_list", arguments={})
+        direct = self.agent.call("bn_local_project_list")
+        require(brokered == direct, "brokered invocation changed the underlying tool result")
+
+        item = self.agent.call("bn_open_item_open", path=str(self.fixtures["elf"]))
+        candidate = next(view for view in item["binaryViews"] if view["recommended"])
+        settings = self.agent.call("bn_tools", operation="call", name="bn_binary_view_load_settings",
+                                   arguments={"binaryView": candidate["binaryView"]})
+        require(isinstance(settings, dict), "broker did not return BinaryView load settings")
+        self.agent.call("bn_binary_view_open", binaryView=candidate["binaryView"], analyze=False)
+        header = self.agent.call("bn_tools", operation="call", name="bn_binary_header_info",
+                                 arguments={"binaryView": candidate["binaryView"]})
+        require(header["format"] == "ELF", "broker did not preserve the forwarded tool name")
+        self.agent.call("bn_open_item_close", openItem=item["openItem"], save="discard")
+
+        documented = self.service.portal("POST", "/mcp/tools", {"protocol": self.agent.protocol})
+        project_list = next(tool for tool in documented["tools"] if tool["name"] == "bn_local_project_list")
+        require(project_list["available"] and not project_list["advertised"],
+                "tool documentation confused capability availability with direct advertisement")
+
+        restored = self.service.portal("PATCH", "/tools", {"discovery_mode": "full"})["tools"]
+        require(restored["discovery_mode"] == "full", "portal did not restore full discovery")
+        full_names = {tool["name"] for tool in self.agent.rpc("tools/list")["tools"]}
+        require("bn_function_list" in full_names and "bn_tools" not in full_names,
+                "full discovery did not restore the original tool surface")
+
     def test_legacy_agent_workflow(self):
         legacy = Agent(self.service.http, self.service.token, "2025-11-25").start()
         tools = legacy.rpc("tools/list")["tools"]

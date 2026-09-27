@@ -75,8 +75,15 @@ namespace binjad {
 		std::filesystem::path spoolPath;
 	};
 
+	enum class ToolDiscoveryMode
+	{
+		Full,
+		Brokered,
+	};
+
 	struct ToolConfig
 	{
+		ToolDiscoveryMode discoveryMode = ToolDiscoveryMode::Full;
 		bool projectManagement = true;
 		bool functionAnalysis = true;
 		bool binaryData = true;
@@ -92,6 +99,9 @@ namespace binjad {
 		bool sharedCache = true;
 		bool debugger = true;
 	};
+
+	std::string_view ToolDiscoveryModeName(ToolDiscoveryMode mode);
+	std::optional<ToolDiscoveryMode> ParseToolDiscoveryMode(std::string_view name);
 
 	struct Config
 	{

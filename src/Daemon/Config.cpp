@@ -457,6 +457,14 @@ namespace binjad {
 			const std::string path = hasTools ? "$.tools" : "$.plugins";
 			if (hasTools)
 			{
+				if (const auto value = ReadString(*section, "discovery_mode", path, errors))
+				{
+					const auto mode = ParseToolDiscoveryMode(*value);
+					if (mode)
+						config.tools.discoveryMode = *mode;
+					else
+						AddError(errors, path + ".discovery_mode", "must be 'full' or 'brokered'");
+				}
 				if (const auto value = ReadBool(*section, "project_management", path, errors))
 					config.tools.projectManagement = *value;
 				if (const auto value = ReadBool(*section, "function_analysis", path, errors))
@@ -488,6 +496,27 @@ namespace binjad {
 				config.tools.debugger = *value;
 		}
 	}  // namespace
+
+	std::string_view ToolDiscoveryModeName(ToolDiscoveryMode mode)
+	{
+		switch (mode)
+		{
+		case ToolDiscoveryMode::Full:
+			return "full";
+		case ToolDiscoveryMode::Brokered:
+			return "brokered";
+		}
+		return "full";
+	}
+
+	std::optional<ToolDiscoveryMode> ParseToolDiscoveryMode(std::string_view name)
+	{
+		if (name == "full")
+			return ToolDiscoveryMode::Full;
+		if (name == "brokered")
+			return ToolDiscoveryMode::Brokered;
+		return std::nullopt;
+	}
 
 	ConfigResult ParseConfig(std::string_view json, const std::filesystem::path& configPath)
 	{
@@ -613,7 +642,8 @@ namespace binjad {
     "spool_path": ""
   },
   "tools": {
-    "_comment": "Core workflow tools are always enabled. Extended tool-pack changes are persisted and applied immediately.",
+    "_comment": "Tool discovery and extended tool-pack changes are persisted and applied immediately. Brokered discovery advertises six setup/lifecycle calls and routes every other enabled tool through bn_tools.",
+    "discovery_mode": "full",
     "project_management": true,
     "function_analysis": true,
     "binary_data": true,

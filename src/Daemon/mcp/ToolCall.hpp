@@ -135,11 +135,15 @@ namespace binjad::mcp {
 	};
 
 	std::string_view ToolCallCategoryName(ToolCallCategory category);
+	std::string_view ToolCallCategoryId(ToolCallCategory category);
 	bool ToolCallCategoryEnabled(ToolCallCategory category, const ToolConfig& config);
+	bool ToolCallAdvertised(const ToolCall& tool, ToolDiscoveryMode mode);
+	inline constexpr std::string_view kToolBrokerName = "bn_tools";
 
 	const std::vector<std::unique_ptr<ToolCall>>& RegisteredToolCalls();
 	const ToolCall* FindToolCall(std::string_view name);
 
+	void RegisterToolBroker(std::vector<std::unique_ptr<ToolCall>>& tools);
 	void RegisterCoreSessionTools(std::vector<std::unique_ptr<ToolCall>>& tools);
 	void RegisterCoreProjectTools(std::vector<std::unique_ptr<ToolCall>>& tools);
 	void RegisterProjectManagementTools(std::vector<std::unique_ptr<ToolCall>>& tools);

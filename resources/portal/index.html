@@ -244,6 +244,16 @@
       <section id="enabled-tools" class="view hidden">
         <div class="section-note">Updates immediately on change</div>
         <article class="block">
+          <div class="field-row">
+            <label>
+              Discovery mode
+              <select id="tool-discovery-mode">
+                <option value="full">Full tool schemas</option>
+                <option value="brokered">Six-tool brokered surface</option>
+              </select>
+            </label>
+          </div>
+          <p class="meta">Brokered mode advertises <code>bn_tools</code>, session create/close, open-item open/close, and BinaryView open. Every other enabled tool remains callable through the broker.</p>
           <div id="enabled-tool-packs" class="tool-pack-list"></div>
         </article>
       </section>

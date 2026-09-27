@@ -249,6 +249,7 @@ add_library(binjad_http STATIC
     src/Daemon/mcp/Foundation.cpp
     src/Daemon/mcp/ToolCall.cpp
     src/Daemon/mcp/tools/Analysis.cpp
+    src/Daemon/mcp/tools/Broker.cpp
     src/Daemon/mcp/tools/Diffing.cpp
     src/Daemon/mcp/tools/HeaderParsing.cpp
     src/Daemon/mcp/tools/KernelCache.cpp

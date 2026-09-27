@@ -159,6 +159,44 @@ namespace binjad::mcp {
 		return "Core Workflow";
 	}
 
+	std::string_view ToolCallCategoryId(ToolCallCategory category)
+	{
+		switch (category)
+		{
+		case ToolCallCategory::Core:
+			return "core";
+		case ToolCallCategory::ProjectManagement:
+			return "project_management";
+		case ToolCallCategory::FunctionAnalysis:
+			return "function_analysis";
+		case ToolCallCategory::BinaryData:
+			return "binary_data";
+		case ToolCallCategory::Search:
+			return "search";
+		case ToolCallCategory::Types:
+			return "types";
+		case ToolCallCategory::Annotations:
+			return "annotations";
+		case ToolCallCategory::BinaryEditing:
+			return "binary_editing";
+		case ToolCallCategory::History:
+			return "history";
+		case ToolCallCategory::HeaderParsing:
+			return "header_parsing";
+		case ToolCallCategory::UrlGeneration:
+			return "url_generation";
+		case ToolCallCategory::Diffing:
+			return "diffing";
+		case ToolCallCategory::KernelCache:
+			return "kernel_cache";
+		case ToolCallCategory::SharedCache:
+			return "shared_cache";
+		case ToolCallCategory::Debugger:
+			return "debugger";
+		}
+		return "core";
+	}
+
 	bool ToolCallCategoryEnabled(ToolCallCategory category, const ToolConfig& config)
 	{
 		switch (category)
@@ -197,6 +235,15 @@ namespace binjad::mcp {
 		return false;
 	}
 
+	bool ToolCallAdvertised(const ToolCall& tool, ToolDiscoveryMode mode)
+	{
+		if (mode == ToolDiscoveryMode::Full)
+			return tool.Name() != kToolBrokerName;
+		const auto name = tool.Name();
+		return name == kToolBrokerName || name == "bn_analysis_session_create" || name == "bn_analysis_session_close"
+			|| name == "bn_open_item_open" || name == "bn_open_item_close" || name == "bn_binary_view_open";
+	}
+
 	namespace {
 		struct ToolCallRegistry
 		{
@@ -208,6 +255,7 @@ namespace binjad::mcp {
 		{
 			static const auto registry = [] {
 				ToolCallRegistry result;
+				RegisterToolBroker(result.tools);
 				RegisterCoreSessionTools(result.tools);
 				RegisterCoreProjectTools(result.tools);
 				RegisterProjectManagementTools(result.tools);
