@@ -487,7 +487,6 @@ function fillToolConfiguration(tools = {}) {
     .join("|")}`;
   const changed = toolConfigurationKey !== "" && toolConfigurationKey !== nextKey;
   toolConfigurationKey = nextKey;
-  put("#tool-discovery-mode", discoveryMode);
   for (const pack of toolPacks) {
     if (!pack.input) continue;
     const input = $(`#${pack.input}`);
@@ -534,32 +533,6 @@ async function updateToolPack(input) {
   }
 }
 
-async function updateToolDiscoveryMode(input) {
-  const previous = input.value === "brokered" ? "full" : "brokered";
-  input.disabled = true;
-  try {
-    const value = await call("/tools", {
-      method: "PATCH",
-      body: JSON.stringify({discovery_mode: input.value}),
-    });
-    fillToolConfiguration(value.result.tools);
-    setRestartRequired(value.result.restart_required);
-    contextDocument = null;
-    toolDocumentation = null;
-    await Promise.all([
-      currentView === "context" ? loadContext(true) : Promise.resolve(),
-      ["tools", "enabled-tools"].includes(currentView)
-        ? loadToolDocumentation(true)
-        : Promise.resolve(),
-    ]);
-  } catch (error) {
-    input.value = previous;
-    toast(error.message, true);
-  } finally {
-    input.disabled = false;
-  }
-}
-
 function fillConfiguration(configuration) {
   put("#cfg-port", configuration.listener?.port ?? 8712);
   put("#cfg-cpu", configuration.cpu?.percentage ?? 75);
@@ -581,6 +554,7 @@ function fillConfiguration(configuration) {
   $("#cfg-project-registration").checked = configuration.projects?.allow_project_registration ?? false;
   const tools = configuration.tools || {};
   const legacyPlugins = configuration.plugins || {};
+  $("#cfg-reduced-surface").checked = (tools.discovery_mode ?? "full") === "brokered";
   fillToolConfiguration({
     discovery_mode: tools.discovery_mode ?? "full",
     project_management: tools.project_management ?? true,
@@ -638,7 +612,7 @@ function mergeConfiguration() {
   configuration.projects.allow_arbitrary_paths = $("#cfg-arbitrary").checked;
   configuration.projects.allow_project_registration = $("#cfg-project-registration").checked;
   configuration.storage.spool_path = $("#cfg-spool").value;
-  configuration.tools.discovery_mode = $("#tool-discovery-mode").value;
+  configuration.tools.discovery_mode = $("#cfg-reduced-surface").checked ? "brokered" : "full";
   configuration.tools.project_management = $("#cfg-tool-project-management").checked;
   configuration.tools.function_analysis = $("#cfg-tool-function-analysis").checked;
   configuration.tools.binary_data = $("#cfg-tool-binary-data").checked;
@@ -868,7 +842,6 @@ document.addEventListener("change", (event) => {
     contextDocument = null;
     loadContext();
   }
-  if (event.target.matches("#tool-discovery-mode")) updateToolDiscoveryMode(event.target);
   if (event.target.matches(".tool-pack-checkbox")) updateToolPack(event.target);
 });
 

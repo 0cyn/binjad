@@ -287,6 +287,12 @@ namespace binjad {
 				else if (!uniquePaths.insert(path).second)
 					AddError(errors, std::string(pathName), "must not duplicate another HTTP endpoint path");
 			}
+			const auto publicStatusPath = config.http.healthPath + "/status";
+			for (const auto& [pathName, path] : paths)
+			{
+				if (path != config.http.healthPath && path == publicStatusPath)
+					AddError(errors, std::string(pathName), "must not use the health status endpoint path");
+			}
 		}
 
 		void ParseCpu(const Value& root, Config& config, std::vector<ConfigError>& errors)
@@ -642,7 +648,7 @@ namespace binjad {
     "spool_path": ""
   },
   "tools": {
-    "_comment": "Tool discovery and extended tool-pack changes are persisted and applied immediately. Brokered discovery advertises six setup/lifecycle calls and routes every other enabled tool through bn_tools.",
+    "_comment": "Tool packs are persisted and applied immediately. Discovery mode requires a service restart. Brokered discovery advertises 15 lifecycle/control tools to modern clients and 13 to legacy clients, and routes every other enabled tool through bn_tools.",
     "discovery_mode": "full",
     "project_management": true,
     "function_analysis": true,

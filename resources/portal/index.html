@@ -230,6 +230,7 @@
             <label><span>Spool path <span class="tooltip" tabindex="0" data-tooltip="Private scratch space for uploads and working files. Leave it empty to use the default beside this config.">?</span></span><input id="cfg-spool"></label>
           </div>
           <div class="field-row">
+            <label class="check"><input id="cfg-reduced-surface" type="checkbox"><span>Use reduced MCP tool surface <span class="tooltip" tabindex="0" data-tooltip="Advertises the 15 common project, file, analysis, save, and job lifecycle tools to modern clients, or 13 to legacy clients. Every other enabled tool stays available through bn_tools. Requires Save and a service restart.">?</span></span></label>
             <label class="check"><input id="cfg-arbitrary" type="checkbox"><span>Tokens can request binaryninja open a local file directly from the MCP computer's disk without requiring uploads <span class="tooltip" tabindex="0" data-tooltip="Lets MCP tokens ask Binary Ninja to open a regular file straight from this computer. Turn it off if every file should come through a project or upload.">?</span></span></label>
             <label class="check"><input id="cfg-project-registration" type="checkbox"><span>Allow local projects outside configured roots to be created or registered <span class="tooltip" tabindex="0" data-tooltip="Lets admin MCP tokens persist projects from arbitrary local paths. Leave this off unless an existing outside-root project must be adopted or a project must intentionally remain outside configured roots.">?</span></span></label>
           </div>
@@ -244,16 +245,6 @@
       <section id="enabled-tools" class="view hidden">
         <div class="section-note">Updates immediately on change</div>
         <article class="block">
-          <div class="field-row">
-            <label>
-              Discovery mode
-              <select id="tool-discovery-mode">
-                <option value="full">Full tool schemas</option>
-                <option value="brokered">Six-tool brokered surface</option>
-              </select>
-            </label>
-          </div>
-          <p class="meta">Brokered mode advertises <code>bn_tools</code>, session create/close, open-item open/close, and BinaryView open. Every other enabled tool remains callable through the broker.</p>
           <div id="enabled-tool-packs" class="tool-pack-list"></div>
         </article>
       </section>

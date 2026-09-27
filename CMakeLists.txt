@@ -6,6 +6,12 @@ endif()
 
 project(binjad VERSION 0.1.0 LANGUAGES C CXX)
 
+if(APPLE)
+    enable_language(OBJCXX)
+    set(BINJAD_SERVICE_EXECUTABLE "" CACHE FILEPATH
+        "Stable executable path embedded in the Homebrew LaunchAgent")
+endif()
+
 include(GNUInstallDirs)
 list(PREPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
@@ -173,6 +179,7 @@ file(APPEND "${BINJAD_FRIENDLY_WORDS_HEADER}" "}};\n}\n")
 if(APPLE)
     set(BINJAD_PLATFORM_PATH_SOURCE
         src/Shared/platform/macos/Logging.cpp
+        src/Daemon/platform/macos/ControlUi.cpp
         src/Daemon/platform/macos/Cpu.cpp
         src/Daemon/platform/macos/Paths.cpp
         src/Shared/platform/posix/PrivateFiles.cpp)
@@ -208,6 +215,10 @@ target_include_directories(binjad_foundation
     PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include"
     PRIVATE "${BINJAD_BN_API_SOURCE_DIR}")
 target_compile_features(binjad_foundation PUBLIC cxx_std_20)
+if(APPLE)
+    target_compile_definitions(binjad_foundation PRIVATE
+        BINJAD_SERVICE_EXECUTABLE="${BINJAD_SERVICE_EXECUTABLE}")
+endif()
 
 add_library(binjad_security STATIC
     src/Daemon/security/Authentication.cpp
@@ -402,6 +413,22 @@ target_link_libraries(binjad PRIVATE
     binjad_overseer)
 target_compile_features(binjad PRIVATE cxx_std_20)
 
+if(APPLE)
+    configure_file(packaging/macos/BinjadMenuBar-Info.plist.in
+        "${CMAKE_CURRENT_BINARY_DIR}/BinjadMenuBar-Info.plist" @ONLY)
+    set_source_files_properties(resources/menubar.png PROPERTIES
+        MACOSX_PACKAGE_LOCATION Resources)
+    add_executable(binjad-menubar MACOSX_BUNDLE
+        src/MenuBar/MenuBar.mm
+        resources/menubar.png)
+    find_library(BINJAD_APPKIT_FRAMEWORK AppKit REQUIRED)
+    target_link_libraries(binjad-menubar PRIVATE "${BINJAD_APPKIT_FRAMEWORK}")
+    target_compile_features(binjad-menubar PRIVATE cxx_std_20)
+    target_compile_options(binjad-menubar PRIVATE -fobjc-arc -Wall -Wextra -Wpedantic)
+    set_target_properties(binjad-menubar PROPERTIES
+        MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_BINARY_DIR}/BinjadMenuBar-Info.plist")
+endif()
+
 if(MSVC)
     target_compile_options(binjad_foundation PRIVATE /W4 /permissive-)
     target_compile_options(binjad_security PRIVATE /W4 /permissive-)
@@ -444,8 +471,7 @@ endif()
 
 install(TARGETS binjad RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
 if(APPLE)
-    set(BINJAD_SERVICE_EXECUTABLE "" CACHE FILEPATH
-        "Stable executable path embedded in the Homebrew LaunchAgent")
+    install(TARGETS binjad-menubar BUNDLE DESTINATION "${CMAKE_INSTALL_LIBEXECDIR}")
     if(BINJAD_SERVICE_EXECUTABLE)
         configure_file(packaging/macos/me.cynder.binjad.plist.in
             "${CMAKE_CURRENT_BINARY_DIR}/me.cynder.binjad.plist" @ONLY)
@@ -478,6 +504,14 @@ install(CODE [[
 option(BINJAD_BUILD_TESTS "Enable real-daemon end-to-end tests" ON)
 if(BINJAD_BUILD_TESTS)
     enable_testing()
+    if(APPLE)
+        add_test(NAME binjad.menubar_bundle
+            COMMAND "${CMAKE_COMMAND}"
+                -DBINJAD_MENU_BAR_BUNDLE=$<TARGET_BUNDLE_DIR:binjad-menubar>
+                -DBINJAD_MENU_BAR_ICON=${CMAKE_CURRENT_SOURCE_DIR}/resources/menubar.png
+                -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/VerifyMenuBarBundle.cmake")
+        set_tests_properties(binjad.menubar_bundle PROPERTIES LABELS "binjad;menubar")
+    endif()
     if(BN_INSTALL_DIR AND APPLE)
         find_package(Python3 3.11 COMPONENTS Interpreter REQUIRED)
         find_program(BINJAD_E2E_CLANG NAMES clang REQUIRED)

@@ -1,5 +1,7 @@
 #include "ToolCall.hpp"
 
+#include <algorithm>
+#include <array>
 #include <stdexcept>
 #include <unordered_map>
 
@@ -239,9 +241,24 @@ namespace binjad::mcp {
 	{
 		if (mode == ToolDiscoveryMode::Full)
 			return tool.Name() != kToolBrokerName;
-		const auto name = tool.Name();
-		return name == kToolBrokerName || name == "bn_analysis_session_create" || name == "bn_analysis_session_close"
-			|| name == "bn_open_item_open" || name == "bn_open_item_close" || name == "bn_binary_view_open";
+		static constexpr std::array<std::string_view, 15> brokeredTools {
+			kToolBrokerName,
+			"bn_analysis_session_create",
+			"bn_analysis_session_close",
+			"bn_local_project_list",
+			"bn_local_project_file_list",
+			"bn_open_item_open",
+			"bn_open_item_close",
+			"bn_binary_view_open",
+			"bn_analysis_status",
+			"bn_analysis_update_and_wait",
+			"bn_binary_view_save",
+			"bn_job_list",
+			"bn_job_info",
+			"bn_job_result",
+			"bn_job_cancel",
+		};
+		return std::find(brokeredTools.begin(), brokeredTools.end(), tool.Name()) != brokeredTools.end();
 	}
 
 	namespace {

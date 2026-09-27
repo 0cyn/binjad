@@ -396,23 +396,55 @@ class Workflows(unittest.TestCase):
         require(self.function(primary, "packet_dispatch") == pair["primaryAddress"], "matched function name was not transferred")
 
     def test_brokered_tool_discovery_and_calls(self):
-        self.addCleanup(lambda: self.service.portal("PATCH", "/tools", {"discovery_mode": "full"}))
-        configured = self.service.portal("PATCH", "/tools", {"discovery_mode": "brokered"})["tools"]
-        require(configured["discovery_mode"] == "brokered", "portal did not hot-apply brokered discovery")
+        restore_required = {"value": False}
+
+        def save_discovery_mode(mode):
+            configuration = self.service.portal("GET", "/config")["configuration"]
+            configuration.setdefault("tools", {})["discovery_mode"] = mode
+            return self.service.portal("PUT", "/config", configuration)
+
+        def restore_full_discovery():
+            if not restore_required["value"]:
+                return
+            saved = save_discovery_mode("full")
+            require(saved["restart_required"], "restoring full discovery did not require restart")
+            self.service.restart()
+            restore_required["value"] = False
+
+        self.addCleanup(restore_full_discovery)
+        self.service.portal("PATCH", "/tools", {"discovery_mode": "brokered"}, expected=400)
+        configured = save_discovery_mode("brokered")
+        restore_required["value"] = True
+        require(configured["restart_required"], "brokered discovery save did not require restart")
+
+        still_full = {tool["name"] for tool in self.agent.rpc("tools/list")["tools"]}
+        require("bn_tools" not in still_full and "bn_function_list" in still_full,
+                "discovery mode changed before service restart")
+        self.service.portal("PATCH", "/tools", {"search": False})
+        pending = self.service.portal("GET", "/config")["configuration"]
+        require(pending["tools"]["discovery_mode"] == "brokered",
+                "hot tool-pack update discarded pending discovery mode")
+        self.service.portal("PATCH", "/tools", {"search": True})
+
+        self.service.restart()
+        self.agent = Agent(self.service.http, self.service.token).start()
+        status = self.service.portal("GET", "/status")
+        require(status["tools"]["discovery_mode"] == "brokered" and not status["restart_required"],
+                "service restart did not activate brokered discovery")
 
         tools = self.agent.rpc("tools/list")["tools"]
         names = {tool["name"] for tool in tools}
-        require(len(names) == 6, f"brokered discovery exposed an unexpected direct surface: {sorted(names)}")
-        for name in ("bn_tools", "bn_analysis_session_create", "bn_analysis_session_close", "bn_open_item_open",
-                     "bn_open_item_close", "bn_binary_view_open"):
-            require(name in names, f"brokered discovery omitted lifecycle tool {name}")
-        for name in ("bn_analysis_update_and_wait", "bn_binary_view_save", "bn_job_result", "bn_local_project_list",
-                     "bn_function_list", "bn_comment_set", "bn_binary_header_info"):
+        expected = {"bn_tools", "bn_analysis_session_create", "bn_analysis_session_close", "bn_local_project_list",
+                    "bn_local_project_file_list", "bn_open_item_open", "bn_open_item_close", "bn_binary_view_open",
+                    "bn_analysis_status", "bn_analysis_update_and_wait", "bn_binary_view_save", "bn_job_list",
+                    "bn_job_info", "bn_job_result", "bn_job_cancel"}
+        require(names == expected, f"brokered discovery exposed an unexpected direct surface: {sorted(names)}")
+        for name in ("bn_function_list", "bn_comment_set", "bn_binary_header_info"):
             require(name not in names, f"brokered discovery directly exposed {name}")
 
         legacy = Agent(self.service.http, self.service.token, "2025-11-25").start()
         legacy_names = {tool["name"] for tool in legacy.rpc("tools/list")["tools"]}
-        require(legacy_names == {"bn_tools", "bn_open_item_open", "bn_open_item_close", "bn_binary_view_open"},
+        require(legacy_names == expected - {"bn_analysis_session_create", "bn_analysis_session_close"},
                 f"brokered legacy discovery exposed an unexpected surface: {sorted(legacy_names)}")
 
         categories = self.agent.call("bn_tools", operation="categories")["categories"]
@@ -437,15 +469,17 @@ class Workflows(unittest.TestCase):
         header = self.agent.call("bn_tools", operation="call", name="bn_binary_header_info",
                                  arguments={"binaryView": candidate["binaryView"]})
         require(header["format"] == "ELF", "broker did not preserve the forwarded tool name")
+        require(self.agent.call("bn_binary_header_info", binaryView=candidate["binaryView"]) == header,
+                "direct execution of an unadvertised tool changed its result")
         self.agent.call("bn_open_item_close", openItem=item["openItem"], save="discard")
 
         documented = self.service.portal("POST", "/mcp/tools", {"protocol": self.agent.protocol})
-        project_list = next(tool for tool in documented["tools"] if tool["name"] == "bn_local_project_list")
-        require(project_list["available"] and not project_list["advertised"],
+        function_list = next(tool for tool in documented["tools"] if tool["name"] == "bn_function_list")
+        require(function_list["available"] and not function_list["advertised"],
                 "tool documentation confused capability availability with direct advertisement")
 
-        restored = self.service.portal("PATCH", "/tools", {"discovery_mode": "full"})["tools"]
-        require(restored["discovery_mode"] == "full", "portal did not restore full discovery")
+        restore_full_discovery()
+        self.agent = Agent(self.service.http, self.service.token).start()
         full_names = {tool["name"] for tool in self.agent.rpc("tools/list")["tools"]}
         require("bn_function_list" in full_names and "bn_tools" not in full_names,
                 "full discovery did not restore the original tool surface")

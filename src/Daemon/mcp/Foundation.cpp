@@ -700,7 +700,7 @@ namespace binjad::mcp {
 
 		constexpr std::string_view kQuickStartDocs =
 			"Tool discovery: when bn_tools is advertised, use categories, list, and describe before calling an omitted "
-			"tool through bn_tools with operation=call. Only the minimal setup and lifecycle surface remains direct.\n"
+			"tool through bn_tools with operation=call. The common lifecycle and control surface remains direct.\n"
 			"Flow: project_list -> file_list -> project_file_open -> binary_view_open(recommended) -> "
 			"analysis_update_and_wait -> query/mutate -> binary_view_save(if changed) -> open_item_close.\n"
 			"Uploads: bn_upload_get_url returns a one-time PUT capability and explicit authorization requirements; "

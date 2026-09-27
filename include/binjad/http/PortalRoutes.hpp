@@ -18,6 +18,8 @@ namespace binjad::http {
 	public:
 		PortalRoutes(Config config, std::shared_ptr<portal::Api> api);
 		void Register(drogon::HttpAppFramework& app);
+		void HandlePublicStatus(const drogon::HttpRequestPtr& request, drogon::RequestStreamPtr stream,
+			DrogonResponseCallback callback) const;
 		void HandlePage(const drogon::HttpRequestPtr& request, drogon::RequestStreamPtr stream,
 			DrogonResponseCallback callback) const;
 		void HandleAsset(const drogon::HttpRequestPtr& request, drogon::RequestStreamPtr stream,

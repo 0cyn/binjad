@@ -221,9 +221,9 @@ namespace binjad::portal {
 			return {buffer.GetString(), buffer.GetSize()};
 		}
 
-		bool SameTools(const ToolConfig& left, const ToolConfig& right)
+		bool SameToolPacks(const ToolConfig& left, const ToolConfig& right)
 		{
-			return left.discoveryMode == right.discoveryMode && left.projectManagement == right.projectManagement
+			return left.projectManagement == right.projectManagement
 				&& left.functionAnalysis == right.functionAnalysis && left.binaryData == right.binaryData
 				&& left.search == right.search && left.types == right.types && left.annotations == right.annotations
 				&& left.binaryEditing == right.binaryEditing && left.history == right.history
@@ -234,7 +234,8 @@ namespace binjad::portal {
 
 		bool SameRestartGatedConfig(const Config& left, const Config& right)
 		{
-			return left.listener.addresses == right.listener.addresses && left.listener.port == right.listener.port
+			return left.tools.discoveryMode == right.tools.discoveryMode
+				&& left.listener.addresses == right.listener.addresses && left.listener.port == right.listener.port
 				&& left.http.publicBaseUrl == right.http.publicBaseUrl && left.http.mcpPath == right.http.mcpPath
 				&& left.http.uploadPath == right.http.uploadPath && left.http.portalPath == right.http.portalPath
 				&& left.http.healthPath == right.http.healthPath
@@ -259,9 +260,9 @@ namespace binjad::portal {
 
 		bool ApplyToolFields(const Value& object, ToolConfig& tools, std::string& error)
 		{
-			constexpr std::string_view fields[] {"discovery_mode", "project_management", "function_analysis",
-				"binary_data", "search", "types", "annotations", "binary_editing", "history", "header_parsing",
-				"url_generation", "diffing", "kernel_cache", "shared_cache", "debugger"};
+			constexpr std::string_view fields[] {"project_management", "function_analysis", "binary_data", "search",
+				"types", "annotations", "binary_editing", "history", "header_parsing", "url_generation", "diffing",
+				"kernel_cache", "shared_cache", "debugger"};
 			if (object.MemberCount() == 0)
 			{
 				error = "at least one tool pack is required";
@@ -273,30 +274,15 @@ namespace binjad::portal {
 				const std::string_view name(member.name.GetString(), member.name.GetStringLength());
 				if (std::find(std::begin(fields), std::end(fields), name) == std::end(fields))
 				{
-					error = "unknown field '" + std::string(name) + "'";
+					error = name == "discovery_mode" ?
+						"discovery_mode must be changed through configuration and requires restart" :
+						"unknown field '" + std::string(name) + "'";
 					return false;
 				}
 				if (!seen.insert(name).second)
 				{
 					error = "duplicate field '" + std::string(name) + "'";
 					return false;
-				}
-				if (name == "discovery_mode")
-				{
-					if (!member.value.IsString())
-					{
-						error = "discovery_mode must be a string";
-						return false;
-					}
-					const auto mode = ParseToolDiscoveryMode(
-						std::string_view(member.value.GetString(), member.value.GetStringLength()));
-					if (!mode)
-					{
-						error = "discovery_mode must be 'full' or 'brokered'";
-						return false;
-					}
-					tools.discoveryMode = *mode;
-					continue;
 				}
 				if (!member.value.IsBool())
 				{
@@ -378,8 +364,9 @@ namespace binjad::portal {
 		{
 			Value result(rapidjson::kObjectType);
 			result.AddMember("_comment",
-				Value("Tool discovery and extended tool packs apply immediately. Brokered discovery advertises six "
-					  "setup/lifecycle calls and routes every other enabled tool through bn_tools.",
+				Value("Tool packs apply immediately. Discovery mode requires save and restart. Brokered discovery "
+					  "advertises 15 lifecycle/control tools to modern clients and 13 to legacy clients, and routes "
+					  "every other enabled tool through bn_tools.",
 					allocator),
 				allocator);
 			const auto discoveryMode = ToolDiscoveryModeName(tools.discoveryMode);
@@ -653,7 +640,12 @@ namespace binjad::portal {
 				auto document = ParseObject(*current.contents, error);
 				if (!document)
 					return Error(500, "cannot update malformed configuration: " + error);
-				auto tools = ToolConfigValue(applied, document->GetAllocator());
+				const auto configured = ParseConfig(*current.contents, configPath_);
+				if (!configured.config)
+					return Error(500, "cannot update invalid configuration");
+				ToolConfig persistedTools = applied;
+				persistedTools.discoveryMode = configured.config->tools.discoveryMode;
+				auto tools = ToolConfigValue(persistedTools, document->GetAllocator());
 				if (document->HasMember("tools"))
 					(*document)["tools"] = std::move(tools);
 				else
@@ -667,7 +659,7 @@ namespace binjad::portal {
 				if (!persisted.installed)
 					return Error(500, persisted.error);
 
-				changed = !SameTools(config_.tools, applied);
+				changed = !SameToolPacks(config_.tools, applied);
 				config_.tools = applied;
 				restartRequired_ = !SameRestartGatedConfig(config_, *parsed.config);
 				restartRequired = restartRequired_;
@@ -742,7 +734,8 @@ namespace binjad::portal {
 				const auto persisted = platform::ReplacePrivateFile(configPath_, request.body + "\n");
 				if (!persisted.installed)
 					return Error(500, persisted.error);
-				toolsChanged = !SameTools(config_.tools, appliedTools);
+				appliedTools.discoveryMode = config_.tools.discoveryMode;
+				toolsChanged = !SameToolPacks(config_.tools, appliedTools);
 				config_.tools = appliedTools;
 				restartRequired_ = !SameRestartGatedConfig(config_, *parsed.config);
 				restartRequired = restartRequired_;
@@ -897,6 +890,24 @@ namespace binjad::portal {
 			return {204, {}, {}, {{"Cache-Control", "no-store"}}};
 		}
 		return Error(404, "not found");
+	}
+
+	http::ImmediateResponse Api::PublicStatus() const
+	{
+		const auto status = runtimeStatus_ ? runtimeStatus_() : RuntimeStatus {};
+		StringBuffer buffer;
+		Writer<StringBuffer> writer(buffer);
+		writer.StartObject();
+		writer.Key("analysis_sessions");
+		writer.Uint64(status.analysisSessions);
+		writer.Key("open_items");
+		writer.Uint64(status.openItems);
+		writer.Key("active_analyses");
+		writer.Uint64(status.activeAnalyses);
+		writer.Key("queued_analyses");
+		writer.Uint64(status.queuedAnalyses);
+		writer.EndObject();
+		return Json(200, {buffer.GetString(), buffer.GetSize()});
 	}
 
 	http::ImmediateResponse Api::Page() const

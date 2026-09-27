@@ -128,6 +128,12 @@ namespace binjad::http {
 	void PortalRoutes::Register(drogon::HttpAppFramework& app)
 	{
 		auto self = shared_from_this();
+		app.registerHandler(config_.http.healthPath + "/status",
+			[self](const drogon::HttpRequestPtr& request, drogon::RequestStreamPtr&& stream,
+				DrogonResponseCallback&& callback) {
+				self->HandlePublicStatus(request, std::move(stream), std::move(callback));
+			},
+			{drogon::Get});
 		app.registerHandler(config_.http.portalPath,
 			[self](const drogon::HttpRequestPtr& request, drogon::RequestStreamPtr&& stream,
 				DrogonResponseCallback&& callback) {
@@ -149,6 +155,22 @@ namespace binjad::http {
 				self->HandleApi(request, std::move(stream), std::move(callback));
 			},
 			{drogon::Get, drogon::Post, drogon::Put, drogon::Patch, drogon::Delete});
+	}
+
+	void PortalRoutes::HandlePublicStatus(
+		const drogon::HttpRequestPtr&, drogon::RequestStreamPtr stream, DrogonResponseCallback callback) const
+	{
+		if (stream)
+			stream->setStreamReader(drogon::RequestStreamReader::newNullReader());
+		try
+		{
+			callback(Response(api_->PublicStatus()));
+		}
+		catch (...)
+		{
+			callback(Response(
+				{500, "application/json", "{\"error\":\"internal_error\"}", {{"Cache-Control", "no-store"}}}));
+		}
 	}
 
 	void PortalRoutes::HandlePage(

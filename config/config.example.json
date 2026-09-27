@@ -49,7 +49,7 @@
     "spool_path": ""
   },
   "tools": {
-    "_comment": "Tool discovery and extended tool-pack changes are persisted and applied immediately. Brokered discovery advertises six setup/lifecycle calls and routes every other enabled tool through bn_tools.",
+    "_comment": "Tool packs are persisted and applied immediately. Discovery mode requires a service restart. Brokered discovery advertises 15 lifecycle/control tools to modern clients and 13 to legacy clients, and routes every other enabled tool through bn_tools.",
     "discovery_mode": "full",
     "project_management": true,
     "function_analysis": true,

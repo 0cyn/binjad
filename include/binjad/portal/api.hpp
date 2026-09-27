@@ -64,6 +64,7 @@ namespace binjad::portal {
 		void SetToolConfigCallback(ToolConfigApply callback);
 		void SetMcpDocumentationProviders(McpContextProvider context, McpToolsProvider tools);
 		http::ImmediateResponse Handle(const ApiRequest& request);
+		http::ImmediateResponse PublicStatus() const;
 		http::ImmediateResponse Page() const;
 		http::ImmediateResponse Asset(std::string_view name) const;
 

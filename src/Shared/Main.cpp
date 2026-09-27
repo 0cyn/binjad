@@ -8,6 +8,7 @@
 #include "binjad/overseer/FileChildCoordinator.hpp"
 #include "binjad/overseer/AnalysisScheduler.hpp"
 #include "binjad/overseer/ProjectChildCoordinator.hpp"
+#include "binjad/platform/ControlUi.hpp"
 #if defined(__APPLE__)
 	#include "binjad/platform/macos/MachBootstrap.hpp"
 #endif
@@ -386,10 +387,17 @@ namespace {
 				[sessionRuntime
 #if defined(__APPLE__)
 					,
-					fileRuntime
+					fileRuntime,
+					executable,
+					configPath = options->configPath,
+					config = *result.config
 #endif
 			] {
 					binjad::Log(binjad::LogLevel::Notice, "binjad overseer is ready");
+#if defined(__APPLE__)
+					if (const auto error = binjad::platform::LaunchControlUi(executable, configPath, config); !error.empty())
+						binjad::Log(binjad::LogLevel::Error, error);
+#endif
 					drogon::app().getLoop()->runEvery(60.0,
 						[sessionRuntime
 #if defined(__APPLE__)
