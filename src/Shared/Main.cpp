@@ -9,6 +9,7 @@
 #include "binjad/overseer/AnalysisScheduler.hpp"
 #include "binjad/overseer/ProjectChildCoordinator.hpp"
 #include "binjad/platform/ControlUi.hpp"
+#include "binjad/platform/ToolControl.hpp"
 #if defined(__APPLE__)
 	#include "binjad/platform/macos/MachBootstrap.hpp"
 #endif
@@ -382,7 +383,13 @@ namespace {
 				drogon::app(), *result.config, authenticationRuntime->tokens.Authenticator(), *sessionRuntime->uploads);
 			auto portalApi =
 				std::shared_ptr<binjad::portal::Api>(authenticationRuntime, &authenticationRuntime->portalApi);
-			binjad::http::RegisterPortalRoutes(drogon::app(), *result.config, std::move(portalApi));
+#if defined(__APPLE__)
+			auto toolControl = binjad::platform::StartToolControlServer(
+				binjad::platform::ToolControlSocketPath(options->configPath), portalApi);
+			if (!toolControl.error.empty())
+				binjad::Log(binjad::LogLevel::Error, "cannot start menu tool control: " + toolControl.error);
+#endif
+			binjad::http::RegisterPortalRoutes(drogon::app(), *result.config, portalApi);
 			drogon::app().registerBeginningAdvice(
 				[sessionRuntime
 #if defined(__APPLE__)

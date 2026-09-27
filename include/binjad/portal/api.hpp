@@ -11,6 +11,8 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
+#include <vector>
 
 namespace binjad::portal {
 	struct ProjectSummary
@@ -31,6 +33,12 @@ namespace binjad::portal {
 		std::size_t allocatedWorkers = 0;
 		std::size_t activeAnalyses = 0;
 		std::size_t queuedAnalyses = 0;
+	};
+
+	struct ToolPackUpdate
+	{
+		ToolConfig tools;
+		bool restartRequired = false;
 	};
 
 	struct ApiRequest
@@ -63,6 +71,9 @@ namespace binjad::portal {
 		void SetRuntimeStatusProvider(RuntimeStatusProvider callback);
 		void SetToolConfigCallback(ToolConfigApply callback);
 		void SetMcpDocumentationProviders(McpContextProvider context, McpToolsProvider tools);
+		ToolConfig ActiveToolConfig() const;
+		Result<ToolPackUpdate> UpdateToolPacks(
+			const std::vector<std::pair<std::string, bool>>& changes);
 		http::ImmediateResponse Handle(const ApiRequest& request);
 		http::ImmediateResponse PublicStatus() const;
 		http::ImmediateResponse Page() const;

@@ -1,8 +1,7 @@
 ![logo](.github/img/logo.png)
 
 <p align="center">
-  <a href="#install">install</a> | <a href="#restart-stop">restart</a> <br>
-<a href="#why-is-this-better-than-having-an-agent-write-api-scripts">why is this better than having an agent write API scripts</a>
+  <a href="#install">install</a> | <a href="#restart-stop">restart</a>
 </p>
 
 This is an **UNOFFICIAL** HTTP MCP daemon for BinaryNinja **Commercial Edition** that offers "a few" things the official doesn't, and fixes some of my gripes
@@ -13,13 +12,7 @@ This runs indefinitely in the background without binaryninja open. Config is don
 and the daemon can be controlled from its macOS menu bar item or through `brew services`. You will need a 
 Commercial binaryninja license since that's required for using BinaryNinja headlessly. 
 
-> Beta release! This may break with different setups. Let me know in the Issues or bother me on messaging platforms if you have me. 
-> I want to know what use cases you have for this and what tools you need to do those things. If you're willing to spam
-> me with issues when things break, we can turn this into the best tool in industry for this sort of work. 
-
 I am not currently an employee or affiliate of Vector 35 and this project is not associated with them in any way.
-
-![img.png](.github/img/menubar.png)
 
 ### big features
 
@@ -33,7 +26,7 @@ I am not currently an employee or affiliate of Vector 35 and this project is not
 * Files are loaded in individual processes, so crashes do not destroy other unsaved work.
 * Project support can be forced, so local LLM agents can work fully sandboxed. 
 * Categories of tools can be disabled to save context. 
-* Optional "reduced mode" that reduces the list of force-advertised toolcalls to 6, if you need that. Still allows querying tools and using all of them. 
+* Optional "reduced mode" that reduces the list of force-advertised toolcalls to 13-15, if you need that. Still allows querying tools and using all of them. 
 
 I find dumping more of the toolset into context helps gently guide consumer/prosumer models towards solutions without
 heavy-handed guidance needed. 
@@ -43,15 +36,22 @@ heavy-handed guidance needed.
 > within that project, and generate binaryninja URL links to all mentioned functions. Present the contents of the report to
 > me afterwards"
 
+![img.png](.github/img/demo1.png)
+<p align="center"><sub>Results of that ^</sub></p>
+
+![img.png](.github/img/demo2.png)
+<p align="center"><sub>A subagent that was told to diff a subset of files working through them in parallel. The orchestrator ran 5 subagents doing this at a time.</sub></p>
+
 Use this with the `bntextviews` plugin to allow your agents to write markdown/json content into projects you can then display in
 BinaryNinja with a nice document reader. It's good!
 
 I've found Qwen 3.8 27b on a 4-bit quant to be very capable of everything this toolkit exposes. Docs have been tuned to 
 help lower-spec models through trickier things. 
 
-### some other stuff 
+### some other stuff
 
-* Load balancing so one subagent doesn't brick the others
+![img.png](.github/img/menubar.png)
+
 * Markdown and JSON project file readers. Agents loooove putting these in Projects, so I just made it first-class behavior. 
 * Recursive local-directory imports and safe adoption of outside-root projects into configured project roots.
 * A nice non-claudeslop panel you can use to fuck w/ settings, handle auth, etc.
@@ -60,6 +60,8 @@ help lower-spec models through trickier things.
 * Web configuration API :thumbsup:
 
 ![img.png](.github/img/panel.png)
+
+<p align="center"><sub>actually, websites can look different from other websites if you remember</sub></p>
 
 > Caveat of project work: Due to a binaryninja limitation, if you are running the server locally, having a project in GUI open in any way holds
 > a 'lock' on the project, which will result in certain toolcalls that modify projects failing.
@@ -74,13 +76,16 @@ macOS is the only supported platform at this time, with other OSes being in the 
 
 Once installed, start the service, head to http://127.0.0.1:8712/portal, and create the account. You'll be prompted by macOS
 for keychain password on daemon startup and signup since we store keys, login info, and such there. There is also a
-menu bar item that allows you to stop/start/restart the daemon and hop back to the portal. 
+menu bar item that allows you to stop/start/restart the daemon, hot-toggle toolkits, view runtime status, and hop back to the portal.
 
 You can configure the daemon through the web portal or by manually editing `~/Library/Application\ Support/binjad/config.json`
 
 Please thumbs-up the [Windows Support]() or [Linux Support]() issues if you need it on these platforms. 
 
 #### install
+
+binja'd (and new versions of it) are released in lockstep with BinaryNinja versions, for C++ ABI compatibility reasons. Because of this,
+if you're looking for more frequent updates and bugfixes, I'd recommend you get on the dev branch of BinaryNinja, as it updates much more frequently.
 
 ```shell
 INSTALLED_VERSION=/Applications/Binary\ Ninja.app/Contents/MacOS/bnpython3 -c "print(__import__('binaryninja').core_version().split('-')[0])"
@@ -174,39 +179,6 @@ and restarting the service.
 - bn_job_info
 - bn_job_result
 - bn_job_cancel
-
-### "why is this better than having an agent write API scripts"
-
-There's a lot of discussion on this topic right now. Especially around context usage, etc. So here's the blogpost from
-me on the topic. 
-
-With a frontier model, ideally you're using both of these in tandem; This gives models a framework for a simple prompt that won't result in crazy directory sprawl. 
-
-I might have an entire OS filesystem's set of binaries in a project, and instead of having to manually include the long
-list of instructions on how to use that each time I can just say "use the iOS IPSW dump project in binja'd", and it'll
-reuse existing bndbs. 
-
-Another strong use case I've found with this is with local LLMs (Qwen 3.8 27b is a fav), which can definitely perform RE
-tasks (and actually get there much faster than frontier models), but which I am absolutely not letting run arbitrary
-python scripts on my system. This gives them literally every tool they need to analyze, organize, perform RE, annotate, and perform 
-generic VR, without requiring handing a cheap model an execute_python_script tool.
-
-You can have a frontier model w/ full API scripting access and sandboxed subagents that operate on view handles the orchestrator
-hands them. Observed models have done this pretty consistently, naturally without needing much guidance to do so, resulting in 
-cheaper work with a lot less paid compute usage. 
-
-`<opinion>`
-This is a particular gripe I have with IDA's whole official "code mode" (read: completely useless?) MCP. Using proper
-context management, the tools can serve as a framework to guide a model through whatever you asked it to do, _and_ as a sandbox
-to keep agents that are aligned just fine from accidentally doing something really stupid. And in a case where a SOtA model 
-doesn't need guidance, why on earth does it need an MCP to execute ida scripts. 
-
-from their blog: 
-> We also tested Qwen 3.8 27B, which can run (quantized) on a single consumer GPU (24GB NVIDIA RTX 3090). This class of models can perform reverse engineering tasks, but tends to get stuck and overthink, so you need a more hands-on approach. That being said, a minimal harness like Pi and the small footprint of the IDA MCP tools make a suitable combination for consumer hardware where prefill speeds are relatively low.
-
-maybe it's because you're just handing it a script runner bro ;_; IDK man. We're not always going to have these
-3T param models available this cheap.
-`</opinion>`
 
 ##### LLM disclosure
 

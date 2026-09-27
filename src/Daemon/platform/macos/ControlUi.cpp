@@ -1,6 +1,7 @@
 #include "binjad/platform/ControlUi.hpp"
 
 #include "binjad/platform/Paths.hpp"
+#include "binjad/platform/ToolControl.hpp"
 #include "binjad/platform/macos/MachBootstrap.hpp"
 
 #include <spawn.h>
@@ -72,6 +73,8 @@ namespace binjad::platform {
 				std::string(macos::kMachServiceName),
 				"--config-path",
 				installedConfig.string(),
+				"--control-socket",
+				ToolControlSocketPath(installedConfig).string(),
 				"--portal-url",
 				portalUrl,
 			};

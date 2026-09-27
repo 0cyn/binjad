@@ -4,6 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import json
 from pathlib import Path
+import socket
 import time
 import unittest
 
@@ -398,6 +399,20 @@ class Workflows(unittest.TestCase):
     def test_brokered_tool_discovery_and_calls(self):
         restore_required = {"value": False}
 
+        def tool_control(request):
+            path = self.service.config.parent / "menubar-control.sock"
+            require(path.stat().st_mode & 0o777 == 0o600, "menu tool-control socket is not owner-only")
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
+                connection.settimeout(5)
+                connection.connect(str(path))
+                connection.sendall(json.dumps(request, separators=(",", ":")).encode() + b"\n")
+                response = b""
+                while not response.endswith(b"\n"):
+                    chunk = connection.recv(4096)
+                    require(chunk, "menu tool-control socket closed without a response")
+                    response += chunk
+                return json.loads(response)
+
         def save_discovery_mode(mode):
             configuration = self.service.portal("GET", "/config")["configuration"]
             configuration.setdefault("tools", {})["discovery_mode"] = mode
@@ -420,10 +435,17 @@ class Workflows(unittest.TestCase):
         still_full = {tool["name"] for tool in self.agent.rpc("tools/list")["tools"]}
         require("bn_tools" not in still_full and "bn_function_list" in still_full,
                 "discovery mode changed before service restart")
-        self.service.portal("PATCH", "/tools", {"search": False})
+        listed_packs = tool_control({"operation": "list"})
+        require(listed_packs["ok"] and len(listed_packs["packs"]) == 14 and listed_packs["packs"]["search"],
+                "menu tool-control socket did not list active packs")
+        require(not tool_control({"operation": "set", "pack": "core", "enabled": False})["ok"],
+                "menu tool-control socket accepted an unknown or fixed pack")
+        updated_packs = tool_control({"operation": "set", "pack": "search", "enabled": False})
+        require(updated_packs["ok"] and not updated_packs["packs"]["search"],
+                "menu tool-control socket did not disable a pack")
         pending = self.service.portal("GET", "/config")["configuration"]
-        require(pending["tools"]["discovery_mode"] == "brokered",
-                "hot tool-pack update discarded pending discovery mode")
+        require(pending["tools"]["discovery_mode"] == "brokered" and not pending["tools"]["search"],
+                "menu tool-control update did not persist or discarded pending discovery mode")
         self.service.portal("PATCH", "/tools", {"search": True})
 
         self.service.restart()

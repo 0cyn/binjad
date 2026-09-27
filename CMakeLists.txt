@@ -185,6 +185,7 @@ if(APPLE)
         src/Shared/platform/posix/PrivateFiles.cpp)
     set(BINJAD_PLATFORM_SECURITY_SOURCES
         src/Daemon/platform/macos/CredentialStore.cpp
+        src/Daemon/platform/macos/ToolControl.cpp
         src/Daemon/platform/macos/Random.cpp)
 elseif(WIN32)
     set(BINJAD_PLATFORM_PATH_SOURCE

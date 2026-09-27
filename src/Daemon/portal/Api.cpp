@@ -258,7 +258,43 @@ namespace binjad::portal {
 				&& left.storage.spoolPath == right.storage.spoolPath;
 		}
 
-		bool ApplyToolFields(const Value& object, ToolConfig& tools, std::string& error)
+		bool SetToolPackField(ToolConfig& tools, std::string_view name, bool enabled)
+		{
+			if (name == "project_management")
+				tools.projectManagement = enabled;
+			else if (name == "function_analysis")
+				tools.functionAnalysis = enabled;
+			else if (name == "binary_data")
+				tools.binaryData = enabled;
+			else if (name == "search")
+				tools.search = enabled;
+			else if (name == "types")
+				tools.types = enabled;
+			else if (name == "annotations")
+				tools.annotations = enabled;
+			else if (name == "binary_editing")
+				tools.binaryEditing = enabled;
+			else if (name == "history")
+				tools.history = enabled;
+			else if (name == "header_parsing")
+				tools.headerParsing = enabled;
+			else if (name == "url_generation")
+				tools.urlGeneration = enabled;
+			else if (name == "diffing")
+				tools.diffing = enabled;
+			else if (name == "kernel_cache")
+				tools.kernelCache = enabled;
+			else if (name == "shared_cache")
+				tools.sharedCache = enabled;
+			else if (name == "debugger")
+				tools.debugger = enabled;
+			else
+				return false;
+			return true;
+		}
+
+		bool ReadToolPackChanges(
+			const Value& object, std::vector<std::pair<std::string, bool>>& changes, std::string& error)
 		{
 			constexpr std::string_view fields[] {"project_management", "function_analysis", "binary_data", "search",
 				"types", "annotations", "binary_editing", "history", "header_parsing", "url_generation", "diffing",
@@ -289,35 +325,7 @@ namespace binjad::portal {
 					error = std::string(name) + " must be a boolean";
 					return false;
 				}
-				const bool enabled = member.value.GetBool();
-				if (name == "project_management")
-					tools.projectManagement = enabled;
-				else if (name == "function_analysis")
-					tools.functionAnalysis = enabled;
-				else if (name == "binary_data")
-					tools.binaryData = enabled;
-				else if (name == "search")
-					tools.search = enabled;
-				else if (name == "types")
-					tools.types = enabled;
-				else if (name == "annotations")
-					tools.annotations = enabled;
-				else if (name == "binary_editing")
-					tools.binaryEditing = enabled;
-				else if (name == "history")
-					tools.history = enabled;
-				else if (name == "header_parsing")
-					tools.headerParsing = enabled;
-				else if (name == "url_generation")
-					tools.urlGeneration = enabled;
-				else if (name == "diffing")
-					tools.diffing = enabled;
-				else if (name == "kernel_cache")
-					tools.kernelCache = enabled;
-				else if (name == "shared_cache")
-					tools.sharedCache = enabled;
-				else if (name == "debugger")
-					tools.debugger = enabled;
+				changes.emplace_back(name, member.value.GetBool());
 			}
 			return true;
 		}
@@ -455,6 +463,67 @@ namespace binjad::portal {
 	{
 		mcpContext_ = std::move(context);
 		mcpTools_ = std::move(tools);
+	}
+
+	ToolConfig Api::ActiveToolConfig() const
+	{
+		std::lock_guard lock(configurationMutex_);
+		return config_.tools;
+	}
+
+	Result<ToolPackUpdate> Api::UpdateToolPacks(const std::vector<std::pair<std::string, bool>>& changes)
+	{
+		if (changes.empty())
+			return {{}, "at least one tool pack is required"};
+
+		ToolConfig applied;
+		bool changed = false;
+		bool restartRequired = false;
+		{
+			std::lock_guard lock(configurationMutex_);
+			applied = config_.tools;
+			for (const auto& [name, enabled] : changes)
+			{
+				if (!SetToolPackField(applied, name, enabled))
+					return {{}, "unknown tool pack '" + name + "'"};
+			}
+
+			const auto current = platform::ReadPrivateFile(configPath_);
+			if (!current.error.empty())
+				return {{}, current.error};
+			if (!current.contents)
+				return {{}, "configuration file is unavailable"};
+			std::string error;
+			auto document = ParseObject(*current.contents, error);
+			if (!document)
+				return {{}, "cannot update malformed configuration: " + error};
+			const auto configured = ParseConfig(*current.contents, configPath_);
+			if (!configured.config)
+				return {{}, "cannot update invalid configuration"};
+			ToolConfig persistedTools = applied;
+			persistedTools.discoveryMode = configured.config->tools.discoveryMode;
+			auto tools = ToolConfigValue(persistedTools, document->GetAllocator());
+			if (document->HasMember("tools"))
+				(*document)["tools"] = std::move(tools);
+			else
+				document->AddMember("tools", std::move(tools), document->GetAllocator());
+			document->RemoveMember("plugins");
+			const auto serialized = Serialize(*document);
+			const auto parsed = ParseConfig(serialized, configPath_);
+			if (!parsed.config)
+				return {{}, "tool-pack update produced an invalid configuration"};
+			const auto persisted = platform::ReplacePrivateFile(configPath_, serialized + "\n");
+			if (!persisted.installed)
+				return {{}, persisted.error};
+
+			changed = !SameToolPacks(config_.tools, applied);
+			config_.tools = applied;
+			restartRequired_ = !SameRestartGatedConfig(config_, *parsed.config);
+			restartRequired = restartRequired_;
+		}
+		if (changed && toolConfigApply_)
+			toolConfigApply_(applied);
+		return {ToolPackUpdate {applied, restartRequired}, {}};
 	}
 
 	http::ImmediateResponse Api::Handle(const ApiRequest& request)
@@ -623,55 +692,18 @@ namespace binjad::portal {
 			if (!patch)
 				return Error(400, error);
 
-			ToolConfig applied;
-			bool changed = false;
-			bool restartRequired = false;
-			{
-				std::lock_guard lock(configurationMutex_);
-				applied = config_.tools;
-				if (!ApplyToolFields(*patch, applied, error))
-					return Error(400, error);
-
-				const auto current = platform::ReadPrivateFile(configPath_);
-				if (!current.error.empty())
-					return Error(500, current.error);
-				if (!current.contents)
-					return Error(500, "configuration file is unavailable");
-				auto document = ParseObject(*current.contents, error);
-				if (!document)
-					return Error(500, "cannot update malformed configuration: " + error);
-				const auto configured = ParseConfig(*current.contents, configPath_);
-				if (!configured.config)
-					return Error(500, "cannot update invalid configuration");
-				ToolConfig persistedTools = applied;
-				persistedTools.discoveryMode = configured.config->tools.discoveryMode;
-				auto tools = ToolConfigValue(persistedTools, document->GetAllocator());
-				if (document->HasMember("tools"))
-					(*document)["tools"] = std::move(tools);
-				else
-					document->AddMember("tools", std::move(tools), document->GetAllocator());
-				document->RemoveMember("plugins");
-				const auto serialized = Serialize(*document);
-				const auto parsed = ParseConfig(serialized, configPath_);
-				if (!parsed.config)
-					return Error(500, "tool-pack update produced an invalid configuration");
-				const auto persisted = platform::ReplacePrivateFile(configPath_, serialized + "\n");
-				if (!persisted.installed)
-					return Error(500, persisted.error);
-
-				changed = !SameToolPacks(config_.tools, applied);
-				config_.tools = applied;
-				restartRequired_ = !SameRestartGatedConfig(config_, *parsed.config);
-				restartRequired = restartRequired_;
-			}
-			if (changed && toolConfigApply_)
-				toolConfigApply_(applied);
+			std::vector<std::pair<std::string, bool>> changes;
+			if (!ReadToolPackChanges(*patch, changes, error))
+				return Error(400, error);
+			const auto updated = UpdateToolPacks(changes);
+			if (!updated.value)
+				return Error(500, updated.error);
 			return Json(200, JsonResult([&](auto& writer) {
 				writer.StartObject();
 				writer.Key("tools");
-				WriteToolConfig(writer, applied);
+				WriteToolConfig(writer, updated.value->tools);
 				writer.Key("restart_required");
-				writer.Bool(restartRequired);
+				writer.Bool(updated.value->restartRequired);
 				writer.EndObject();
 			}));
 		}

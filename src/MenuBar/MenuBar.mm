@@ -1,6 +1,14 @@
 #import <Cocoa/Cocoa.h>
 
+#include <sys/socket.h>
+#include <sys/un.h>
 #include <unistd.h>
+
+#include <array>
+#include <cerrno>
+#include <cstdint>
+#include <cstring>
+#include <fcntl.h>
 
 namespace {
 	NSString* const kGitHubUrl = @"https://github.com/0cyn/binjad";
@@ -15,6 +23,104 @@ namespace {
 		if (index == NSNotFound || index + 1 >= arguments.count)
 			return nil;
 		return arguments[index + 1];
+	}
+
+	NSArray<NSArray<NSString*>*>* ToolkitDefinitions()
+	{
+		static NSArray<NSArray<NSString*>*>* definitions = @[
+			@[@"project_management", @"Project Management & Documents"],
+			@[@"function_analysis", @"Function Analysis"],
+			@[@"binary_data", @"Binary Data"],
+			@[@"search", @"Search"],
+			@[@"types", @"Types & Signatures"],
+			@[@"annotations", @"Annotations & Symbols"],
+			@[@"binary_editing", @"Binary Editing"],
+			@[@"history", @"Transactions & History"],
+			@[@"header_parsing", @"Header Parsing"],
+			@[@"url_generation", @"URL Generation"],
+			@[@"diffing", @"Diffing"],
+			@[@"kernel_cache", @"KernelCache"],
+			@[@"shared_cache", @"SharedCache"],
+			@[@"debugger", @"Debugger"],
+		];
+		return definitions;
+	}
+
+	NSDictionary* ToolControlRequest(NSString* socketPath, NSDictionary* request)
+	{
+		NSData* encoded = [NSJSONSerialization dataWithJSONObject:request options:0 error:nil];
+		if (!encoded)
+			return nil;
+		NSMutableData* line = [encoded mutableCopy];
+		const char newline = '\n';
+		[line appendBytes:&newline length:1];
+
+		const char* path = socketPath.fileSystemRepresentation;
+		if (!path || std::strlen(path) >= sizeof(sockaddr_un::sun_path))
+			return nil;
+		const int socket = ::socket(AF_UNIX, SOCK_STREAM, 0);
+		if (socket < 0)
+			return nil;
+		if (::fcntl(socket, F_SETFD, FD_CLOEXEC) != 0)
+		{
+			::close(socket);
+			return nil;
+		}
+		const timeval timeout {2, 0};
+		::setsockopt(socket, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+		::setsockopt(socket, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
+		sockaddr_un address {};
+		address.sun_family = AF_UNIX;
+		std::memcpy(address.sun_path, path, std::strlen(path) + 1);
+		if (::connect(socket, reinterpret_cast<const sockaddr*>(&address), sizeof(address)) != 0)
+		{
+			::close(socket);
+			return nil;
+		}
+
+		const auto* bytes = static_cast<const std::uint8_t*>(line.bytes);
+		std::size_t remaining = line.length;
+		while (remaining != 0)
+		{
+			const auto count = ::send(socket, bytes, remaining, MSG_NOSIGNAL);
+			if (count < 0)
+			{
+				if (errno == EINTR)
+					continue;
+				::close(socket);
+				return nil;
+			}
+			if (count == 0)
+			{
+				::close(socket);
+				return nil;
+			}
+			bytes += count;
+			remaining -= static_cast<std::size_t>(count);
+		}
+		::shutdown(socket, SHUT_WR);
+
+		NSMutableData* response = [NSMutableData data];
+		std::array<char, 1024> buffer {};
+		while (response.length <= 65536)
+		{
+			const auto count = ::recv(socket, buffer.data(), buffer.size(), 0);
+			if (count > 0)
+			{
+				[response appendBytes:buffer.data() length:static_cast<NSUInteger>(count)];
+				if (std::memchr(buffer.data(), '\n', static_cast<std::size_t>(count)))
+					break;
+				continue;
+			}
+			if (count < 0 && errno == EINTR)
+				continue;
+			break;
+		}
+		::close(socket);
+		if (!response.length || response.length > 65536)
+			return nil;
+		id decoded = [NSJSONSerialization JSONObjectWithData:response options:0 error:nil];
+		return [decoded isKindOfClass:[NSDictionary class]] ? decoded : nil;
 	}
 }
 
@@ -66,11 +172,15 @@ namespace {
 @property(nonatomic, strong) NSMenuItem* startItem;
 @property(nonatomic, strong) NSMenuItem* stopItem;
 @property(nonatomic, strong) NSMenuItem* restartItem;
+@property(nonatomic, strong) NSMenuItem* toolkitStatusItem;
+@property(nonatomic, strong) NSMenuItem* toolkitStatusSeparator;
+@property(nonatomic, copy) NSDictionary<NSString*, NSMenuItem*>* toolkitItems;
 @property(nonatomic, copy) NSArray<NSTextField*>* metricValues;
 @property(nonatomic, copy) NSString* brewPath;
 @property(nonatomic, copy) NSString* formula;
 @property(nonatomic, copy) NSString* serviceTarget;
 @property(nonatomic, copy) NSString* configPath;
+@property(nonatomic, copy) NSString* controlSocketPath;
 @property(nonatomic, copy) NSString* portalUrl;
 @property(nonatomic, strong) NSTimer* statusTimer;
 @property(nonatomic, strong) NSURLSession* statusSession;
@@ -78,6 +188,7 @@ namespace {
 @property(nonatomic) BOOL operationInFlight;
 @property(nonatomic) BOOL statusCheckInFlight;
 @property(nonatomic) BOOL runtimeStatusInFlight;
+@property(nonatomic) BOOL toolControlInFlight;
 @end
 
 @implementation BinjadMenuBarDelegate
@@ -91,9 +202,11 @@ namespace {
 	_brewPath = [ArgumentValue(arguments, @"--brew-path") copy];
 	_formula = [ArgumentValue(arguments, @"--formula") copy];
 	_configPath = [ArgumentValue(arguments, @"--config-path") copy];
+	_controlSocketPath = [ArgumentValue(arguments, @"--control-socket") copy];
 	_portalUrl = [ArgumentValue(arguments, @"--portal-url") copy];
 	NSString* label = ArgumentValue(arguments, @"--service-label");
-	if (!_brewPath.length || !_formula.length || !_configPath.length || !_portalUrl.length || !label.length)
+	if (!_brewPath.length || !_formula.length || !_configPath.length || !_controlSocketPath.length
+		|| !_portalUrl.length || !label.length)
 		return nil;
 	_serviceTarget = [[NSString stringWithFormat:@"gui/%u/%@", getuid(), label] copy];
 	_serviceLoaded = YES;
@@ -158,6 +271,32 @@ namespace {
 	statusWidget.view = [self statusWidgetView];
 	[menu addItem:statusWidget];
 	[menu addItem:[NSMenuItem separatorItem]];
+
+	NSMenuItem* toolkits = [menu addItemWithTitle:@"Toolkits" action:nil keyEquivalent:@""];
+	NSMenu* toolkitsMenu = [[NSMenu alloc] initWithTitle:@"Toolkits"];
+	toolkitsMenu.delegate = self;
+	NSMenuItem* core = [toolkitsMenu addItemWithTitle:@"Core Workflow" action:nil keyEquivalent:@""];
+	core.state = NSControlStateValueOn;
+	core.enabled = NO;
+	[toolkitsMenu addItem:[NSMenuItem separatorItem]];
+	NSMutableDictionary<NSString*, NSMenuItem*>* toolkitItems = [NSMutableDictionary dictionary];
+	for (NSArray<NSString*>* definition in ToolkitDefinitions())
+	{
+		NSMenuItem* item =
+			[toolkitsMenu addItemWithTitle:definition[1] action:@selector(toggleToolkit:) keyEquivalent:@""];
+		item.target = self;
+		item.representedObject = definition[0];
+		item.enabled = NO;
+		toolkitItems[definition[0]] = item;
+	}
+	self.toolkitStatusSeparator = [NSMenuItem separatorItem];
+	[toolkitsMenu addItem:self.toolkitStatusSeparator];
+	self.toolkitStatusItem = [toolkitsMenu addItemWithTitle:@"Toolkits unavailable" action:nil keyEquivalent:@""];
+	self.toolkitStatusItem.enabled = NO;
+	self.toolkitItems = toolkitItems;
+	toolkits.submenu = toolkitsMenu;
+	[menu addItem:[NSMenuItem separatorItem]];
+
 	self.startItem = [menu addItemWithTitle:@"Start Daemon" action:@selector(startDaemon:) keyEquivalent:@""];
 	self.stopItem = [menu addItemWithTitle:@"Stop Daemon" action:@selector(stopDaemon:) keyEquivalent:@""];
 	self.restartItem =
@@ -184,6 +323,7 @@ namespace {
 	[self updateControlState];
 	[self refreshServiceState];
 	[self refreshRuntimeStatus];
+	[self refreshToolkits];
 	__weak BinjadMenuBarDelegate* weakSelf = self;
 	self.statusTimer = [NSTimer scheduledTimerWithTimeInterval:3.0
 		repeats:YES
@@ -199,6 +339,7 @@ namespace {
 	(void)menu;
 	[self refreshServiceState];
 	[self refreshRuntimeStatus];
+	[self refreshToolkits];
 }
 
 - (void)updateControlState
@@ -206,6 +347,80 @@ namespace {
 	self.startItem.enabled = !self.operationInFlight && !self.serviceLoaded;
 	self.stopItem.enabled = !self.operationInFlight && self.serviceLoaded;
 	self.restartItem.enabled = !self.operationInFlight && self.serviceLoaded;
+}
+
+- (void)setToolkitControlsAvailable:(BOOL)available
+{
+	for (NSMenuItem* item in self.toolkitItems.allValues)
+		item.enabled = available && !self.toolControlInFlight;
+	if (!available)
+	{
+		if (self.toolkitStatusItem.hidden)
+			self.toolkitStatusItem.title = @"Toolkits unavailable";
+		self.toolkitStatusSeparator.hidden = NO;
+		self.toolkitStatusItem.hidden = NO;
+	}
+}
+
+- (void)performToolControlRequest:(NSDictionary*)request
+{
+	if (self.toolControlInFlight)
+		return;
+	self.toolControlInFlight = YES;
+	self.toolkitStatusItem.title = @"Updating toolkits...";
+	self.toolkitStatusItem.hidden = NO;
+	self.toolkitStatusSeparator.hidden = NO;
+	[self setToolkitControlsAvailable:NO];
+	NSString* socketPath = self.controlSocketPath;
+	__weak BinjadMenuBarDelegate* weakSelf = self;
+	dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+		NSDictionary* response = ToolControlRequest(socketPath, request);
+		dispatch_async(dispatch_get_main_queue(), ^{
+			BinjadMenuBarDelegate* strongSelf = weakSelf;
+			if (!strongSelf)
+				return;
+			strongSelf.toolControlInFlight = NO;
+			NSDictionary* packs = [response[@"packs"] isKindOfClass:[NSDictionary class]] ? response[@"packs"] : nil;
+			if (![response[@"ok"] boolValue] || !packs)
+			{
+				strongSelf.toolkitStatusItem.title = @"Toolkit update failed";
+				strongSelf.toolkitStatusItem.hidden = NO;
+				strongSelf.toolkitStatusSeparator.hidden = NO;
+				[strongSelf setToolkitControlsAvailable:NO];
+				return;
+			}
+			for (NSString* key in strongSelf.toolkitItems)
+			{
+				NSNumber* enabled = [packs[key] isKindOfClass:[NSNumber class]] ? packs[key] : nil;
+				strongSelf.toolkitItems[key].state = enabled.boolValue ? NSControlStateValueOn : NSControlStateValueOff;
+			}
+			strongSelf.toolkitStatusItem.hidden = YES;
+			strongSelf.toolkitStatusSeparator.hidden = YES;
+			[strongSelf setToolkitControlsAvailable:strongSelf.serviceLoaded];
+		});
+	});
+}
+
+- (void)refreshToolkits
+{
+	if (!self.serviceLoaded)
+	{
+		self.toolkitStatusItem.title = @"Toolkits unavailable";
+		self.toolkitStatusItem.hidden = NO;
+		self.toolkitStatusSeparator.hidden = NO;
+		[self setToolkitControlsAvailable:NO];
+		return;
+	}
+	[self performToolControlRequest:@{@"operation": @"list"}];
+}
+
+- (void)toggleToolkit:(NSMenuItem*)item
+{
+	NSString* key = [item.representedObject isKindOfClass:[NSString class]] ? item.representedObject : nil;
+	if (!key.length)
+		return;
+	const BOOL enabled = item.state != NSControlStateValueOn;
+	[self performToolControlRequest:@{@"operation": @"set", @"pack": key, @"enabled": @(enabled)}];
 }
 
 - (NSDictionary*)loadedConfiguration
@@ -309,7 +524,13 @@ namespace {
 			strongSelf.statusCheckInFlight = NO;
 			strongSelf.serviceLoaded = completedTask.terminationStatus == 0;
 			if (!strongSelf.serviceLoaded)
+			{
 				[strongSelf clearRuntimeStatus];
+				strongSelf.toolkitStatusItem.title = @"Toolkits unavailable";
+				strongSelf.toolkitStatusItem.hidden = NO;
+				strongSelf.toolkitStatusSeparator.hidden = NO;
+				[strongSelf setToolkitControlsAvailable:NO];
+			}
 			else
 				[strongSelf refreshRuntimeStatus];
 			[strongSelf updateControlState];
