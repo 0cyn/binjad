@@ -5,6 +5,7 @@
 #include "binjad/mcp/Protocol.hpp"
 #include "binjad/portal/Service.hpp"
 
+#include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <mutex>
@@ -33,6 +34,7 @@ namespace binjad::portal {
 		std::size_t allocatedWorkers = 0;
 		std::size_t activeAnalyses = 0;
 		std::size_t queuedAnalyses = 0;
+		std::uint64_t memoryBytes = 0;
 	};
 
 	struct ToolPackUpdate

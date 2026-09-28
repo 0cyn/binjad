@@ -1,4 +1,5 @@
 #include "binjad/platform/Paths.hpp"
+#include "binjad/platform/posix/PrivateFiles.hpp"
 
 #include <cerrno>
 #include <array>
@@ -8,10 +9,14 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <vector>
 
 #if defined(__APPLE__)
 	#include <sys/acl.h>
+	#include <sys/stdio.h>
 #elif defined(__linux__)
+	#include <linux/fs.h>
+	#include <sys/syscall.h>
 	#include <sys/xattr.h>
 #endif
 
@@ -85,17 +90,8 @@ namespace binjad::platform {
 			return {};
 		}
 
-		std::string ValidatePrivateMetadata(int descriptor, const std::filesystem::path& path)
+		std::string ValidateAcl(int descriptor, const std::filesystem::path& path, bool directory)
 		{
-			struct stat metadata {};
-			if (::fstat(descriptor, &metadata) != 0)
-				return ErrnoMessage("cannot inspect private file", path);
-			if (!S_ISREG(metadata.st_mode))
-				return "private file is not a regular file: '" + path.string() + "'";
-			if (metadata.st_uid != ::geteuid())
-				return "private file is not owned by the current user: '" + path.string() + "'";
-			if ((metadata.st_mode & 0077) != 0)
-				return "private file permits group or other access: '" + path.string() + "'";
 #if defined(__APPLE__)
 			acl_t acl = ::acl_get_fd_np(descriptor, ACL_TYPE_EXTENDED);
 			if (!acl)
@@ -110,14 +106,98 @@ namespace binjad::platform {
 			if (extended < 0)
 				return ErrnoMessage("cannot inspect private file ACL", path);
 			if (extended != 0)
-				return "private file has an extended ACL: '" + path.string() + "'";
+				return std::string(directory ? "private directory" : "private file") + " has an extended ACL: '"
+					+ path.string() + "'";
 #elif defined(__linux__)
 			if (::fgetxattr(descriptor, "system.posix_acl_access", nullptr, 0) >= 0)
-				return "private file has an extended ACL: '" + path.string() + "'";
+				return std::string(directory ? "private directory" : "private file") + " has an extended ACL: '"
+					+ path.string() + "'";
 			if (errno != ENODATA && errno != ENOTSUP)
-				return ErrnoMessage("cannot inspect private file ACL", path);
+				return ErrnoMessage(
+					directory ? "cannot inspect private directory ACL" : "cannot inspect private file ACL", path);
+			if (directory)
+			{
+				if (::fgetxattr(descriptor, "system.posix_acl_default", nullptr, 0) >= 0)
+					return "private directory has a default ACL: '" + path.string() + "'";
+				if (errno != ENODATA && errno != ENOTSUP)
+					return ErrnoMessage("cannot inspect private directory default ACL", path);
+			}
 #endif
 			return {};
+		}
+
+		std::string RemoveAcl(int descriptor, const std::filesystem::path& path)
+		{
+#if defined(__APPLE__)
+			acl_t acl = ::acl_init(0);
+			if (!acl)
+				return ErrnoMessage("cannot allocate an empty private file ACL", path);
+			const int result = ::acl_set_fd_np(descriptor, acl, ACL_TYPE_EXTENDED);
+			::acl_free(acl);
+			if (result != 0)
+				return ErrnoMessage("cannot clear private file ACL", path);
+#elif defined(__linux__)
+			if (::fremovexattr(descriptor, "system.posix_acl_access") != 0 && errno != ENODATA && errno != ENOTSUP)
+				return ErrnoMessage("cannot clear private file ACL", path);
+#endif
+			return {};
+		}
+
+		std::string ValidateAncestorAcl(int descriptor, const std::filesystem::path& path)
+		{
+#if defined(__APPLE__)
+			acl_t acl = ::acl_get_fd_np(descriptor, ACL_TYPE_EXTENDED);
+			if (!acl)
+			{
+				if (errno == ENOENT)
+					return {};
+				return ErrnoMessage("cannot inspect private path ancestor ACL", path);
+			}
+			acl_entry_t entry = nullptr;
+			int status = ::acl_get_entry(acl, ACL_FIRST_ENTRY, &entry);
+			while (status == 1)
+			{
+				acl_tag_t tag {};
+				if (::acl_get_tag_type(entry, &tag) != 0)
+				{
+					::acl_free(acl);
+					return ErrnoMessage("cannot inspect private path ancestor ACL entry", path);
+				}
+				if (tag == ACL_EXTENDED_ALLOW)
+				{
+					::acl_free(acl);
+					return "private path ancestor has an allow ACL: '" + path.string() + "'";
+				}
+				status = ::acl_get_entry(acl, ACL_NEXT_ENTRY, &entry);
+			}
+			::acl_free(acl);
+			if (status < 0)
+				return ErrnoMessage("cannot inspect private path ancestor ACL", path);
+#elif defined(__linux__)
+			if (::fgetxattr(descriptor, "system.posix_acl_access", nullptr, 0) >= 0)
+				return "private path ancestor has an access ACL: '" + path.string() + "'";
+			if (errno != ENODATA && errno != ENOTSUP)
+				return ErrnoMessage("cannot inspect private path ancestor ACL", path);
+			if (::fgetxattr(descriptor, "system.posix_acl_default", nullptr, 0) >= 0)
+				return "private path ancestor has a default ACL: '" + path.string() + "'";
+			if (errno != ENODATA && errno != ENOTSUP)
+				return ErrnoMessage("cannot inspect private path ancestor default ACL", path);
+#endif
+			return {};
+		}
+
+		std::string ValidateAncestorDirectory(int descriptor, const std::filesystem::path& path)
+		{
+			struct stat metadata {};
+			if (::fstat(descriptor, &metadata) != 0)
+				return ErrnoMessage("cannot inspect private path ancestor", path);
+			if (!S_ISDIR(metadata.st_mode))
+				return "private path ancestor is not a directory: '" + path.string() + "'";
+			if (metadata.st_uid != 0 && metadata.st_uid != ::geteuid())
+				return "private path ancestor has an untrusted owner: '" + path.string() + "'";
+			if ((metadata.st_mode & 0022) != 0 && !(metadata.st_uid == 0 && (metadata.st_mode & S_ISVTX) != 0))
+				return "private path ancestor permits untrusted writes: '" + path.string() + "'";
+			return ValidateAncestorAcl(descriptor, path);
 		}
 
 		std::filesystem::path TemporaryPath(const std::filesystem::path& path)
@@ -126,7 +206,124 @@ namespace binjad::platform {
 			return path.parent_path()
 				/ (path.filename().string() + ".tmp." + std::to_string(::getpid()) + '.' + std::to_string(++sequence));
 		}
+
+		int RenameNoReplace(int directory, const char* source, const char* destination)
+		{
+#if defined(__APPLE__)
+			return ::renameatx_np(directory, source, directory, destination, RENAME_EXCL);
+#elif defined(__linux__)
+			return static_cast<int>(
+				::syscall(SYS_renameat2, directory, source, directory, destination, RENAME_NOREPLACE));
+#else
+			(void)directory;
+			(void)source;
+			(void)destination;
+			errno = ENOTSUP;
+			return -1;
+#endif
+		}
 	}  // namespace
+
+	namespace posix {
+		PrivateDirectoryOpenResult OpenPrivateDirectory(const std::filesystem::path& path)
+		{
+			std::filesystem::path normalized;
+			try
+			{
+				normalized = std::filesystem::absolute(path).lexically_normal();
+			}
+			catch (const std::filesystem::filesystem_error& error)
+			{
+				return {-1, {}, std::string("cannot resolve private directory: ") + error.what()};
+			}
+			if (normalized.empty() || !normalized.is_absolute())
+				return {-1, {}, "private directory must resolve to an absolute path"};
+
+			std::vector<std::string> components;
+			for (const auto& component : normalized.relative_path())
+			{
+				if (component != ".")
+					components.push_back(component.string());
+			}
+			if (components.empty())
+				return {-1, {}, "private directory must not be the filesystem root"};
+
+			int current = ::open("/", O_RDONLY | O_CLOEXEC | O_DIRECTORY | O_NOFOLLOW);
+			if (current < 0)
+				return {-1, {}, ErrnoMessage("cannot open private path root", "/")};
+			if (const auto error = ValidateAncestorDirectory(current, "/"); !error.empty())
+			{
+				::close(current);
+				return {-1, {}, error};
+			}
+
+			std::filesystem::path currentPath = "/";
+			for (std::size_t index = 0; index < components.size(); ++index)
+			{
+				const int next =
+					::openat(current, components[index].c_str(), O_RDONLY | O_CLOEXEC | O_DIRECTORY | O_NOFOLLOW);
+				currentPath /= components[index];
+				if (next < 0)
+				{
+					const auto error = ErrnoMessage("cannot open private directory", currentPath);
+					::close(current);
+					return {-1, {}, error};
+				}
+				::close(current);
+				current = next;
+				const auto error = index + 1 == components.size() ?
+					ValidatePrivateDirectoryDescriptor(current, currentPath) :
+					ValidateAncestorDirectory(current, currentPath);
+				if (!error.empty())
+				{
+					::close(current);
+					return {-1, {}, error};
+				}
+			}
+			return {current, std::move(normalized), {}};
+		}
+
+		std::string ValidatePrivateDirectoryDescriptor(int descriptor, const std::filesystem::path& path)
+		{
+			struct stat metadata {};
+			if (::fstat(descriptor, &metadata) != 0)
+				return ErrnoMessage("cannot inspect private directory", path);
+			if (!S_ISDIR(metadata.st_mode))
+				return "private directory is not a directory: '" + path.string() + "'";
+			if (metadata.st_uid != ::geteuid())
+				return "private directory is not owned by the current user: '" + path.string() + "'";
+			if ((metadata.st_mode & 0022) != 0)
+				return "private directory permits group or other writes: '" + path.string() + "'";
+			return ValidateAcl(descriptor, path, true);
+		}
+
+		std::string ValidatePrivateFileDescriptor(int descriptor, const std::filesystem::path& path)
+		{
+			struct stat metadata {};
+			if (::fstat(descriptor, &metadata) != 0)
+				return ErrnoMessage("cannot inspect private file", path);
+			if (!S_ISREG(metadata.st_mode))
+				return "private file is not a regular file: '" + path.string() + "'";
+			if (metadata.st_uid != ::geteuid())
+				return "private file is not owned by the current user: '" + path.string() + "'";
+			if (metadata.st_nlink != 1)
+				return "private file has multiple hard links: '" + path.string() + "'";
+			if ((metadata.st_mode & 0077) != 0)
+				return "private file permits group or other access: '" + path.string() + "'";
+			return ValidateAcl(descriptor, path, false);
+		}
+
+		std::string PreparePrivateFileDescriptor(int descriptor, const std::filesystem::path& path)
+		{
+			if (::fchmod(descriptor, 0600) != 0)
+				return ErrnoMessage("cannot set private file permissions", path);
+			if (const auto error = RemoveAcl(descriptor, path); !error.empty())
+				return error;
+			if (::fchmod(descriptor, 0600) != 0)
+				return ErrnoMessage("cannot reset private file permissions", path);
+			return ValidatePrivateFileDescriptor(descriptor, path);
+		}
+	}  // namespace posix
 
 	PrivateFileCreationResult CreatePrivateFileIfAbsent(const std::filesystem::path& path, std::string_view contents)
 	{
@@ -134,37 +331,89 @@ namespace binjad::platform {
 			return {false, "private file path must name a file"};
 		if (const auto error = CreatePrivateDirectories(path.parent_path()); !error.empty())
 			return {false, error};
+		auto directory = posix::OpenPrivateDirectory(path.parent_path());
+		if (!directory.error.empty())
+			return {false, directory.error};
+		const auto filename = path.filename().string();
+		const int existing = ::openat(directory.descriptor, filename.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+		if (existing >= 0)
+		{
+			const auto error = posix::ValidatePrivateFileDescriptor(existing, path);
+			::close(existing);
+			::close(directory.descriptor);
+			return {false, error};
+		}
+		if (errno != ENOENT)
+		{
+			const auto error = ErrnoMessage("cannot inspect private file", path);
+			::close(directory.descriptor);
+			return {false, error};
+		}
 
-		const int descriptor = ::open(path.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0600);
+		const auto temporary = TemporaryPath(path);
+		const auto temporaryName = temporary.filename().string();
+		const int descriptor = ::openat(directory.descriptor, temporaryName.c_str(),
+			O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, static_cast<mode_t>(0600));
 		if (descriptor < 0)
 		{
-			if (errno == EEXIST)
-				return {};
-			return {false, ErrnoMessage("cannot create private file", path)};
+			const auto error = ErrnoMessage("cannot create private temporary file", temporary);
+			::close(directory.descriptor);
+			return {false, error};
+		}
+		if (const auto error = posix::PreparePrivateFileDescriptor(descriptor, temporary); !error.empty())
+		{
+			::close(descriptor);
+			::unlinkat(directory.descriptor, temporaryName.c_str(), 0);
+			::close(directory.descriptor);
+			return {false, error};
 		}
 
 		if (!WriteAll(descriptor, contents))
 		{
-			const auto error = ErrnoMessage("cannot write private file", path);
+			const auto error = ErrnoMessage("cannot write private temporary file", temporary);
 			::close(descriptor);
-			::unlink(path.c_str());
+			::unlinkat(directory.descriptor, temporaryName.c_str(), 0);
+			::close(directory.descriptor);
+			return {false, error};
+		}
+		if (const auto error = posix::ValidatePrivateFileDescriptor(descriptor, temporary); !error.empty())
+		{
+			::close(descriptor);
+			::unlinkat(directory.descriptor, temporaryName.c_str(), 0);
+			::close(directory.descriptor);
 			return {false, error};
 		}
 		if (::fsync(descriptor) != 0)
 		{
-			const auto error = ErrnoMessage("cannot flush private file", path);
+			const auto error = ErrnoMessage("cannot flush private temporary file", temporary);
 			::close(descriptor);
-			::unlink(path.c_str());
+			::unlinkat(directory.descriptor, temporaryName.c_str(), 0);
+			::close(directory.descriptor);
 			return {false, error};
 		}
 		if (::close(descriptor) != 0)
 		{
-			const auto error = ErrnoMessage("cannot close private file", path);
-			::unlink(path.c_str());
+			const auto error = ErrnoMessage("cannot close private temporary file", temporary);
+			::unlinkat(directory.descriptor, temporaryName.c_str(), 0);
+			::close(directory.descriptor);
 			return {false, error};
 		}
-
-		return {true, FlushDirectory(path)};
+		if (RenameNoReplace(directory.descriptor, temporaryName.c_str(), filename.c_str()) != 0)
+		{
+			const auto error = errno == EEXIST ? std::string {} : ErrnoMessage("cannot install private file", path);
+			::unlinkat(directory.descriptor, temporaryName.c_str(), 0);
+			::close(directory.descriptor);
+			return {false, error};
+		}
+		if (::fsync(directory.descriptor) != 0)
+		{
+			const auto error = ErrnoMessage("cannot flush private file directory", directory.path);
+			::close(directory.descriptor);
+			return {true, error};
+		}
+		if (::close(directory.descriptor) != 0)
+			return {true, ErrnoMessage("cannot close private file directory", directory.path)};
+		return {true, {}};
 	}
 
 	std::string CreatePrivateDirectory(const std::filesystem::path& path)
@@ -176,14 +425,24 @@ namespace binjad::platform {
 
 	PrivateFileReadResult ReadPrivateFile(const std::filesystem::path& path)
 	{
-		const int descriptor = ::open(path.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+		if (path.empty() || path.filename().empty())
+			return {{}, "private file path must name a file"};
+		auto directory = posix::OpenPrivateDirectory(path.parent_path());
+		if (!directory.error.empty())
+			return {{}, directory.error};
+		const auto filename = path.filename().string();
+		const int descriptor = ::openat(directory.descriptor, filename.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
 		if (descriptor < 0)
 		{
+			const auto savedErrno = errno;
+			::close(directory.descriptor);
+			errno = savedErrno;
 			if (errno == ENOENT)
 				return {};
 			return {{}, ErrnoMessage("cannot open private file", path)};
 		}
-		if (const auto error = ValidatePrivateMetadata(descriptor, path); !error.empty())
+		::close(directory.descriptor);
+		if (const auto error = posix::ValidatePrivateFileDescriptor(descriptor, path); !error.empty())
 		{
 			::close(descriptor);
 			return {{}, error};
@@ -214,47 +473,90 @@ namespace binjad::platform {
 
 	PrivateFileReplacementResult ReplacePrivateFile(const std::filesystem::path& path, std::string_view contents)
 	{
+		if (path.empty() || path.filename().empty())
+			return {false, "private file path must name a file"};
+		auto directory = posix::OpenPrivateDirectory(path.parent_path());
+		if (!directory.error.empty())
+			return {false, directory.error};
+
 		std::filesystem::path temporary;
+		std::string temporaryName;
 		int descriptor = -1;
 		for (int attempt = 0; attempt < 100; ++attempt)
 		{
 			temporary = TemporaryPath(path);
-			descriptor = ::open(temporary.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0600);
+			temporaryName = temporary.filename().string();
+			descriptor = ::openat(directory.descriptor, temporaryName.c_str(),
+				O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, static_cast<mode_t>(0600));
 			if (descriptor >= 0)
 				break;
 			if (errno != EEXIST)
-				return {false, ErrnoMessage("cannot create private temporary file", temporary)};
+			{
+				const auto error = ErrnoMessage("cannot create private temporary file", temporary);
+				::close(directory.descriptor);
+				return {false, error};
+			}
 		}
 		if (descriptor < 0)
+		{
+			::close(directory.descriptor);
 			return {false, "cannot allocate a unique private temporary file"};
+		}
+		if (const auto error = posix::PreparePrivateFileDescriptor(descriptor, temporary); !error.empty())
+		{
+			::close(descriptor);
+			::unlinkat(directory.descriptor, temporaryName.c_str(), 0);
+			::close(directory.descriptor);
+			return {false, error};
+		}
 
 		if (!WriteAll(descriptor, contents))
 		{
 			const auto error = ErrnoMessage("cannot write private temporary file", temporary);
 			::close(descriptor);
-			::unlink(temporary.c_str());
+			::unlinkat(directory.descriptor, temporaryName.c_str(), 0);
+			::close(directory.descriptor);
+			return {false, error};
+		}
+		if (const auto error = posix::ValidatePrivateFileDescriptor(descriptor, temporary); !error.empty())
+		{
+			::close(descriptor);
+			::unlinkat(directory.descriptor, temporaryName.c_str(), 0);
+			::close(directory.descriptor);
 			return {false, error};
 		}
 		if (::fsync(descriptor) != 0)
 		{
 			const auto error = ErrnoMessage("cannot flush private temporary file", temporary);
 			::close(descriptor);
-			::unlink(temporary.c_str());
+			::unlinkat(directory.descriptor, temporaryName.c_str(), 0);
+			::close(directory.descriptor);
 			return {false, error};
 		}
 		if (::close(descriptor) != 0)
 		{
 			const auto error = ErrnoMessage("cannot close private temporary file", temporary);
-			::unlink(temporary.c_str());
+			::unlinkat(directory.descriptor, temporaryName.c_str(), 0);
+			::close(directory.descriptor);
 			return {false, error};
 		}
-		if (::rename(temporary.c_str(), path.c_str()) != 0)
+		const auto filename = path.filename().string();
+		if (::renameat(directory.descriptor, temporaryName.c_str(), directory.descriptor, filename.c_str()) != 0)
 		{
 			const auto error = ErrnoMessage("cannot install private file", path);
-			::unlink(temporary.c_str());
+			::unlinkat(directory.descriptor, temporaryName.c_str(), 0);
+			::close(directory.descriptor);
 			return {false, error};
 		}
-		return {true, FlushDirectory(path)};
+		if (::fsync(directory.descriptor) != 0)
+		{
+			const auto error = ErrnoMessage("cannot flush private file directory", directory.path);
+			::close(directory.descriptor);
+			return {true, error};
+		}
+		if (::close(directory.descriptor) != 0)
+			return {true, ErrnoMessage("cannot close private file directory", directory.path)};
+		return {true, {}};
 	}
 
 	PrivateFileCopyResult CopyRegularFilePrivate(
@@ -284,6 +586,13 @@ namespace binjad::platform {
 			::close(input);
 			return {{}, error};
 		}
+		if (const auto error = posix::PreparePrivateFileDescriptor(output, destination); !error.empty())
+		{
+			::close(input);
+			::close(output);
+			::unlink(destination.c_str());
+			return {{}, error};
+		}
 
 		std::uint64_t total = 0;
 		std::array<char, 65536> buffer {};
@@ -308,6 +617,13 @@ namespace binjad::platform {
 			if (errno == EINTR)
 				continue;
 			const auto error = ErrnoMessage("cannot read source file", source);
+			::close(input);
+			::close(output);
+			::unlink(destination.c_str());
+			return {{}, error};
+		}
+		if (const auto error = posix::ValidatePrivateFileDescriptor(output, destination); !error.empty())
+		{
 			::close(input);
 			::close(output);
 			::unlink(destination.c_str());

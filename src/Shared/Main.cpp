@@ -12,6 +12,8 @@
 #include "binjad/platform/ToolControl.hpp"
 #if defined(__APPLE__)
 	#include "binjad/platform/macos/MachBootstrap.hpp"
+#elif defined(__linux__)
+	#include "binjad/platform/linux/UnixChannel.hpp"
 #endif
 #include "binjad/platform/Paths.hpp"
 #include "binjad/portal/Api.hpp"
@@ -36,6 +38,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdint>
 #include <cstdlib>
 #include <exception>
 #include <filesystem>
@@ -133,13 +136,38 @@ namespace {
 		std::mutex childLaunchMutex;
 		std::shared_ptr<binjad::overseer::FileChildCoordinator> coordinator;
 		std::shared_ptr<binjad::overseer::ProjectChildCoordinator> projectCoordinator;
+
+		std::uint64_t MemoryBytes() { return supervisor->MemoryUsage().TotalMemoryBytes(); }
+	};
+#elif defined(__linux__)
+	struct FileRuntime
+	{
+		FileRuntime(const binjad::Config& config, const std::filesystem::path& executable,
+			binjad::session::OpenItemRegistry& openItems, binjad::project::LocalProjectRegistry& projects,
+			binjad::project::KnownProjectStore* knownProjects) :
+			runtime(binjad::CreateNativeChildProcessRuntime()),
+			coordinator(std::make_shared<binjad::overseer::FileChildCoordinator>(config, executable,
+				runtime->Supervisor(), runtime->Acceptor(), openItems,
+				binjad::overseer::FileChildCoordinator::EventCallback {}, &childLaunchMutex))
+		{
+			projectCoordinator = std::make_shared<binjad::overseer::ProjectChildCoordinator>(config, executable,
+				runtime->Supervisor(), runtime->Acceptor(), projects, &childLaunchMutex, knownProjects);
+		}
+		~FileRuntime() { runtime->TerminateChildren(); }
+
+		std::unique_ptr<binjad::ChildProcessRuntime> runtime;
+		std::mutex childLaunchMutex;
+		std::shared_ptr<binjad::overseer::FileChildCoordinator> coordinator;
+		std::shared_ptr<binjad::overseer::ProjectChildCoordinator> projectCoordinator;
+
+		std::uint64_t MemoryBytes() { return runtime->Supervisor().MemoryUsage().TotalMemoryBytes(); }
 	};
 #endif
 
 	struct AuthenticationRuntime
 	{
 		AuthenticationRuntime(const binjad::Config& config, const std::filesystem::path& configPath) :
-			credentials(binjad::security::CreateNativeCredentialStore(configPath)),
+			credentials(binjad::security::CreateCredentialStore(configPath)),
 			tokens(*credentials, config.storage.tokensPath), accounts(*credentials, config.storage.accountsPath),
 			knownProjects(std::make_unique<binjad::project::KnownProjectStore>(*credentials,
 				std::filesystem::absolute(configPath).lexically_normal().parent_path() / "projects.json")),
@@ -239,11 +267,19 @@ namespace {
 			if (const auto error = authenticationRuntime->Load(); !error.empty())
 				throw std::runtime_error(error);
 			auto sessionRuntime = std::make_shared<SessionRuntime>(*result.config);
-#if defined(__APPLE__)
+#if defined(__APPLE__) || defined(__linux__)
+#if defined(__linux__)
+			const auto executable = std::filesystem::canonical("/proc/self/exe");
+#else
 			const auto executable = std::filesystem::absolute(argc > 0 ? argv[0] : "binjad").lexically_normal();
+#endif
 			auto fileRuntime = std::make_shared<FileRuntime>(*result.config, executable, *sessionRuntime->openItems,
 				*sessionRuntime->projects, authenticationRuntime->knownProjects.get());
-			sessionRuntime->sessions->SetClosedCallback([fileRuntime, sessionRuntime](const auto& session) {
+			std::weak_ptr<SessionRuntime> weakSessionRuntime = sessionRuntime;
+			sessionRuntime->sessions->SetClosedCallback([fileRuntime, weakSessionRuntime](const auto& session) {
+				const auto sessionRuntime = weakSessionRuntime.lock();
+				if (!sessionRuntime)
+					return;
 				sessionRuntime->subscriptions->RemoveSession(session.reference);
 				sessionRuntime->uploads->RemoveByAnalysisSession(session.reference);
 				fileRuntime->coordinator->CloseAnalysisSession(session.ownerTokenId, session.reference);
@@ -314,12 +350,12 @@ namespace {
 					result.push_back({project.reference, project.name, project.description});
 				return result;
 			});
-			authenticationRuntime->portalApi.SetRuntimeStatusProvider([sessionRuntime] {
+			authenticationRuntime->portalApi.SetRuntimeStatusProvider([sessionRuntime, fileRuntime] {
 				const auto compute = sessionRuntime->scheduler->Status();
 				return binjad::portal::RuntimeStatus {sessionRuntime->sessions->Size(),
 					sessionRuntime->openItems->Size(), sessionRuntime->jobs->Size(), sessionRuntime->projects->Size(),
 					compute.logicalCpuCount, compute.workerBudget, compute.allocatedWorkers, compute.activeAnalyses,
-					compute.queuedAnalyses};
+					compute.queuedAnalyses, fileRuntime->MemoryBytes()};
 			});
 			authenticationRuntime->portalApi.SetMcpDocumentationProviders(
 				[dispatcher = sessionRuntime->dispatcher](auto version, auto role, std::string_view client) {
@@ -351,7 +387,7 @@ namespace {
 				});
 			authenticationRuntime->portalService.SetTokenRevokedCallback(
 				[sessionRuntime
-#if defined(__APPLE__)
+#if defined(__APPLE__) || defined(__linux__)
 					,
 					fileRuntime
 #endif
@@ -368,13 +404,13 @@ namespace {
 			binjad::http::RegisterDrogonRoutes(drogon::app(), *result.config,
 				authenticationRuntime->tokens.Authenticator(),
 				[sessionRuntime, authenticationRuntime
-#if defined(__APPLE__)
+#if defined(__APPLE__) || defined(__linux__)
 					,
 					fileRuntime
 #endif
 			](binjad::http::AdmittedMcpRequest request, binjad::http::DrogonResponseCallback callback) {
 					(void)authenticationRuntime;
-#if defined(__APPLE__)
+#if defined(__APPLE__) || defined(__linux__)
 					(void)fileRuntime;
 #endif
 					sessionRuntime->dispatcher->Handle(std::move(request), std::move(callback));
@@ -398,6 +434,9 @@ namespace {
 					executable,
 					configPath = options->configPath,
 					config = *result.config
+#elif defined(__linux__)
+					,
+					fileRuntime
 #endif
 			] {
 					binjad::Log(binjad::LogLevel::Notice, "binjad overseer is ready");
@@ -407,7 +446,7 @@ namespace {
 #endif
 					drogon::app().getLoop()->runEvery(60.0,
 						[sessionRuntime
-#if defined(__APPLE__)
+#if defined(__APPLE__) || defined(__linux__)
 							,
 							fileRuntime
 #endif
@@ -464,6 +503,16 @@ int main(int argc, char** argv)
 			ReportError("file child startup failed: " + std::string(exception.what()));
 			return EXIT_FAILURE;
 		}
+#elif defined(__linux__)
+		try
+		{
+			return binjad::RunFileChild(binjad::platform::linux::ConnectToOverseer(role));
+		}
+		catch (const std::exception& exception)
+		{
+			ReportError("file child startup failed: " + std::string(exception.what()));
+			return EXIT_FAILURE;
+		}
 #else
 		ReportError("file child IPC is not implemented for this platform");
 		return EXIT_FAILURE;
@@ -476,6 +525,16 @@ int main(int argc, char** argv)
 		{
 			auto channel = binjad::platform::macos::ConnectToOverseer(role);
 			return binjad::RunProjectChild(std::make_unique<binjad::platform::macos::MachChannel>(std::move(channel)));
+		}
+		catch (const std::exception& exception)
+		{
+			ReportError("project child startup failed: " + std::string(exception.what()));
+			return EXIT_FAILURE;
+		}
+#elif defined(__linux__)
+		try
+		{
+			return binjad::RunProjectChild(binjad::platform::linux::ConnectToOverseer(role));
 		}
 		catch (const std::exception& exception)
 		{

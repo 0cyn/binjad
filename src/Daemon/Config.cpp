@@ -5,8 +5,6 @@
 
 #include <algorithm>
 #include <cctype>
-#include <fstream>
-#include <iterator>
 #include <limits>
 #include <set>
 #include <sstream>
@@ -578,13 +576,12 @@ namespace binjad {
 
 	ConfigResult LoadConfig(const std::filesystem::path& configPath)
 	{
-		std::ifstream stream(configPath, std::ios::binary);
-		if (!stream)
-			return {std::nullopt, {{"$", "cannot open configuration file: " + configPath.string()}}};
-		const std::string contents {std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>()};
-		if (stream.bad())
-			return {std::nullopt, {{"$", "cannot read configuration file: " + configPath.string()}}};
-		return ParseConfig(contents, configPath);
+		const auto file = platform::ReadPrivateFile(configPath);
+		if (!file.error.empty())
+			return {std::nullopt, {{"$", file.error}}};
+		if (!file.contents)
+			return {std::nullopt, {{"$", "configuration file does not exist: " + configPath.string()}}};
+		return ParseConfig(*file.contents, configPath);
 	}
 
 	ConfigResult LoadOrCreateConfig(const std::filesystem::path& configPath)

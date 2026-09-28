@@ -55,6 +55,13 @@ class Workflows(unittest.TestCase):
         require(not errors, "cleanup failed: " + "; ".join(errors))
         for key in ("open_items", "jobs", "analysis_sessions", "active_analyses", "queued_analyses", "allocated_workers"):
             require(state[key] == 0, f"scenario leaked {key}: {state}")
+        require(state["memory_bytes"] > 0, f"runtime memory was not reported: {state}")
+        public_status_code, _, public_status, _ = self.service.http.request("GET", "/healthz/status")
+        require(public_status_code == 200, f"public status returned HTTP {public_status_code}: {public_status}")
+        require(isinstance(public_status, dict), f"public status was not an object: {public_status}")
+        require(set(public_status) == {"analysis_sessions", "open_items", "active_analyses", "queued_analyses",
+                                       "memory_bytes"}, f"public status fields changed: {public_status}")
+        require(public_status["memory_bytes"] > 0, f"public memory was not reported: {public_status}")
         self.service.transcript.write(scenario=self.id(), phase="clean")
 
     def project(self):

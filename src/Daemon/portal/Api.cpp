@@ -620,6 +620,8 @@ namespace binjad::portal {
 				writer.Uint64(status.activeAnalyses);
 				writer.Key("queued_analyses");
 				writer.Uint64(status.queuedAnalyses);
+				writer.Key("memory_bytes");
+				writer.Uint64(status.memoryBytes);
 				writer.EndObject();
 				writer.EndObject();
 			}));
@@ -938,6 +940,8 @@ namespace binjad::portal {
 		writer.Uint64(status.activeAnalyses);
 		writer.Key("queued_analyses");
 		writer.Uint64(status.queuedAnalyses);
+		writer.Key("memory_bytes");
+		writer.Uint64(status.memoryBytes);
 		writer.EndObject();
 		return Json(200, {buffer.GetString(), buffer.GetSize()});
 	}

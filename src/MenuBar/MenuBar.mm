@@ -12,10 +12,10 @@
 
 namespace {
 	NSString* const kGitHubUrl = @"https://github.com/0cyn/binjad";
-	constexpr CGFloat kStatusWidgetWidth = 222.0;
+	constexpr CGFloat kStatusWidgetWidth = 300.0;
 	constexpr CGFloat kStatusWidgetHeight = 108.0;
 	constexpr CGFloat kStatusPanelInset = 16.0;
-	constexpr CGFloat kStatusColumnWidth = (kStatusWidgetWidth - (2.0 * kStatusPanelInset)) / 2.0;
+	constexpr CGFloat kStatusColumnWidth = (kStatusWidgetWidth - (2.0 * kStatusPanelInset)) / 3.0;
 
 	NSString* ArgumentValue(NSArray<NSString*>* arguments, NSString* name)
 	{
@@ -231,12 +231,12 @@ namespace {
 		initWithFrame:NSMakeRect(8.0, 2.0, kStatusWidgetWidth - 16.0, kStatusWidgetHeight - 4.0)];
 	[widget addSubview:background];
 
-	NSArray<NSString*>* captions = @[@"Sessions", @"Open Items", @"Active", @"Queued"];
+	NSArray<NSString*>* captions = @[@"Sessions", @"Open Items", @"Memory", @"Active", @"Queued"];
 	NSMutableArray<NSTextField*>* values = [NSMutableArray arrayWithCapacity:captions.count];
 	for (NSUInteger index = 0; index < captions.count; ++index)
 	{
-		const CGFloat x = kStatusPanelInset + static_cast<CGFloat>(index % 2) * kStatusColumnWidth;
-		const CGFloat bottom = index < 2 ? 54.0 : 20.0;
+		const CGFloat x = kStatusPanelInset + static_cast<CGFloat>(index % 3) * kStatusColumnWidth;
+		const CGFloat bottom = index < 3 ? 54.0 : 20.0;
 		NSTextField* value = [self labelWithText:@"-"
 			frame:NSMakeRect(x + 2.0, bottom + 12.0, kStatusColumnWidth - 4.0, 20.0)
 			font:[NSFont monospacedDigitSystemFontOfSize:15.0 weight:NSFontWeightSemibold]
@@ -481,8 +481,8 @@ namespace {
 				if ([decoded isKindOfClass:[NSDictionary class]])
 					status = decoded;
 			}
-			NSArray<NSString*>* keys =
-				@[@"analysis_sessions", @"open_items", @"active_analyses", @"queued_analyses"];
+			NSArray<NSString*>* keys = @[
+				@"analysis_sessions", @"open_items", @"memory_bytes", @"active_analyses", @"queued_analyses"];
 			dispatch_async(dispatch_get_main_queue(), ^{
 				BinjadMenuBarDelegate* strongSelf = weakSelf;
 				if (!strongSelf)
@@ -491,7 +491,10 @@ namespace {
 				for (NSUInteger index = 0; index < keys.count; ++index)
 				{
 					NSNumber* number = [status[keys[index]] isKindOfClass:[NSNumber class]] ? status[keys[index]] : nil;
-					strongSelf.metricValues[index].stringValue = number ? number.stringValue : @"-";
+					strongSelf.metricValues[index].stringValue = index == 2 && number ?
+						[NSByteCountFormatter stringFromByteCount:number.longLongValue
+							countStyle:NSByteCountFormatterCountStyleMemory] :
+						(number ? number.stringValue : @"-");
 				}
 			});
 		}];

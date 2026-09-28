@@ -19,17 +19,31 @@ namespace binjad::security {
 		return Sha256Hex(normalized);
 	}
 
-	std::unique_ptr<CredentialStore> CreateNativeCredentialStore(const std::filesystem::path& configPath)
+	std::filesystem::path FileCredentialStorePath(const std::filesystem::path& configPath)
+	{
+		auto normalized = std::filesystem::absolute(configPath).lexically_normal();
+		normalized += ".credentials";
+		return normalized;
+	}
+
+	std::unique_ptr<CredentialStore> CreateCredentialStore(const std::filesystem::path& configPath)
 	{
 		const auto normalized = std::filesystem::absolute(configPath).lexically_normal();
 		const auto defaultPath = std::filesystem::absolute(platform::DefaultConfigPath()).lexically_normal();
-		return CreatePlatformCredentialStore({CredentialNamespace(configPath), normalized == defaultPath});
+		return CreatePlatformCredentialStore({CredentialNamespace(configPath), normalized == defaultPath, normalized});
 	}
 
 	CredentialVaultParseResult ParseCredentialVault(std::string_view contents)
 	{
 		rapidjson::Document document;
-		document.Parse(contents.data(), contents.size());
+		try
+		{
+			document.Parse<rapidjson::kParseValidateEncodingFlag>(contents.data(), contents.size());
+		}
+		catch (const ParseException& exception)
+		{
+			return {{}, std::string("invalid credential vault JSON at byte ") + std::to_string(exception.Offset())};
+		}
 		if (document.HasParseError() || !document.IsObject())
 			return {{}, "credential vault must be a JSON object"};
 

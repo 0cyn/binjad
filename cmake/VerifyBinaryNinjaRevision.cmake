@@ -21,7 +21,7 @@ function(binjad_read_api_revision api_source_dir output_variable)
     set(${output_variable} "${api_revision}" PARENT_SCOPE)
 endfunction()
 
-function(binjad_verify_installed_api_revision install_root expected_revision)
+function(binjad_verify_installed_api_revision install_root expected_revision allow_mismatch)
     if(APPLE)
         set(revision_file "${install_root}/Contents/Resources/api_REVISION.txt")
     else()
@@ -50,9 +50,16 @@ function(binjad_verify_installed_api_revision install_root expected_revision)
     endif()
 
     if(NOT installed_revision STREQUAL expected_revision)
-        message(FATAL_ERROR
-            "binaryninja-api revision mismatch: submodule is ${expected_revision}, "
-            "but ${revision_file} requires ${installed_revision}")
+        if(allow_mismatch)
+            message(WARNING
+                "Unsupported Binary Ninja API revision mismatch allowed for development: "
+                "submodule is ${expected_revision}, but ${revision_file} requires ${installed_revision}")
+            return()
+        else()
+            message(FATAL_ERROR
+                "binaryninja-api revision mismatch: submodule is ${expected_revision}, "
+                "but ${revision_file} requires ${installed_revision}")
+        endif()
     endif()
 
     message(STATUS "Verified Binary Ninja API revision: ${expected_revision}")

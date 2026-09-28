@@ -13,10 +13,12 @@ extern "C"
 #include <mach/mach.h>
 #include <mach/mach_error.h>
 #include <mach/mach_traps.h>
+#include <libproc.h>
 #include <pthread.h>
 #include <signal.h>
 #include <spawn.h>
 #include <sys/event.h>
+#include <sys/resource.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -51,6 +53,7 @@ namespace binjad {
 			ProcessId Spawn(const std::filesystem::path& executable, ProcessRole role) override;
 			void Terminate(ProcessId processId) override;
 			void SetExitCallback(ExitCallback callback) override;
+			ProcessMemorySnapshot MemoryUsage() override;
 			mach_port_t ExceptionPort() const { return exceptionPort_; }
 
 			kern_return_t HandleException(mach_port_t thread, mach_port_t task, exception_type_t exception,
@@ -59,8 +62,6 @@ namespace binjad {
 		private:
 			void ExceptionLoop(std::stop_token stopToken);
 			void ReaperLoop(std::stop_token stopToken);
-			void PublishExit(pid_t pid, int status);
-
 			mach_port_t exceptionPort_ = MACH_PORT_NULL;
 			bool typedExceptionPort_ = false;
 			struct sigaction previousSigchldAction_ {};
@@ -91,6 +92,14 @@ namespace binjad {
 			if (processId == 0 || processId > static_cast<ProcessId>(std::numeric_limits<pid_t>::max()))
 				throw std::invalid_argument("invalid child process ID");
 			return static_cast<pid_t>(processId);
+		}
+
+		std::optional<ProcessMemoryUsage> ReadMemoryUsage(pid_t pid, ProcessId processId, ProcessRole role)
+		{
+			rusage_info_v4 usage {};
+			if (proc_pid_rusage(pid, RUSAGE_INFO_V4, reinterpret_cast<rusage_info_t*>(&usage)) != 0)
+				return std::nullopt;
+			return ProcessMemoryUsage {processId, role, usage.ri_resident_size, usage.ri_phys_footprint};
 		}
 	}  // namespace
 
@@ -304,6 +313,25 @@ namespace binjad {
 		exitCallback_ = std::move(callback);
 	}
 
+	ProcessMemorySnapshot NativeProcessSupervisor::MemoryUsage()
+	{
+		ProcessMemorySnapshot snapshot;
+		snapshot.metric = ProcessMemoryMetric::PhysicalFootprint;
+		if (auto usage = ReadMemoryUsage(getpid(), 0, ProcessRole::Overseer))
+			snapshot.processes.push_back(*usage);
+
+		// Keep the process registry locked while collecting child metrics. The
+		// reaper uses the same lock through waitpid and removal, which prevents
+		// a sampled child PID from being reused during this snapshot.
+		std::lock_guard lock(mutex_);
+		for (const auto& [pid, child] : children_)
+		{
+			if (auto usage = ReadMemoryUsage(pid, static_cast<ProcessId>(pid), child.role))
+				snapshot.processes.push_back(*usage);
+		}
+		return snapshot;
+	}
+
 	kern_return_t NativeProcessSupervisor::HandleException(mach_port_t thread, mach_port_t task,
 		exception_type_t exception, mach_exception_data_t codes, mach_msg_type_number_t codeCount)
 	{
@@ -366,39 +394,37 @@ namespace binjad {
 				continue;
 
 			const auto pid = static_cast<pid_t>(event.ident);
-			int status = 0;
-			pid_t waited;
-			do
+			ChildExit exit;
+			ExitCallback callback;
+			bool publish = false;
 			{
-				waited = waitpid(pid, &status, 0);
-			} while (waited < 0 && errno == EINTR);
-			if (waited != pid)
-				continue;
-			PublishExit(pid, status);
-		}
-	}
+				std::lock_guard lock(mutex_);
+				const auto child = children_.find(pid);
+				if (child == children_.end())
+					continue;
+				int status = 0;
+				pid_t waited;
+				do
+				{
+					waited = waitpid(pid, &status, 0);
+				} while (waited < 0 && errno == EINTR);
+				if (waited != pid)
+					continue;
 
-	void NativeProcessSupervisor::PublishExit(pid_t pid, int status)
-	{
-		ChildExit exit;
-		ExitCallback callback;
-		{
-			std::lock_guard lock(mutex_);
-			const auto child = children_.find(pid);
-			if (child == children_.end())
-				return;
-			exit.processId = static_cast<ProcessId>(pid);
-			exit.role = child->second.role;
-			exit.crash = std::move(child->second.crash);
-			children_.erase(child);
-			callback = exitCallback_;
+				exit.processId = static_cast<ProcessId>(pid);
+				exit.role = child->second.role;
+				exit.crash = std::move(child->second.crash);
+				if (WIFEXITED(status))
+					exit.exitCode = WEXITSTATUS(status);
+				if (WIFSIGNALED(status))
+					exit.signal = WTERMSIG(status);
+				children_.erase(child);
+				callback = exitCallback_;
+				publish = true;
+			}
+			if (publish && callback)
+				callback(exit);
 		}
-		if (WIFEXITED(status))
-			exit.exitCode = WEXITSTATUS(status);
-		if (WIFSIGNALED(status))
-			exit.signal = WTERMSIG(status);
-		if (callback)
-			callback(exit);
 	}
 
 	std::unique_ptr<ProcessSupervisor> CreateNativeProcessSupervisor()

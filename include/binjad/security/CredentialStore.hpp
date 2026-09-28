@@ -23,5 +23,6 @@ namespace binjad::security {
 	};
 
 	std::string CredentialNamespace(const std::filesystem::path& configPath);
-	std::unique_ptr<CredentialStore> CreateNativeCredentialStore(const std::filesystem::path& configPath);
+	std::filesystem::path FileCredentialStorePath(const std::filesystem::path& configPath);
+	std::unique_ptr<CredentialStore> CreateCredentialStore(const std::filesystem::path& configPath);
 }  // namespace binjad::security

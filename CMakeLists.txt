@@ -7,9 +7,22 @@ endif()
 project(binjad VERSION 0.1.0 LANGUAGES C CXX)
 
 if(APPLE)
+    set(BINJAD_USE_KEYCHAIN_DEFAULT ON)
+else()
+    set(BINJAD_USE_KEYCHAIN_DEFAULT OFF)
+endif()
+option(BINJAD_USE_KEYCHAIN "Store daemon credentials in the macOS Keychain"
+    ${BINJAD_USE_KEYCHAIN_DEFAULT})
+if(BINJAD_USE_KEYCHAIN AND NOT APPLE)
+    message(FATAL_ERROR "BINJAD_USE_KEYCHAIN is supported only on macOS")
+endif()
+if(APPLE)
     enable_language(OBJCXX)
     set(BINJAD_SERVICE_EXECUTABLE "" CACHE FILEPATH
         "Stable executable path embedded in the Homebrew LaunchAgent")
+    if(BINJAD_SERVICE_EXECUTABLE AND NOT BINJAD_USE_KEYCHAIN)
+        message(FATAL_ERROR "Standard macOS service packaging requires BINJAD_USE_KEYCHAIN=ON")
+    endif()
 endif()
 
 include(GNUInstallDirs)
@@ -62,12 +75,15 @@ if(NOT BINJAD_ACTUAL_DEBUGGER_REVISION STREQUAL BINJAD_DEBUGGER_REVISION)
 endif()
 
 set(BN_INSTALL_DIR "${BN_INSTALL_DIR}" CACHE PATH "Binary Ninja installation root")
+option(BINJAD_ALLOW_API_REVISION_MISMATCH
+    "Allow a development build against a different installed Binary Ninja API revision" OFF)
 if(NOT BN_INSTALL_DIR AND DEFINED ENV{BN_INSTALL_DIR} AND NOT "$ENV{BN_INSTALL_DIR}" STREQUAL "")
     set(BN_INSTALL_DIR "$ENV{BN_INSTALL_DIR}" CACHE PATH "Binary Ninja installation root" FORCE)
 endif()
 
 if(BN_INSTALL_DIR)
-    binjad_verify_installed_api_revision("${BN_INSTALL_DIR}" "${BINJAD_BN_API_REVISION}")
+    binjad_verify_installed_api_revision("${BN_INSTALL_DIR}" "${BINJAD_BN_API_REVISION}"
+        "${BINJAD_ALLOW_API_REVISION_MISMATCH}")
     set(BN_ALLOW_STUBS OFF CACHE BOOL "Allow Binary Ninja core link stubs" FORCE)
 else()
     message(STATUS "BN_INSTALL_DIR is unset; using the non-runtime Binary Ninja core link stub")
@@ -184,7 +200,6 @@ if(APPLE)
         src/Daemon/platform/macos/Paths.cpp
         src/Shared/platform/posix/PrivateFiles.cpp)
     set(BINJAD_PLATFORM_SECURITY_SOURCES
-        src/Daemon/platform/macos/CredentialStore.cpp
         src/Daemon/platform/macos/ToolControl.cpp
         src/Daemon/platform/macos/Random.cpp)
 elseif(WIN32)
@@ -193,7 +208,6 @@ elseif(WIN32)
         src/Daemon/platform/windows/Cpu.cpp
         src/Shared/platform/windows/Paths.cpp)
     set(BINJAD_PLATFORM_SECURITY_SOURCES
-        src/Daemon/platform/unsupported/CredentialStore.cpp
         src/Daemon/platform/windows/Random.cpp)
 elseif(UNIX)
     set(BINJAD_PLATFORM_PATH_SOURCE
@@ -202,10 +216,20 @@ elseif(UNIX)
         src/Daemon/platform/linux/Paths.cpp
         src/Shared/platform/posix/PrivateFiles.cpp)
     set(BINJAD_PLATFORM_SECURITY_SOURCES
-        src/Daemon/platform/unsupported/CredentialStore.cpp
         src/Daemon/platform/linux/Random.cpp)
 else()
     message(FATAL_ERROR "binjad has no user-data path adapter for this platform")
+endif()
+
+if(BINJAD_USE_KEYCHAIN)
+    list(APPEND BINJAD_PLATFORM_SECURITY_SOURCES
+        src/Daemon/platform/macos/CredentialStore.cpp)
+elseif(UNIX)
+    list(APPEND BINJAD_PLATFORM_SECURITY_SOURCES
+        src/Daemon/platform/posix/CredentialStore.cpp)
+else()
+    list(APPEND BINJAD_PLATFORM_SECURITY_SOURCES
+        src/Daemon/platform/unsupported/CredentialStore.cpp)
 endif()
 
 add_library(binjad_foundation STATIC
@@ -313,6 +337,31 @@ if(APPLE)
     target_include_directories(binjad_runtime PRIVATE "${BINJAD_MIG_OUTPUT_DIR}")
     find_library(BINJAD_BSM_LIBRARY bsm REQUIRED)
     target_link_libraries(binjad_runtime PRIVATE "${BINJAD_BSM_LIBRARY}")
+elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    include(CheckSymbolExists)
+    include(CheckCXXSourceCompiles)
+    set(CMAKE_REQUIRED_DEFINITIONS -D_GNU_SOURCE)
+    check_symbol_exists(posix_spawn_file_actions_addclosefrom_np "spawn.h"
+        BINJAD_HAVE_POSIX_SPAWN_CLOSEFROM)
+    unset(CMAKE_REQUIRED_DEFINITIONS)
+    if(NOT BINJAD_HAVE_POSIX_SPAWN_CLOSEFROM)
+        message(FATAL_ERROR
+            "Linux child isolation requires posix_spawn_file_actions_addclosefrom_np")
+    endif()
+    check_cxx_source_compiles([[
+        #include <sys/syscall.h>
+        #if !defined(SYS_pidfd_open) || !defined(SYS_pidfd_send_signal)
+        #error pidfd syscall identifiers are unavailable
+        #endif
+        int main() { return 0; }
+    ]] BINJAD_HAVE_PIDFD_SYSCALLS)
+    if(NOT BINJAD_HAVE_PIDFD_SYSCALLS)
+        message(FATAL_ERROR "Linux child supervision requires pidfd syscall support")
+    endif()
+    target_sources(binjad_runtime PRIVATE
+        src/Shared/platform/linux/UnixChannel.cpp
+        src/Daemon/platform/linux/ProcessSupervisor.cpp)
+    target_compile_definitions(binjad_runtime PRIVATE _GNU_SOURCE)
 endif()
 target_include_directories(binjad_runtime PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
 target_link_libraries(binjad_runtime PUBLIC binjad_ipc_proto)
@@ -468,6 +517,9 @@ if(APPLE)
     endif()
     set_target_properties(binjad PROPERTIES INSTALL_RPATH
         "${BINJAD_BN_CORE_RPATH};${BINJAD_BN_CORE_RPATH}/plugins")
+elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND BN_INSTALL_DIR)
+    set_target_properties(binjad PROPERTIES INSTALL_RPATH
+        "${BN_INSTALL_DIR};${BN_INSTALL_DIR}/plugins;${BN_INSTALL_DIR}/plugins/lldb/lib")
 endif()
 
 install(TARGETS binjad RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
@@ -505,7 +557,34 @@ install(CODE [[
 option(BINJAD_BUILD_TESTS "Enable real-daemon end-to-end tests" ON)
 if(BINJAD_BUILD_TESTS)
     enable_testing()
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        add_executable(binjad-linux-child-runtime-tests tests/LinuxChildRuntimeTests.cpp)
+        target_link_libraries(binjad-linux-child-runtime-tests PRIVATE binjad_runtime)
+        target_compile_features(binjad-linux-child-runtime-tests PRIVATE cxx_std_20)
+        target_compile_options(binjad-linux-child-runtime-tests PRIVATE -Wall -Wextra -Wpedantic)
+        add_test(NAME binjad.linux_child_runtime COMMAND binjad-linux-child-runtime-tests)
+        set_tests_properties(binjad.linux_child_runtime PROPERTIES LABELS "binjad;ipc;linux" TIMEOUT 30)
+    endif()
+    if(NOT BINJAD_USE_KEYCHAIN AND UNIX)
+        add_executable(binjad-credential-store-tests tests/CredentialStoreTests.cpp)
+        target_link_libraries(binjad-credential-store-tests PRIVATE binjad_security binaryninjaapi)
+        target_compile_features(binjad-credential-store-tests PRIVATE cxx_std_20)
+        if(MSVC)
+            target_compile_options(binjad-credential-store-tests PRIVATE /W4 /permissive-)
+        else()
+            target_compile_options(binjad-credential-store-tests PRIVATE -Wall -Wextra -Wpedantic)
+        endif()
+        add_test(NAME binjad.credential_store COMMAND binjad-credential-store-tests)
+        set_tests_properties(binjad.credential_store PROPERTIES LABELS "binjad;security")
+    endif()
     if(APPLE)
+        add_executable(binjad-process-memory-tests tests/ProcessMemoryTests.cpp)
+        target_link_libraries(binjad-process-memory-tests PRIVATE binjad_runtime)
+        target_compile_features(binjad-process-memory-tests PRIVATE cxx_std_20)
+        target_compile_options(binjad-process-memory-tests PRIVATE -Wall -Wextra -Wpedantic)
+        add_test(NAME binjad.process_memory COMMAND binjad-process-memory-tests)
+        set_tests_properties(binjad.process_memory PROPERTIES LABELS "binjad;process;memory" TIMEOUT 30)
+
         add_test(NAME binjad.menubar_bundle
             COMMAND "${CMAKE_COMMAND}"
                 -DBINJAD_MENU_BAR_BUNDLE=$<TARGET_BUNDLE_DIR:binjad-menubar>
