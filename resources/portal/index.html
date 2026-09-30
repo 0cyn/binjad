@@ -3,6 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="binjad-status-path" content="/healthz/status" data-configured-path="{{STATUS_PATH}}">
   <title>binja'd</title>
   <link rel="stylesheet" href="{{PORTAL_PATH}}/app.css">
   <script src="{{PORTAL_PATH}}/app.js" defer></script>
@@ -122,11 +123,40 @@
             <div class="block-head"><h2>Runtime</h2></div>
             <div id="runtime-list"></div>
           </article>
-          <article class="block">
-            <div class="block-head"><h2>Service posture</h2></div>
-            <div class="row"><span>Transport</span><b>Streamable HTTP / loopback</b></div>
-            <div class="row"><span>Project backend</span><b id="project-backend">Local commercial</b></div>
-            <div class="row"><span>Configuration</span><b id="config-state">Active</b></div>
+          <article id="memory-panel" class="block memory-panel">
+            <div class="block-head">
+              <div>
+                <h2>Memory usage</h2>
+                <div class="meta">Overseer and managed child processes</div>
+              </div>
+              <div class="memory-current">
+                <span>Current</span>
+                <b id="memory-current">—</b>
+              </div>
+            </div>
+            <div class="memory-chart-shell">
+              <svg id="memory-chart" class="memory-chart" viewBox="0 0 600 180"
+                   preserveAspectRatio="none" role="img"
+                   aria-labelledby="memory-chart-title memory-chart-description">
+                <title id="memory-chart-title">Managed process memory history</title>
+                <desc id="memory-chart-description">Waiting for the first memory sample.</desc>
+                <line class="memory-grid" x1="0" y1="10" x2="600" y2="10"></line>
+                <line class="memory-grid" x1="0" y1="90" x2="600" y2="90"></line>
+                <line class="memory-grid" x1="0" y1="170" x2="600" y2="170"></line>
+                <path id="memory-area" class="memory-area hidden"></path>
+                <path id="memory-line" class="memory-line hidden"></path>
+                <circle id="memory-point" class="memory-point hidden" r="4"></circle>
+              </svg>
+              <div class="memory-scale" aria-hidden="true">
+                <span id="memory-scale-high">—</span>
+                <span id="memory-scale-low">—</span>
+              </div>
+              <div id="memory-chart-empty" class="memory-chart-empty">Waiting for memory data</div>
+            </div>
+            <div class="memory-chart-foot">
+              <span>Last 5 minutes · 5-second samples</span>
+              <span id="memory-updated">Waiting for data</span>
+            </div>
           </article>
         </div>
       </section>
@@ -200,6 +230,7 @@
             </div>
           </div>
           <div class="config-grid">
+            <label><span>Binary Ninja installation <span class="tooltip" tabindex="0" data-tooltip="The absolute Binary Ninja installation root. Leave this empty for /Applications/Binary Ninja.app on macOS or ~/binaryninja on Linux. Requires Save and a service restart.">?</span></span><input id="cfg-binary-ninja" placeholder="Use the platform default"></label>
             <label><span>Listener port <span class="tooltip" tabindex="0" data-tooltip="The port binja'd listens on. Change this only if 8712 is already taken.">?</span></span><input id="cfg-port" type="number" min="1" max="65535"></label>
             <label><span>CPU allocation % <span class="tooltip" tabindex="0" data-tooltip="How much of this computer's CPU binja'd is allowed to give Binary Ninja.">?</span></span><input id="cfg-cpu" type="number" min="1" max="100"></label>
             <label>

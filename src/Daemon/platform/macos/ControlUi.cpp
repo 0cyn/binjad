@@ -39,18 +39,18 @@ namespace binjad::platform {
 				return {};
 
 			// Development and integration-test daemons must not retarget the one installed status item.
+			const auto formulaPrefix = serviceExecutable.parent_path().parent_path();
+			if (formulaPrefix.empty() || formulaPrefix.parent_path().filename() != "opt")
+				return "installed service executable is not beneath a Homebrew opt prefix";
 			const auto runningExecutable = CanonicalPath(executable);
-			const auto installedExecutable = CanonicalPath(serviceExecutable);
-			if (runningExecutable.empty() || installedExecutable.empty() || runningExecutable != installedExecutable)
+			const auto installedRuntime = CanonicalPath(formulaPrefix / "libexec" / "binjad-runtime");
+			if (runningExecutable.empty() || installedRuntime.empty() || runningExecutable != installedRuntime)
 				return {};
 			const auto runningConfig = CanonicalPath(configPath);
 			const auto installedConfig = CanonicalPath(DefaultConfigPath());
 			if (runningConfig.empty() || installedConfig.empty() || runningConfig != installedConfig)
 				return {};
 
-			const auto formulaPrefix = serviceExecutable.parent_path().parent_path();
-			if (formulaPrefix.empty() || formulaPrefix.parent_path().filename() != "opt")
-				return "installed service executable is not beneath a Homebrew opt prefix";
 			const auto formula = formulaPrefix.filename().string();
 			const auto brew = formulaPrefix.parent_path().parent_path() / "bin" / "brew";
 			const auto bundle = formulaPrefix / "libexec" / kBundleName;

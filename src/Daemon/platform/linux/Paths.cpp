@@ -18,4 +18,12 @@ namespace binjad::platform {
 	{
 		return UserDataDirectory() / "config.json";
 	}
+
+	std::filesystem::path DefaultBinaryNinjaInstallationDirectory()
+	{
+		const char* home = std::getenv("HOME");
+		if (!home || !*home)
+			throw std::runtime_error("HOME is not set");
+		return std::filesystem::path(home) / "binaryninja";
+	}
 }  // namespace binjad::platform

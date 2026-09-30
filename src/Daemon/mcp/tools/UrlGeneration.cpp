@@ -210,12 +210,7 @@ namespace binjad::mcp {
 		class OpenItemUrlTool final : public ToolCall
 		{
 		public:
-			OpenItemUrlTool() :
-				ToolCall("bn_url_open_item",
-					"Generate a Binary Ninja URL for an owned arbitrary-path open item, optionally navigating to an "
-					"expr.",
-					ToolCallCategory::UrlGeneration, "URL Generation")
-			{}
+			OpenItemUrlTool() : ToolCall("bn_url_open_item", ToolCallCategory::UrlGeneration) {}
 
 			FoundationResult Execute(const ToolCallContext& context) const override
 			{
@@ -239,7 +234,7 @@ namespace binjad::mcp {
 		private:
 			void WriteInputSchema(ToolCallSchemaWriter& writer) const override
 			{
-				schema::WriteObject(writer,
+				schema::WriteObject(writer, "bn_url_open_item",
 					{schema::String("openItem", true,
 						 "Owned arbitrary-path open-item reference. Use bn_url_project_file for local-project items."),
 						schema::NonEmptyString("expr", false,
@@ -251,10 +246,7 @@ namespace binjad::mcp {
 		{
 		public:
 			ProjectFileUrlTool() :
-				ToolCall("bn_url_project_file",
-					"Generate a Binary Ninja URL for the committed BNDB backing an owned local-project open item. "
-					"Call bn_binary_view_save first, then explicitly confirm that the updated BNDB has been saved.",
-					ToolCallCategory::UrlGeneration, "URL Generation", ToolCallAvailability::LocalMode)
+				ToolCall("bn_url_project_file", ToolCallCategory::UrlGeneration, ToolCallAvailability::LocalMode)
 			{}
 
 			FoundationResult Execute(const ToolCallContext& context) const override
@@ -306,7 +298,8 @@ namespace binjad::mcp {
 				writer.Key("minLength");
 				writer.Uint(1);
 				writer.Key("description");
-				writer.String("Owned local-project open-item reference targeting a committed BNDB.");
+				const auto openItemDescription = docs::ToolArgument("bn_url_project_file", "openItem");
+				writer.String(openItemDescription.data(), static_cast<rapidjson::SizeType>(openItemDescription.size()));
 				writer.EndObject();
 				writer.Key("updated_bndb_has_been_saved");
 				writer.StartObject();
@@ -317,10 +310,10 @@ namespace binjad::mcp {
 				writer.Bool(true);
 				writer.EndArray();
 				writer.Key("description");
-				writer.String(
-					"Required true acknowledgment that bn_binary_view_save completed after the latest relevant "
-					"changes. "
-					"The URL opens committed project contents and cannot include unsaved file-child state.");
+				const auto acknowledgementDescription =
+					docs::ToolArgument("bn_url_project_file", "updated_bndb_has_been_saved");
+				writer.String(acknowledgementDescription.data(),
+					static_cast<rapidjson::SizeType>(acknowledgementDescription.size()));
 				writer.EndObject();
 				writer.Key("expr");
 				writer.StartObject();
@@ -329,7 +322,9 @@ namespace binjad::mcp {
 				writer.Key("minLength");
 				writer.Uint(1);
 				writer.Key("description");
-				writer.String("Optional Binary Ninja navigation expression, such as a function, section, or address.");
+				const auto expressionDescription = docs::ToolArgument("bn_url_project_file", "expr");
+				writer.String(
+					expressionDescription.data(), static_cast<rapidjson::SizeType>(expressionDescription.size()));
 				writer.EndObject();
 				writer.EndObject();
 				writer.Key("required");
@@ -346,12 +341,7 @@ namespace binjad::mcp {
 		class RemoteFileUrlTool final : public ToolCall
 		{
 		public:
-			RemoteFileUrlTool() :
-				ToolCall("bn_url_remote_file",
-					"Generate a Binary Ninja URL for an absolute http, https, or file URL, optionally navigating to an "
-					"expr.",
-					ToolCallCategory::UrlGeneration, "URL Generation")
-			{}
+			RemoteFileUrlTool() : ToolCall("bn_url_remote_file", ToolCallCategory::UrlGeneration) {}
 
 			FoundationResult Execute(const ToolCallContext& context) const override
 			{
@@ -369,7 +359,7 @@ namespace binjad::mcp {
 		private:
 			void WriteInputSchema(ToolCallSchemaWriter& writer) const override
 			{
-				schema::WriteObject(writer,
+				schema::WriteObject(writer, "bn_url_remote_file",
 					{schema::String("url", true,
 						 "Percent-encoded absolute http, https, or file URL for Binary Ninja to download or open."),
 						schema::NonEmptyString("expr", false,
@@ -380,11 +370,7 @@ namespace binjad::mcp {
 		class NavigateUrlTool final : public ToolCall
 		{
 		public:
-			NavigateUrlTool() :
-				ToolCall("bn_url_navigate",
-					"Generate a context-relative Binary Ninja expr URL for a Binary Ninja Markdown or HTML report.",
-					ToolCallCategory::UrlGeneration, "URL Generation")
-			{}
+			NavigateUrlTool() : ToolCall("bn_url_navigate", ToolCallCategory::UrlGeneration) {}
 
 			FoundationResult Execute(const ToolCallContext& context) const override
 			{
@@ -396,7 +382,7 @@ namespace binjad::mcp {
 		private:
 			void WriteInputSchema(ToolCallSchemaWriter& writer) const override
 			{
-				schema::WriteObject(writer,
+				schema::WriteObject(writer, "bn_url_navigate",
 					{schema::String("expr", true,
 						"Binary Ninja navigation expression resolved by the report's current BinaryView.")});
 			}

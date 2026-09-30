@@ -79,6 +79,15 @@ class LaunchdService:
                     self.original = (domain, match[1])
                     break
             self.start()
+            status, headers, page, _ = self.http.request("GET", "/portal")
+            require(status == 200 and headers.get("content-type", "").startswith("text/html"),
+                    f"portal page was unavailable: HTTP {status}")
+            require("{{STATUS_PATH}}" not in page
+                    and ('<meta name="binjad-status-path" content="/healthz/status" '
+                         'data-configured-path="/healthz/status">') in page,
+                    "portal page did not receive its public status path")
+            require('id="memory-panel"' in page and 'id="memory-chart"' in page and "Service posture" not in page,
+                    "portal page did not contain the memory graph")
             require(self.portal("GET", "/setup", authenticated=False) is True, "test daemon did not start with fresh state")
             self.portal("POST", "/setup", {"username": self.username, "password": self.password},
                         authenticated=False, expected=201)

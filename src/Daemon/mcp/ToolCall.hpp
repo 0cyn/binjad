@@ -102,8 +102,8 @@ namespace binjad::mcp {
 	class ToolCall
 	{
 	public:
-		ToolCall(std::string_view name, std::string_view description, ToolCallCategory category,
-			std::string_view documentationCategory, ToolCallAvailability availability = ToolCallAvailability::None);
+		ToolCall(std::string_view name, ToolCallCategory category,
+			ToolCallAvailability availability = ToolCallAvailability::None);
 		virtual ~ToolCall() = default;
 
 		std::string_view Name() const { return name_; }

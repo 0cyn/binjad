@@ -113,7 +113,15 @@ class Http:
             else:
                 raw = response.read(64 * 1024 * 1024 + 1)
                 require(len(raw) <= 64 * 1024 * 1024, "HTTP response exceeded 64 MiB")
-                payload = json.loads(raw) if raw else None
+                content_type = response_headers.get("content-type", "").split(";")[0]
+                if not raw:
+                    payload = None
+                elif content_type == "application/json" or content_type.endswith("+json"):
+                    payload = json.loads(raw)
+                elif content_type.startswith("text/"):
+                    payload = raw.decode("utf-8")
+                else:
+                    payload = {"byteLength": len(raw)}
             self.transcript.write(direction="response", status=response.status, headers=response_headers,
                                   body=payload, elapsed=time.monotonic() - started)
             return response.status, response_headers, payload, events

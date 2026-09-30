@@ -1,15 +1,16 @@
 #include "ToolCall.hpp"
 
+#include "ModelFacingDocs.hpp"
+
 #include <algorithm>
 #include <array>
 #include <stdexcept>
 #include <unordered_map>
 
 namespace binjad::mcp {
-	ToolCall::ToolCall(std::string_view name, std::string_view description, ToolCallCategory category,
-		std::string_view documentationCategory, ToolCallAvailability availability) :
-		name_(name), description_(description), category_(category), documentationCategory_(documentationCategory),
-		availability_(availability)
+	ToolCall::ToolCall(std::string_view name, ToolCallCategory category, ToolCallAvailability availability) :
+		name_(name), description_(docs::Tool(name).description), category_(category),
+		documentationCategory_(docs::Tool(name).category), availability_(availability)
 	{}
 
 	std::string_view ToolCall::InputSchema() const
@@ -109,56 +110,23 @@ namespace binjad::mcp {
 		const Config& config, ProtocolVersion version, security::TokenRole role) const
 	{
 		if (!ToolCallCategoryEnabled(category_, config.tools))
-			return std::string(ToolCallCategoryName(category_)) + " tools are disabled in the running configuration.";
+			return std::string(ToolCallCategoryName(category_)) + std::string(docs::Availability("disabled_suffix"));
 		if (HasAvailability(availability_, ToolCallAvailability::ModernProtocol) && !IsModern(version))
-			return "Requires the modern MCP protocol session model.";
+			return std::string(docs::Availability("modern_protocol"));
 		if (HasAvailability(availability_, ToolCallAvailability::Admin) && role != security::TokenRole::Admin)
-			return "Requires an admin bearer token.";
+			return std::string(docs::Availability("admin"));
 		if (HasAvailability(availability_, ToolCallAvailability::ArbitraryPaths)
 			&& !config.projects.allowArbitraryPaths)
-			return "Requires projects.allow_arbitrary_paths in local mode.";
+			return std::string(docs::Availability("arbitrary_paths"));
 		if (HasAvailability(availability_, ToolCallAvailability::ProjectRegistration)
 			&& !config.projects.allowProjectRegistration)
-			return "Requires projects.allow_project_registration in local mode.";
-		return "Not advertised for the selected protocol, role, mode, or running options.";
+			return std::string(docs::Availability("project_registration"));
+		return std::string(docs::Availability("not_advertised"));
 	}
 
 	std::string_view ToolCallCategoryName(ToolCallCategory category)
 	{
-		switch (category)
-		{
-		case ToolCallCategory::Core:
-			return "Core Workflow";
-		case ToolCallCategory::ProjectManagement:
-			return "Project Management & Documents";
-		case ToolCallCategory::FunctionAnalysis:
-			return "Function Analysis";
-		case ToolCallCategory::BinaryData:
-			return "Binary Data";
-		case ToolCallCategory::Search:
-			return "Search";
-		case ToolCallCategory::Types:
-			return "Types & Signatures";
-		case ToolCallCategory::Annotations:
-			return "Annotations & Symbols";
-		case ToolCallCategory::BinaryEditing:
-			return "Binary Editing";
-		case ToolCallCategory::History:
-			return "Transactions & History";
-		case ToolCallCategory::HeaderParsing:
-			return "Header Parsing";
-		case ToolCallCategory::UrlGeneration:
-			return "URL Generation";
-		case ToolCallCategory::Diffing:
-			return "Diffing";
-		case ToolCallCategory::KernelCache:
-			return "KernelCache";
-		case ToolCallCategory::SharedCache:
-			return "SharedCache";
-		case ToolCallCategory::Debugger:
-			return "Debugger";
-		}
-		return "Core Workflow";
+		return docs::Category(ToolCallCategoryId(category)).name;
 	}
 
 	std::string_view ToolCallCategoryId(ToolCallCategory category)
@@ -262,6 +230,37 @@ namespace binjad::mcp {
 	}
 
 	namespace {
+		const rapidjson::Value* ObjectMember(const rapidjson::Value& object, std::string_view name)
+		{
+			if (!object.IsObject())
+				return nullptr;
+			for (auto member = object.MemberBegin(); member != object.MemberEnd(); ++member)
+				if (std::string_view(member->name.GetString(), member->name.GetStringLength()) == name)
+					return &member->value;
+			return nullptr;
+		}
+
+		const rapidjson::Value* SchemaProperty(const rapidjson::Document& schema, std::string_view path)
+		{
+			const auto separator = path.find('.');
+			const auto outerName = path.substr(0, separator);
+			const auto* properties = ObjectMember(schema, "properties");
+			if (!properties)
+				return nullptr;
+			const auto* outer = ObjectMember(*properties, outerName);
+			if (!outer || separator == std::string_view::npos)
+				return outer;
+
+			const auto* items = ObjectMember(*outer, "items");
+			if (!items)
+				return nullptr;
+			const auto* itemProperties = ObjectMember(*items, "properties");
+			if (!itemProperties)
+				return nullptr;
+			const auto innerName = path.substr(separator + 1);
+			return ObjectMember(*itemProperties, innerName);
+		}
+
 		struct ToolCallRegistry
 		{
 			std::vector<std::unique_ptr<ToolCall>> tools;
@@ -297,9 +296,33 @@ namespace binjad::mcp {
 				result.byName.reserve(result.tools.size());
 				for (const auto& tool : result.tools)
 				{
-					(void)tool->InputSchema();
+					const auto inputSchema = tool->InputSchema();
 					if (!result.byName.emplace(tool->Name(), tool.get()).second)
 						throw std::logic_error("duplicate MCP tool registration");
+
+					rapidjson::Document schema;
+					schema.Parse(inputSchema.data(), inputSchema.size());
+					if (schema.HasParseError() || !schema.IsObject())
+						throw std::logic_error("invalid schema for documented MCP tool: " + std::string(tool->Name()));
+					for (const auto& [argument, description] : docs::Tool(tool->Name()).arguments)
+					{
+						const auto* property = SchemaProperty(schema, argument);
+						if (!property)
+							throw std::logic_error("model-facing documentation references an unknown argument: "
+								+ std::string(tool->Name()) + "." + std::string(argument));
+						const auto* documented = ObjectMember(*property, "description");
+						if (!documented || !documented->IsString()
+							|| std::string_view(documented->GetString(), documented->GetStringLength()) != description)
+							throw std::logic_error("model-facing argument documentation was not applied: "
+								+ std::string(tool->Name()) + "." + std::string(argument));
+					}
+				}
+				for (const auto& [name, documentation] : docs::Tools())
+				{
+					(void)documentation;
+					if (!result.byName.contains(name))
+						throw std::logic_error(
+							"model-facing documentation references an unregistered tool: " + std::string(name));
 				}
 				return result;
 			}();

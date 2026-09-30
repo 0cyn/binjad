@@ -111,34 +111,32 @@ namespace binjad::mcp {
 		}  // namespace detail
 
 
-#define BINJAD_PROJECT_TOOL(Type, Name, Description, Category, DocCategory, Availability, Handler, ...) \
+#define BINJAD_PROJECT_TOOL(Type, Name, LegacyDescription, Category, LegacyDocCategory, Availability, Handler, ...) \
 	class Type final : public ToolCall \
 	{ \
 	public: \
-		Type() : ToolCall(Name, Description, ToolCallCategory::Category, DocCategory, Availability) {} \
+		Type() : ToolCall(Name, ToolCallCategory::Category, Availability) {} \
 		FoundationResult Execute(const ToolCallContext& context) const override { return Handler(context); } \
 \
 	private: \
 		void WriteInputSchema(ToolCallSchemaWriter& writer) const override \
 		{ \
-			schema::WriteObject(writer, {__VA_ARGS__}); \
+			schema::WriteObject(writer, Name, {__VA_ARGS__}); \
 		} \
 	}
 
-#define BINJAD_RESTRICTED_PROJECT_TOOL(Type, Name, Description, Category, DocCategory, Availability, Handler, ...) \
+#define BINJAD_RESTRICTED_PROJECT_TOOL( \
+	Type, Name, LegacyDescription, Category, LegacyDocCategory, Availability, Handler, ...) \
 	class Type final : public ToolCall \
 	{ \
 	public: \
-		Type() : ToolCall(Name, Description, ToolCallCategory::Category, DocCategory, Availability) \
-		{ \
-			AllowRestrictedExecution(); \
-		} \
+		Type() : ToolCall(Name, ToolCallCategory::Category, Availability) { AllowRestrictedExecution(); } \
 		FoundationResult Execute(const ToolCallContext& context) const override { return Handler(context); } \
 \
 	private: \
 		void WriteInputSchema(ToolCallSchemaWriter& writer) const override \
 		{ \
-			schema::WriteObject(writer, {__VA_ARGS__}); \
+			schema::WriteObject(writer, Name, {__VA_ARGS__}); \
 		} \
 	}
 

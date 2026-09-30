@@ -33,6 +33,7 @@ namespace binjad::platform {
 
 	std::filesystem::path UserDataDirectory();
 	std::filesystem::path DefaultConfigPath();
+	std::filesystem::path DefaultBinaryNinjaInstallationDirectory();
 	std::string CreatePrivateDirectory(const std::filesystem::path& path);
 	PrivateFileCreationResult CreatePrivateFileIfAbsent(const std::filesystem::path& path, std::string_view contents);
 	PrivateFileReadResult ReadPrivateFile(const std::filesystem::path& path);

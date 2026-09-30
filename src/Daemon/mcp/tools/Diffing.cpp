@@ -290,17 +290,17 @@ namespace binjad::mcp {
 			return ToolCallSuccess(context, result.job->resultJson, result.job->state != session::JobState::Complete);
 		}
 
-#define BINJAD_DIFF_TOOL(Type, Name, Description, Handler, ...) \
+#define BINJAD_DIFF_TOOL(Type, Name, LegacyDescription, Handler, ...) \
 	class Type final : public ToolCall \
 	{ \
 	public: \
-		Type() : ToolCall(Name, Description, ToolCallCategory::Diffing, "Diffing") {} \
+		Type() : ToolCall(Name, ToolCallCategory::Diffing) {} \
 		FoundationResult Execute(const ToolCallContext& context) const override { return Handler(context); } \
 \
 	private: \
 		void WriteInputSchema(ToolCallSchemaWriter& writer) const override \
 		{ \
-			schema::WriteObject(writer, {__VA_ARGS__}); \
+			schema::WriteObject(writer, Name, {__VA_ARGS__}); \
 		} \
 	}
 

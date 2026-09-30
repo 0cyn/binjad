@@ -1,10 +1,13 @@
 #pragma once
 
+#include "ModelFacingDocs.hpp"
 #include "ToolCall.hpp"
 
 #include <algorithm>
 #include <initializer_list>
 #include <optional>
+#include <stdexcept>
+#include <string>
 #include <string_view>
 
 namespace binjad::mcp::schema {
@@ -34,6 +37,7 @@ namespace binjad::mcp::schema {
 		std::optional<std::uint64_t> minimumLength;
 		std::optional<std::uint64_t> minimumItems;
 		std::optional<std::uint64_t> maximumItems;
+		// Compatibility-only call-site text. Schema output always uses ModelFacingDocs.
 		std::string_view description;
 		std::initializer_list<std::string_view> values;
 		std::initializer_list<Property> itemProperties;
@@ -142,7 +146,8 @@ namespace binjad::mcp::schema {
 			.values = values};
 	}
 
-	inline void WriteObject(ToolCallSchemaWriter& writer, std::initializer_list<Property> properties)
+	inline void WriteObject(
+		ToolCallSchemaWriter& writer, std::string_view toolName, std::initializer_list<Property> properties)
 	{
 		writer.StartObject();
 		writer.Key("type");
@@ -213,11 +218,15 @@ namespace binjad::mcp::schema {
 					writer.StartObject();
 					writer.Key("type");
 					writer.String("string");
-					if (!item.description.empty())
+					const auto argumentPath = std::string(property.name) + "." + std::string(item.name);
+					const auto description = docs::ToolArgument(toolName, argumentPath);
+					if (!item.description.empty() && description.empty())
+						throw std::logic_error("inline argument documentation was not centralized: "
+							+ std::string(toolName) + "." + argumentPath);
+					if (!description.empty())
 					{
 						writer.Key("description");
-						writer.String(
-							item.description.data(), static_cast<rapidjson::SizeType>(item.description.size()));
+						writer.String(description.data(), static_cast<rapidjson::SizeType>(description.size()));
 					}
 					writer.EndObject();
 				}
@@ -281,11 +290,14 @@ namespace binjad::mcp::schema {
 					writer.String(value.data(), static_cast<rapidjson::SizeType>(value.size()));
 				writer.EndArray();
 			}
-			if (!property.description.empty())
+			const auto description = docs::ToolArgument(toolName, property.name);
+			if (!property.description.empty() && description.empty())
+				throw std::logic_error("inline argument documentation was not centralized: " + std::string(toolName)
+					+ "." + std::string(property.name));
+			if (!description.empty())
 			{
 				writer.Key("description");
-				writer.String(
-					property.description.data(), static_cast<rapidjson::SizeType>(property.description.size()));
+				writer.String(description.data(), static_cast<rapidjson::SizeType>(description.size()));
 			}
 			writer.EndObject();
 		}

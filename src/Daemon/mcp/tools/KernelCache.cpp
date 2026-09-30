@@ -2,11 +2,11 @@
 
 namespace binjad::mcp {
 	namespace {
-#define BINJAD_KERNEL_TOOL(Type, Name, Description) \
+#define BINJAD_KERNEL_TOOL(Type, Name, LegacyDescription) \
 	class Type final : public ToolCall \
 	{ \
 	public: \
-		Type() : ToolCall(Name, Description, ToolCallCategory::KernelCache, "KernelCache") {} \
+		Type() : ToolCall(Name, ToolCallCategory::KernelCache) {} \
 		FoundationResult Execute(const ToolCallContext& context) const override \
 		{ \
 			return ExecuteForwardedAnalysisTool(context); \
@@ -65,8 +65,8 @@ namespace binjad::mcp {
 		}
 	};
 
-#define BINJAD_KERNEL_IMAGE_TOOL(Type, Name, Description) \
-	BINJAD_KERNEL_TOOL(Type, Name, Description) \
+#define BINJAD_KERNEL_IMAGE_TOOL(Type, Name, LegacyDescription) \
+	BINJAD_KERNEL_TOOL(Type, Name, LegacyDescription) \
 	{ \
 		writer.StartObject(); \
 		writer.Key("type"); \

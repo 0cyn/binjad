@@ -8,6 +8,23 @@ let toolConfigurationKey = "";
 let serverVersion = "";
 let pollTimer = null;
 let polling = false;
+let memoryPollTimer = null;
+let memoryPolling = false;
+let memoryAbortController = null;
+
+const memoryStatusMeta = document.querySelector('meta[name="binjad-status-path"]');
+const configuredMemoryStatusPath = memoryStatusMeta?.dataset.configuredPath || "";
+const fallbackMemoryStatusPath = memoryStatusMeta?.content || "/healthz/status";
+const usableMemoryStatusPath = (value) => value.startsWith("/") && !value.includes("{{");
+let memoryStatusPath = "/healthz/status";
+if (usableMemoryStatusPath(configuredMemoryStatusPath)) {
+  memoryStatusPath = configuredMemoryStatusPath;
+} else if (usableMemoryStatusPath(fallbackMemoryStatusPath)) {
+  memoryStatusPath = fallbackMemoryStatusPath;
+}
+const memorySamples = [];
+const memorySampleInterval = 5000;
+const memoryWindow = 5 * 60 * 1000;
 
 const titles = {
   overview: "Service overview",
@@ -172,6 +189,118 @@ function base64Utf8(value) {
   return btoa(binary);
 }
 
+function formatMemoryBytes(bytes) {
+  if (!Number.isFinite(bytes) || bytes < 0) return "—";
+  const units = ["B", "KiB", "MiB", "GiB", "TiB"];
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  const digits = value >= 100 || unit === 0 ? 0 : value >= 10 ? 1 : 2;
+  return `${value.toLocaleString(undefined, {maximumFractionDigits: digits})} ${units[unit]}`;
+}
+
+function renderMemoryChart(now = Date.now()) {
+  const line = $("#memory-line");
+  const area = $("#memory-area");
+  const point = $("#memory-point");
+  const empty = $("#memory-chart-empty");
+  const current = memorySamples.at(-1);
+  if (!current) {
+    $("#memory-current").textContent = "—";
+    $("#memory-scale-high").textContent = "—";
+    $("#memory-scale-low").textContent = "—";
+    $("#memory-updated").textContent = "Waiting for data";
+    $("#memory-chart-description").textContent = "Waiting for the first memory sample.";
+    line.classList.add("hidden");
+    area.classList.add("hidden");
+    point.classList.add("hidden");
+    empty.classList.remove("hidden");
+    return;
+  }
+
+  const values = memorySamples.map((sample) => sample.bytes);
+  const minimum = Math.min(...values);
+  const maximum = Math.max(...values);
+  const spread = maximum - minimum;
+  const padding = Math.max(spread * 0.2, maximum * 0.03, 1024 * 1024);
+  const low = Math.max(0, minimum - padding);
+  const high = Math.max(low + 1, maximum + padding);
+  const cutoff = now - memoryWindow;
+  const points = memorySamples.map((sample) => ({
+    x: 4 + Math.max(0, Math.min(1, (sample.time - cutoff) / memoryWindow)) * 592,
+    y: 170 - ((sample.bytes - low) / (high - low)) * 160,
+  }));
+  const visiblePoints = points.length === 1 ? [{x: Math.max(0, points[0].x - 1), y: points[0].y}, points[0]] : points;
+  const linePath = visiblePoints.map((item, index) => `${index ? "L" : "M"}${item.x.toFixed(2)},${item.y.toFixed(2)}`).join(" ");
+  const areaPath = `${linePath} L${visiblePoints.at(-1).x.toFixed(2)},170 L${visiblePoints[0].x.toFixed(2)},170 Z`;
+  const latestPoint = points.at(-1);
+
+  line.setAttribute("d", linePath);
+  area.setAttribute("d", areaPath);
+  point.setAttribute("cx", latestPoint.x.toFixed(2));
+  point.setAttribute("cy", latestPoint.y.toFixed(2));
+  line.classList.remove("hidden");
+  area.classList.remove("hidden");
+  point.classList.remove("hidden");
+  empty.classList.add("hidden");
+  $("#memory-current").textContent = formatMemoryBytes(current.bytes);
+  $("#memory-scale-high").textContent = formatMemoryBytes(high);
+  $("#memory-scale-low").textContent = formatMemoryBytes(low);
+  $("#memory-updated").textContent = `Updated ${new Date(current.time).toLocaleTimeString()}`;
+  $("#memory-chart-description").textContent =
+    `Current managed process memory is ${formatMemoryBytes(current.bytes)}. `
+    + `The chart contains ${memorySamples.length} samples from the last five minutes.`;
+}
+
+function addMemorySample(value, time = Date.now()) {
+  const bytes = Number(value);
+  if (!Number.isSafeInteger(bytes) || bytes < 0) return false;
+  memorySamples.push({bytes, time});
+  const cutoff = time - memoryWindow;
+  while (memorySamples.length && memorySamples[0].time < cutoff) memorySamples.shift();
+  $("#memory-panel").classList.remove("stale");
+  renderMemoryChart(time);
+  return true;
+}
+
+function resetMemoryChart() {
+  memorySamples.length = 0;
+  $("#memory-panel").classList.remove("stale");
+  renderMemoryChart();
+}
+
+function markMemoryUnavailable() {
+  $("#memory-panel").classList.add("stale");
+  $("#memory-updated").textContent = "Update unavailable";
+}
+
+async function pollMemory() {
+  if (!authorization || memoryPolling || document.hidden) return;
+  memoryPolling = true;
+  const controller = new AbortController();
+  memoryAbortController = controller;
+  const timeout = setTimeout(() => controller.abort(), 4000);
+  try {
+    const response = await fetch(memoryStatusPath, {
+      cache: "no-store",
+      credentials: "same-origin",
+      signal: controller.signal,
+    });
+    if (!response.ok) throw new Error(String(response.status));
+    const status = await response.json();
+    if (!addMemorySample(status.memory_bytes)) throw new Error("invalid memory value");
+  } catch {
+    if (authorization) markMemoryUnavailable();
+  } finally {
+    clearTimeout(timeout);
+    if (memoryAbortController === controller) memoryAbortController = null;
+    memoryPolling = false;
+  }
+}
+
 function toast(message, bad = false) {
   const element = $("#toast");
   element.textContent = message;
@@ -246,6 +375,7 @@ async function login() {
 }
 
 async function enterPanel() {
+  resetMemoryChart();
   await refreshStatus();
   $("#gate").classList.add("hidden");
   $("#app").classList.remove("hidden");
@@ -255,6 +385,7 @@ async function enterPanel() {
 
 function logout() {
   stopPolling();
+  resetMemoryChart();
   authorization = "";
   contextDocument = null;
   toolDocumentation = null;
@@ -286,7 +417,6 @@ function setRestartRequired(required) {
   $("#restart-badge").classList.toggle("hidden", !required);
   $("#restart-badge").classList.toggle("warn", required);
   $("#config-warning").classList.toggle("hidden", !required);
-  $("#config-state").textContent = required ? "Restart required" : "Active";
 }
 
 async function refreshStatus() {
@@ -300,6 +430,7 @@ async function refreshStatus() {
   $("#m-queued").textContent = runtime.queued_analyses;
   $("#m-workers").textContent = runtime.allocated_workers;
   $("#m-budget").textContent = runtime.worker_budget;
+  if (!memorySamples.length) addMemorySample(runtime.memory_bytes);
   $("#actor").textContent = status.actor.username;
   $("#account-username").textContent = status.actor.username;
   renderToken(status.token);
@@ -307,7 +438,6 @@ async function refreshStatus() {
   const toolsChanged = fillToolConfiguration(status.tools);
   const versionChanged = serverVersion !== "" && serverVersion !== status.version;
   serverVersion = status.version;
-  $("#project-backend").textContent = "Local commercial";
   setRestartRequired(status.restart_required);
 
   $("#runtime-list").innerHTML = `
@@ -534,6 +664,7 @@ async function updateToolPack(input) {
 }
 
 function fillConfiguration(configuration) {
+  put("#cfg-binary-ninja", configuration.binary_ninja?.installation_dir ?? "");
   put("#cfg-port", configuration.listener?.port ?? 8712);
   put("#cfg-cpu", configuration.cpu?.percentage ?? 75);
   put("#cfg-fairness", configuration.cpu?.fairness ?? "job");
@@ -583,6 +714,7 @@ function mergeConfiguration() {
     throw new Error(`Advanced JSON: ${error.message}`);
   }
 
+  configuration.binary_ninja ||= {};
   configuration.listener ||= {};
   configuration.cpu ||= {};
   configuration.sessions ||= {};
@@ -593,6 +725,7 @@ function mergeConfiguration() {
   configuration.http ||= {};
   configuration.tools ||= {};
 
+  configuration.binary_ninja.installation_dir = $("#cfg-binary-ninja").value;
   configuration.listener.port = numberValue("#cfg-port");
   configuration.cpu.percentage = numberValue("#cfg-cpu");
   configuration.cpu.fairness = $("#cfg-fairness").value;
@@ -780,12 +913,18 @@ async function pollState() {
 function startPolling() {
   stopPolling();
   pollTimer = setInterval(pollState, 10000);
+  memoryPollTimer = setInterval(pollMemory, memorySampleInterval);
 }
 
 function stopPolling() {
   if (pollTimer !== null) clearInterval(pollTimer);
   pollTimer = null;
+  if (memoryPollTimer !== null) clearInterval(memoryPollTimer);
+  memoryPollTimer = null;
+  if (memoryAbortController !== null) memoryAbortController.abort();
+  memoryAbortController = null;
   polling = false;
+  memoryPolling = false;
 }
 
 const actions = {
@@ -850,7 +989,10 @@ document.addEventListener("input", (event) => {
 });
 
 document.addEventListener("visibilitychange", () => {
-  if (!document.hidden) pollState();
+  if (!document.hidden) {
+    pollState();
+    pollMemory();
+  }
 });
 
 renderEnabledToolPacks();

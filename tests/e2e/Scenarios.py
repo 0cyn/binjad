@@ -420,9 +420,11 @@ class Workflows(unittest.TestCase):
                     response += chunk
                 return json.loads(response)
 
-        def save_discovery_mode(mode):
+        def save_discovery_mode(mode, binary_ninja=None):
             configuration = self.service.portal("GET", "/config")["configuration"]
             configuration.setdefault("tools", {})["discovery_mode"] = mode
+            if binary_ninja is not None:
+                configuration.setdefault("binary_ninja", {})["installation_dir"] = str(binary_ninja)
             return self.service.portal("PUT", "/config", configuration)
 
         def restore_full_discovery():
@@ -435,7 +437,9 @@ class Workflows(unittest.TestCase):
 
         self.addCleanup(restore_full_discovery)
         self.service.portal("PATCH", "/tools", {"discovery_mode": "brokered"}, expected=400)
-        configured = save_discovery_mode("brokered")
+        binary_ninja = self.service.config.parent / "Binary Ninja.app"
+        binary_ninja.symlink_to("/Applications/Binary Ninja.app", target_is_directory=True)
+        configured = save_discovery_mode("brokered", binary_ninja)
         restore_required["value"] = True
         require(configured["restart_required"], "brokered discovery save did not require restart")
 
@@ -453,6 +457,8 @@ class Workflows(unittest.TestCase):
         pending = self.service.portal("GET", "/config")["configuration"]
         require(pending["tools"]["discovery_mode"] == "brokered" and not pending["tools"]["search"],
                 "menu tool-control update did not persist or discarded pending discovery mode")
+        require(pending["binary_ninja"]["installation_dir"] == str(binary_ninja),
+                "pending Binary Ninja installation path was not preserved")
         self.service.portal("PATCH", "/tools", {"search": True})
 
         self.service.restart()
@@ -506,6 +512,16 @@ class Workflows(unittest.TestCase):
         function_list = next(tool for tool in documented["tools"] if tool["name"] == "bn_function_list")
         require(function_list["available"] and not function_list["advertised"],
                 "tool documentation confused capability availability with direct advertisement")
+        context = self.service.portal("POST", "/mcp/context",
+                                      {"protocol": self.agent.protocol, "client": "binjad"})
+        projection = context["openCodeProjection"]
+        require("Flow: project_list" in projection["resourceContext"],
+                "model context omitted the quick-start documentation")
+        require({item["name"] for item in projection["tools"]} == {"binjad_" + name for name in expected},
+                "model context did not match brokered tool discovery")
+        require({item["method"] for item in context["mcpWire"]}
+                == {"tools/list", "resources/list", "resources/templates/list", "resources/read binjad://docs"},
+                "model context omitted an MCP documentation surface")
 
         restore_full_discovery()
         self.agent = Agent(self.service.http, self.service.token).start()

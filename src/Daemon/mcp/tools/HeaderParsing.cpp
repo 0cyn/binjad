@@ -3,11 +3,11 @@
 
 namespace binjad::mcp {
 	namespace {
-#define BINJAD_HEADER_TOOL(Type, Name, Description, ...) \
+#define BINJAD_HEADER_TOOL(Type, Name, LegacyDescription, ...) \
 	class Type final : public ToolCall \
 	{ \
 	public: \
-		Type() : ToolCall(Name, Description, ToolCallCategory::HeaderParsing, "Header Parsing") {} \
+		Type() : ToolCall(Name, ToolCallCategory::HeaderParsing) {} \
 		FoundationResult Execute(const ToolCallContext& context) const override \
 		{ \
 			return ExecuteForwardedAnalysisTool(context); \
@@ -16,7 +16,7 @@ namespace binjad::mcp {
 	private: \
 		void WriteInputSchema(ToolCallSchemaWriter& writer) const override \
 		{ \
-			schema::WriteObject(writer, {__VA_ARGS__}); \
+			schema::WriteObject(writer, Name, {__VA_ARGS__}); \
 		} \
 	}
 

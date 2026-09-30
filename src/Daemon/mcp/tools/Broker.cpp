@@ -34,40 +34,7 @@ namespace binjad::mcp {
 
 		std::string_view CategoryDescription(ToolCallCategory category)
 		{
-			switch (category)
-			{
-			case ToolCallCategory::Core:
-				return "Projects, uploads, file and BinaryView lifecycle, analysis, jobs, and essential queries.";
-			case ToolCallCategory::ProjectManagement:
-				return "Project metadata, files, folders, imports, and project documents.";
-			case ToolCallCategory::FunctionAnalysis:
-				return "IL, calls, code references, and stack layout.";
-			case ToolCallCategory::BinaryData:
-				return "Imports, exports, entries, sections, segments, data, relocations, and references.";
-			case ToolCallCategory::Search:
-				return "Comments, bytes, instructions, IL, constants, and project-wide search.";
-			case ToolCallCategory::Types:
-				return "Types, signatures, calling conventions, and function variables.";
-			case ToolCallCategory::Annotations:
-				return "Comments, symbols, bookmarks, tags, and custom metadata.";
-			case ToolCallCategory::BinaryEditing:
-				return "Functions, entries, data, sections, segments, rebasing, memory maps, and strings.";
-			case ToolCallCategory::History:
-				return "Transactions, rollback, undo, and redo.";
-			case ToolCallCategory::HeaderParsing:
-				return "Mach-O, ELF, and PE headers and security metadata.";
-			case ToolCallCategory::UrlGeneration:
-				return "Binary Ninja open and navigation links.";
-			case ToolCallCategory::Diffing:
-				return "Google BinDiff comparisons and metadata transfer.";
-			case ToolCallCategory::KernelCache:
-				return "KernelCache images, dependencies, symbols, and selective loading.";
-			case ToolCallCategory::SharedCache:
-				return "SharedCache images, regions, entries, symbols, and selective loading.";
-			case ToolCallCategory::Debugger:
-				return "Admin-only debugger target control and inspection.";
-			}
-			return {};
+			return docs::Category(ToolCallCategoryId(category)).description;
 		}
 
 		std::optional<ToolCallCategory> ParseCategory(std::string_view id)
@@ -105,17 +72,7 @@ namespace binjad::mcp {
 		class ToolBroker final : public ToolCall
 		{
 		public:
-			ToolBroker() :
-				ToolCall(kToolBrokerName,
-					"Discover and call enabled binjad tools omitted from brokered discovery. Operations: categories; "
-					"list(category, query?, offset?, limit?); describe(name); call(name, arguments?). Categories: "
-			        "core, "
-					"project_management, function_analysis, binary_data, search, types, annotations, binary_editing, "
-					"history, header_parsing, url_generation, diffing, kernel_cache, shared_cache, debugger. Use "
-			        "describe "
-					"before call so the selected tool's arguments follow its exact schema.",
-					ToolCallCategory::Core, "Tool discovery")
-			{}
+			ToolBroker() : ToolCall(kToolBrokerName, ToolCallCategory::Core) {}
 
 			FoundationResult Execute(const ToolCallContext& context) const override
 			{
@@ -138,7 +95,7 @@ namespace binjad::mcp {
 		private:
 			void WriteInputSchema(ToolCallSchemaWriter& writer) const override
 			{
-				schema::WriteObject(writer,
+				schema::WriteObject(writer, kToolBrokerName,
 					{schema::Enum("operation", true, {"categories", "list", "describe", "call"},
 						 "Choose category discovery, compact tool listing, exact schema lookup, or invocation."),
 						schema::Enum("category", false,

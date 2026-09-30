@@ -1,29 +1,113 @@
-class Binjad < Formula
+class BinjadAT@BINJAD_BINARY_NINJA_VERSION_IDENTIFIER@ < Formula
   desc "Headless Binary Ninja MCP server"
   homepage "@BINJAD_HOMEPAGE@"
   url "@BINJAD_GIT_URL@",
-      tag: "v@BINJAD_VERSION@",
       revision: "@BINJAD_GIT_REVISION@",
       using: :git
   version "@BINJAD_VERSION@"
   license "@BINJAD_LICENSE@"
 
-  depends_on :macos => :sonoma
+  keg_only :versioned_formula
+
   depends_on "cmake" => :build
+  depends_on "ninja" => :build
+  depends_on "python@3.14" => :build
+
+  on_macos do
+    depends_on macos: :sonoma
+  end
 
   def install
-    args = std_cmake_args + %W[
-      -DBINJAD_BUILD_TESTS=OFF
-      -DBINJAD_USE_KEYCHAIN=ON
-      -DBN_INSTALL_DIR=/Applications/Binary\ Ninja.app
-      -DBINJAD_SERVICE_EXECUTABLE=#{opt_bin}/binjad
+    args = [
+      "-G", "Ninja",
+      *std_cmake_args,
+      "-DBINJAD_BUILD_TESTS=OFF",
+      "-DBINJAD_USE_KEYCHAIN=#{OS.mac? ? "ON" : "OFF"}",
     ]
+    args << "-DBINJAD_SERVICE_EXECUTABLE=#{opt_bin}/binjad" if OS.mac?
+
     system "cmake", "-S", ".", "-B", "build", *args
     system "cmake", "--build", "build", "--parallel"
     system "cmake", "--install", "build"
+
+    return unless OS.linux?
+
+    unit = <<~'SYSTEMD'
+      [Unit]
+      Description=binjad headless Binary Ninja MCP server
+      After=network.target
+
+      [Service]
+      Type=simple
+      ExecStart=__BINJAD_EXECUTABLE__
+      Restart=always
+      RestartSec=10
+
+      [Install]
+      WantedBy=default.target
+    SYSTEMD
+    (prefix/"binjad.service").write unit.sub("__BINJAD_EXECUTABLE__", (opt_bin/"binjad").to_s)
+  end
+
+  def caveats
+    requirement = <<~EOS
+      binjad requires Binary Ninja @BINJAD_BINARY_NINJA_VERSION@ and a license that permits headless operation.
+      Binary Ninja is not included in this package.
+    EOS
+
+    if OS.mac?
+      return requirement + <<~EOS
+
+        Install Binary Ninja at:
+          /Applications/Binary Ninja.app
+        For another location, set binary_ninja.installation_dir in:
+          ~/Library/Application Support/binjad/config.json
+      EOS
+    end
+
+    requirement + <<~EOS
+
+      Install Binary Ninja at ~/binaryninja by default.
+      For another location, set binary_ninja.installation_dir in:
+        ~/.local/share/binjad/config.json
+    EOS
+  end
+
+  def post_install
+    return unless OS.mac?
+
+    bundle = libexec/"binjad-menubar.app"
+    system "/usr/bin/xattr", "-c", bundle/"Contents/Resources/menubar.png"
+    system "/usr/bin/codesign", "--force", "--sign", "-", "--timestamp=none", bundle
   end
 
   service do
-    name macos: "me.cynder.binjad"
+    name macos: "me.cynder.binjad", linux: "binjad"
+  end
+
+  test do
+    assert_predicate bin/"binjad", :executable?
+    assert_predicate libexec/"binjad-runtime", :executable?
+    assert_path_exists pkgshare/"portal/index.html"
+
+    %w[binaryninjacore kernelcache sharedcache debuggercore].each do |library|
+      assert_empty prefix.glob("**/*#{library}*")
+    end
+
+    if OS.mac?
+      assert_path_exists libexec/"binjad-menubar.app/Contents/MacOS/binjad-menubar"
+      assert_match "<key>MachServices</key>", (prefix/"me.cynder.binjad.plist").read
+      system "/usr/bin/codesign", "--verify", "--strict", libexec/"binjad-menubar.app"
+    else
+      refute_match "EnvironmentFile", (prefix/"binjad.service").read
+    end
+
+    config = testpath/"config.json"
+    config.write <<~JSON
+      {"binary_ninja":{"installation_dir":"#{testpath}/missing-binary-ninja"}}
+    JSON
+    chmod 0600, config
+    output = shell_output("#{bin}/binjad --config=#{config} 2>&1", 1)
+    assert_match "Binary Ninja installation directory is unavailable", output
   end
 end

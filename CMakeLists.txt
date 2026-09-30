@@ -193,28 +193,30 @@ endforeach()
 file(APPEND "${BINJAD_FRIENDLY_WORDS_HEADER}" "}};\n}\n")
 
 if(APPLE)
-    set(BINJAD_PLATFORM_PATH_SOURCE
-        src/Shared/platform/macos/Logging.cpp
-        src/Daemon/platform/macos/ControlUi.cpp
-        src/Daemon/platform/macos/Cpu.cpp
+    set(BINJAD_PLATFORM_BASE_SOURCES
         src/Daemon/platform/macos/Paths.cpp
         src/Shared/platform/posix/PrivateFiles.cpp)
+    set(BINJAD_PLATFORM_FOUNDATION_SOURCES
+        src/Shared/platform/macos/Logging.cpp
+        src/Daemon/platform/macos/ControlUi.cpp
+        src/Daemon/platform/macos/Cpu.cpp)
     set(BINJAD_PLATFORM_SECURITY_SOURCES
         src/Daemon/platform/macos/ToolControl.cpp
         src/Daemon/platform/macos/Random.cpp)
 elseif(WIN32)
-    set(BINJAD_PLATFORM_PATH_SOURCE
+    set(BINJAD_PLATFORM_BASE_SOURCES src/Shared/platform/windows/Paths.cpp)
+    set(BINJAD_PLATFORM_FOUNDATION_SOURCES
         src/Shared/platform/unsupported/Logging.cpp
-        src/Daemon/platform/windows/Cpu.cpp
-        src/Shared/platform/windows/Paths.cpp)
+        src/Daemon/platform/windows/Cpu.cpp)
     set(BINJAD_PLATFORM_SECURITY_SOURCES
         src/Daemon/platform/windows/Random.cpp)
 elseif(UNIX)
-    set(BINJAD_PLATFORM_PATH_SOURCE
-        src/Shared/platform/unsupported/Logging.cpp
-        src/Daemon/platform/linux/Cpu.cpp
+    set(BINJAD_PLATFORM_BASE_SOURCES
         src/Daemon/platform/linux/Paths.cpp
         src/Shared/platform/posix/PrivateFiles.cpp)
+    set(BINJAD_PLATFORM_FOUNDATION_SOURCES
+        src/Shared/platform/unsupported/Logging.cpp
+        src/Daemon/platform/linux/Cpu.cpp)
     set(BINJAD_PLATFORM_SECURITY_SOURCES
         src/Daemon/platform/linux/Random.cpp)
 else()
@@ -234,8 +236,12 @@ endif()
 
 add_library(binjad_foundation STATIC
     src/Daemon/Config.cpp
+    src/Daemon/mcp/ModelFacingDocs.cpp
     src/Daemon/mcp/Protocol.cpp
-    ${BINJAD_PLATFORM_PATH_SOURCE})
+    src/Shared/ConfigPath.cpp
+    src/Shared/DefaultConfig.cpp
+    ${BINJAD_PLATFORM_BASE_SOURCES}
+    ${BINJAD_PLATFORM_FOUNDATION_SOURCES})
 target_include_directories(binjad_foundation
     PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include"
     PRIVATE "${BINJAD_BN_API_SOURCE_DIR}")
@@ -453,15 +459,34 @@ target_link_libraries(binjad_overseer PUBLIC binjad_runtime binjad_security)
 target_compile_features(binjad_overseer PUBLIC cxx_std_20)
 target_link_libraries(binjad_http PUBLIC binjad_overseer)
 
-add_executable(binjad src/Shared/Main.cpp)
-target_include_directories(binjad PRIVATE
+add_library(binjad_launcher STATIC
+    src/Launcher/Launcher.cpp
+    src/Launcher/LauncherConfig.cpp
+    src/Shared/ConfigPath.cpp
+    src/Shared/DefaultConfig.cpp
+    src/Shared/Role.cpp
+    ${BINJAD_PLATFORM_BASE_SOURCES})
+target_include_directories(binjad_launcher
+    PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include"
+    PRIVATE "${BINJAD_BN_API_SOURCE_DIR}")
+target_compile_features(binjad_launcher PUBLIC cxx_std_20)
+
+add_executable(binjad src/Launcher/Main.cpp)
+target_include_directories(binjad PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include")
+target_link_libraries(binjad PRIVATE binjad_launcher)
+target_compile_features(binjad PRIVATE cxx_std_20)
+
+add_executable(binjad_daemon src/Shared/Main.cpp)
+set_target_properties(binjad_daemon PROPERTIES OUTPUT_NAME binjad-runtime)
+target_include_directories(binjad_daemon PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/include"
     "${CMAKE_CURRENT_BINARY_DIR}/generated/include")
-target_link_libraries(binjad PRIVATE
+target_link_libraries(binjad_daemon PRIVATE
     binjad_http
     binjad_binaryninja
     binjad_overseer)
-target_compile_features(binjad PRIVATE cxx_std_20)
+target_compile_features(binjad_daemon PRIVATE cxx_std_20)
+add_dependencies(binjad binjad_daemon)
 
 if(APPLE)
     configure_file(packaging/macos/BinjadMenuBar-Info.plist.in
@@ -472,11 +497,20 @@ if(APPLE)
         src/MenuBar/MenuBar.mm
         resources/menubar.png)
     find_library(BINJAD_APPKIT_FRAMEWORK AppKit REQUIRED)
+    find_program(BINJAD_CODESIGN_EXECUTABLE codesign REQUIRED)
+    find_program(BINJAD_XATTR_EXECUTABLE xattr REQUIRED)
     target_link_libraries(binjad-menubar PRIVATE "${BINJAD_APPKIT_FRAMEWORK}")
     target_compile_features(binjad-menubar PRIVATE cxx_std_20)
     target_compile_options(binjad-menubar PRIVATE -fobjc-arc -Wall -Wextra -Wpedantic)
     set_target_properties(binjad-menubar PROPERTIES
         MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_BINARY_DIR}/BinjadMenuBar-Info.plist")
+    add_custom_command(TARGET binjad-menubar POST_BUILD
+        COMMAND "${BINJAD_XATTR_EXECUTABLE}" -c
+            "$<TARGET_BUNDLE_DIR:binjad-menubar>/Contents/Resources/menubar.png"
+        COMMAND "${BINJAD_CODESIGN_EXECUTABLE}" --force --sign - --timestamp=none
+            "$<TARGET_BUNDLE_DIR:binjad-menubar>"
+        COMMENT "Applying an ad hoc signature to the menu bar application"
+        VERBATIM)
 endif()
 
 if(MSVC)
@@ -485,7 +519,9 @@ if(MSVC)
     target_compile_options(binjad_http PRIVATE /W4 /permissive-)
     target_compile_options(binjad_binaryninja PRIVATE /W4 /permissive-)
     target_compile_options(binjad_overseer PRIVATE /W4 /permissive-)
+    target_compile_options(binjad_launcher PRIVATE /W4 /permissive-)
     target_compile_options(binjad PRIVATE /W4 /permissive-)
+    target_compile_options(binjad_daemon PRIVATE /W4 /permissive-)
 else()
     target_compile_options(binjad_foundation PRIVATE -Wall -Wextra -Wpedantic)
     target_compile_options(binjad_security PRIVATE -Wall -Wextra -Wpedantic)
@@ -503,7 +539,10 @@ else()
         -Wall -Wextra -Wpedantic
         -Wno-gcc-compat
         -Wno-nullability-extension)
+    target_compile_options(binjad_launcher PRIVATE -Wall -Wextra -Wpedantic)
     target_compile_options(binjad PRIVATE
+        -Wall -Wextra -Wpedantic)
+    target_compile_options(binjad_daemon PRIVATE
         -Wall -Wextra -Wpedantic
         -Wno-gcc-compat
         -Wno-nullability-extension)
@@ -515,14 +554,15 @@ if(APPLE)
     else()
         set(BINJAD_BN_CORE_RPATH "/Applications/Binary Ninja.app/Contents/MacOS")
     endif()
-    set_target_properties(binjad PROPERTIES INSTALL_RPATH
+    set_target_properties(binjad_daemon PROPERTIES INSTALL_RPATH
         "${BINJAD_BN_CORE_RPATH};${BINJAD_BN_CORE_RPATH}/plugins")
 elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND BN_INSTALL_DIR)
-    set_target_properties(binjad PROPERTIES INSTALL_RPATH
+    set_target_properties(binjad_daemon PROPERTIES INSTALL_RPATH
         "${BN_INSTALL_DIR};${BN_INSTALL_DIR}/plugins;${BN_INSTALL_DIR}/plugins/lldb/lib")
 endif()
 
 install(TARGETS binjad RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
+install(TARGETS binjad_daemon RUNTIME DESTINATION "${CMAKE_INSTALL_LIBEXECDIR}")
 if(APPLE)
     install(TARGETS binjad-menubar BUNDLE DESTINATION "${CMAKE_INSTALL_LIBEXECDIR}")
     if(BINJAD_SERVICE_EXECUTABLE)
@@ -557,6 +597,39 @@ install(CODE [[
 option(BINJAD_BUILD_TESTS "Enable real-daemon end-to-end tests" ON)
 if(BINJAD_BUILD_TESTS)
     enable_testing()
+    add_executable(binjad-config-tests tests/ConfigTests.cpp)
+    target_link_libraries(binjad-config-tests PRIVATE binjad_foundation binaryninjaapi)
+    target_compile_features(binjad-config-tests PRIVATE cxx_std_20)
+    add_test(NAME binjad.config COMMAND binjad-config-tests)
+    set_tests_properties(binjad.config PROPERTIES LABELS "binjad;configuration")
+
+    add_executable(binjad-launcher-tests tests/LauncherTests.cpp)
+    target_link_libraries(binjad-launcher-tests PRIVATE binjad_launcher)
+    target_compile_features(binjad-launcher-tests PRIVATE cxx_std_20)
+    add_test(NAME binjad.launcher COMMAND binjad-launcher-tests)
+    set_tests_properties(binjad.launcher PROPERTIES LABELS "binjad;launcher")
+
+    if(MSVC)
+        target_compile_options(binjad-config-tests PRIVATE /W4 /permissive-)
+        target_compile_options(binjad-launcher-tests PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(binjad-config-tests PRIVATE -Wall -Wextra -Wpedantic)
+        target_compile_options(binjad-launcher-tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+
+    add_executable(binjad-model-facing-docs-tests tests/ModelFacingDocsTests.cpp)
+    target_include_directories(binjad-model-facing-docs-tests PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/Daemon/mcp")
+    target_link_libraries(binjad-model-facing-docs-tests PRIVATE binjad_foundation)
+    target_compile_features(binjad-model-facing-docs-tests PRIVATE cxx_std_20)
+    if(MSVC)
+        target_compile_options(binjad-model-facing-docs-tests PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(binjad-model-facing-docs-tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME binjad.model_facing_docs COMMAND binjad-model-facing-docs-tests)
+    set_tests_properties(binjad.model_facing_docs PROPERTIES LABELS "binjad;mcp;documentation")
+
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         add_executable(binjad-linux-child-runtime-tests tests/LinuxChildRuntimeTests.cpp)
         target_link_libraries(binjad-linux-child-runtime-tests PRIVATE binjad_runtime)

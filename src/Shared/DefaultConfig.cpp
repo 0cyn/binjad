@@ -1,4 +1,9 @@
-{
+#include "binjad/Config.hpp"
+
+namespace binjad {
+	std::string_view DefaultConfigJson()
+	{
+		return R"json({
   "_comment": "Unknown fields such as _comment are ignored. Known fields are validated strictly.",
   "binary_ninja": {
     "_comment": "Set an absolute Binary Ninja installation root. Leave it empty for the platform default.",
@@ -71,3 +76,6 @@
     "debugger": true
   }
 }
+)json";
+	}
+}  // namespace binjad

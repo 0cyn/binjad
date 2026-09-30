@@ -234,7 +234,8 @@ namespace binjad::portal {
 
 		bool SameRestartGatedConfig(const Config& left, const Config& right)
 		{
-			return left.tools.discoveryMode == right.tools.discoveryMode
+			return left.binaryNinja.installationDirectory == right.binaryNinja.installationDirectory
+				&& left.tools.discoveryMode == right.tools.discoveryMode
 				&& left.listener.addresses == right.listener.addresses && left.listener.port == right.listener.port
 				&& left.http.publicBaseUrl == right.http.publicBaseUrl && left.http.mcpPath == right.http.mcpPath
 				&& left.http.uploadPath == right.http.uploadPath && left.http.portalPath == right.http.portalPath
@@ -949,10 +950,40 @@ namespace binjad::portal {
 	http::ImmediateResponse Api::Page() const
 	{
 		auto response = Asset("index.html");
-		constexpr std::string_view marker = "{{PORTAL_PATH}}";
-		for (auto position = response.body.find(marker); position != std::string::npos;
-			position = response.body.find(marker, position + config_.http.portalPath.size()))
-			response.body.replace(position, marker.size(), config_.http.portalPath);
+		const auto escapeAttribute = [](std::string_view value) {
+			std::string escaped;
+			escaped.reserve(value.size());
+			for (const auto character : value)
+			{
+				switch (character)
+				{
+				case '&':
+					escaped += "&amp;";
+					break;
+				case '"':
+					escaped += "&quot;";
+					break;
+				case '<':
+					escaped += "&lt;";
+					break;
+				case '>':
+					escaped += "&gt;";
+					break;
+				default:
+					escaped += character;
+				}
+			}
+			return escaped;
+		};
+		const auto replaceMarker = [&](std::string_view marker, std::string_view value) {
+			for (auto position = response.body.find(marker); position != std::string::npos;
+				position = response.body.find(marker, position + value.size()))
+				response.body.replace(position, marker.size(), value);
+		};
+		const auto portalPath = escapeAttribute(config_.http.portalPath);
+		replaceMarker("{{PORTAL_PATH}}", portalPath);
+		const auto statusPath = escapeAttribute(config_.http.healthPath + "/status");
+		replaceMarker("{{STATUS_PATH}}", statusPath);
 		response.headers.emplace_back("Content-Security-Policy",
 			"default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; "
 			"connect-src 'self'; form-action 'self'; base-uri 'none'");

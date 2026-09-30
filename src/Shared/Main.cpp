@@ -5,6 +5,7 @@
 #include "binjad/http/PortalRoutes.hpp"
 #include "binjad/http/UploadRoutes.hpp"
 #include "binjad/Logging.hpp"
+#include "binjad/launcher/Launcher.hpp"
 #include "binjad/overseer/FileChildCoordinator.hpp"
 #include "binjad/overseer/AnalysisScheduler.hpp"
 #include "binjad/overseer/ProjectChildCoordinator.hpp"
@@ -204,66 +205,37 @@ namespace {
 		binjad::portal::Api portalApi;
 	};
 
-	struct OverseerOptions
-	{
-		std::filesystem::path configPath;
-	};
-
-	std::optional<OverseerOptions> ParseOverseerOptions(int argc, char** argv)
-	{
-		OverseerOptions options {binjad::platform::DefaultConfigPath()};
-		int index = 1;
-		for (; index < argc; ++index)
-		{
-			const std::string_view argument(argv[index]);
-			if (argument == "--config")
-			{
-				if (++index >= argc)
-				{
-					ReportError("--config requires a path");
-					return std::nullopt;
-				}
-				options.configPath = argv[index];
-				continue;
-			}
-			constexpr std::string_view prefix = "--config=";
-			if (argument.starts_with(prefix) && argument.size() > prefix.size())
-			{
-				options.configPath = argument.substr(prefix.size());
-				continue;
-			}
-			ReportError("unknown argument: " + std::string(argument));
-			return std::nullopt;
-		}
-		return options;
-	}
-
 	int RunOverseer(int argc, char** argv)
 	{
-		std::optional<OverseerOptions> options;
-		try
+		const auto selectedConfig = binjad::SelectConfigPath(argc, argv);
+		if (!selectedConfig.path)
 		{
-			options = ParseOverseerOptions(argc, argv);
-		}
-		catch (const std::exception& exception)
-		{
-			ReportError("cannot determine configuration path: " + std::string(exception.what()));
+			ReportError(selectedConfig.error);
 			return EXIT_FAILURE;
 		}
-		if (!options)
-			return EXIT_FAILURE;
+		const auto configPath = *selectedConfig.path;
 
-		const auto result = binjad::LoadOrCreateConfig(options->configPath);
+		const auto result = binjad::LoadOrCreateConfig(configPath);
 		if (!result.config)
 		{
 			for (const auto& error : result.errors)
 				ReportError("configuration " + error.path + ": " + error.message);
 			return EXIT_FAILURE;
 		}
+		if (const char* launchedInstallation = std::getenv(binjad::launcher::kInstallationEnvironment.data());
+			launchedInstallation && *launchedInstallation)
+		{
+			const auto selectedInstallation = std::filesystem::path(launchedInstallation).lexically_normal();
+			if (selectedInstallation != result.config->binaryNinja.installationDirectory)
+			{
+				ReportError("configured Binary Ninja installation changed after launcher validation");
+				return EXIT_FAILURE;
+			}
+		}
 
 		try
 		{
-			auto authenticationRuntime = std::make_shared<AuthenticationRuntime>(*result.config, options->configPath);
+			auto authenticationRuntime = std::make_shared<AuthenticationRuntime>(*result.config, configPath);
 			if (const auto error = authenticationRuntime->Load(); !error.empty())
 				throw std::runtime_error(error);
 			auto sessionRuntime = std::make_shared<SessionRuntime>(*result.config);
@@ -421,7 +393,7 @@ namespace {
 				std::shared_ptr<binjad::portal::Api>(authenticationRuntime, &authenticationRuntime->portalApi);
 #if defined(__APPLE__)
 			auto toolControl = binjad::platform::StartToolControlServer(
-				binjad::platform::ToolControlSocketPath(options->configPath), portalApi);
+				binjad::platform::ToolControlSocketPath(configPath), portalApi);
 			if (!toolControl.error.empty())
 				binjad::Log(binjad::LogLevel::Error, "cannot start menu tool control: " + toolControl.error);
 #endif
@@ -432,7 +404,7 @@ namespace {
 					,
 					fileRuntime,
 					executable,
-					configPath = options->configPath,
+					configPath,
 					config = *result.config
 #elif defined(__linux__)
 					,

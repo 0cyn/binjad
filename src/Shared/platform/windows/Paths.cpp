@@ -21,6 +21,14 @@ namespace binjad::platform {
 		return UserDataDirectory() / "config.json";
 	}
 
+	std::filesystem::path DefaultBinaryNinjaInstallationDirectory()
+	{
+		const char* localAppData = std::getenv("LOCALAPPDATA");
+		if (!localAppData || !*localAppData)
+			throw std::runtime_error("LOCALAPPDATA is not set");
+		return std::filesystem::path(localAppData) / "Vector35" / "BinaryNinja";
+	}
+
 	std::string CreatePrivateDirectory(const std::filesystem::path& path)
 	{
 		if (path.empty())

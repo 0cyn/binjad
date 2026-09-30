@@ -21,7 +21,7 @@ I am not currently an employee or affiliate of Vector 35 and this project is not
 * KernelCache, SharedCache, Debugger support
 * Diffing
 * Mach-O, ELF, and PE header/dependency parsing
-* binaryninja:// url creation
+* binaryninja:// url helper
 * Feature parity w/ official MCP; all of the toolcalls from the official are present too
 * Files are loaded in individual processes, so crashes do not destroy other unsaved work.
 * Project support can be forced, so local LLM agents can work fully sandboxed. 
@@ -41,7 +41,6 @@ while not working over VNC.
 ![img.png](.github/img/menubar.png)
 
 * Markdown and JSON project file readers. Agents loooove putting these in Projects, so I just made it first-class behavior.
-* Recursive local-directory imports and safe adoption of outside-root projects into configured project roots.
 * A nice non-claudeslop panel you can use to fuck w/ settings, handle auth, etc.
 * it's been tuned to work with smellier local models; several Qwen 3.8 27b agents on a 5090 doing binary analysis in parallel was a common use case while testing
 * and on that note, a lot has been done to make sure it doesn't obliterate context
@@ -79,7 +78,7 @@ just fine!
 <p align="center"><sub>a subagent digging through the diff</sub></p>
 
 ![img.png](.github/img/demoresult.png)
-<p align="center"><sub>Digging through the generated report using `bntextviews`</sub></p>
+<p align="center"><sub>Digging through the generated report using `bntextviews` (unchecked, probably pretty close, but you've got hotlinks to make that validation so much easier on your end.)</sub></p>
 
 
 Use this with the `bntextviews` plugin to allow your agents to write markdown/json content into projects you can then display in
@@ -102,14 +101,23 @@ help lower-spec models through trickier things.
 
 installation is currently done through homebrew. 
 
-macOS/linux only for now, windows will come eventually. Not a design limitation, just need to hash out how some things
-will work there. 
+The default Binary Ninja locations are `/Applications/Binary Ninja.app` on macOS and `~/binaryninja` on Linux.
 
-Once installed, start the service, head to http://127.0.0.1:8712/portal, and create the account. You'll be prompted by macOS
-for keychain password on daemon startup and signup since we store keys, login info, and such there. There is also a
+For another location, set `binary_ninja.installation_dir` to an absolute path in the configuration and restart the service.
+
+Once installed, start the service, head to http://127.0.0.1:8712/portal, and create the account.
+
+On macOS, You'll be prompted by macOS for keychain password on daemon startup and acct creation since we store keys, login info, and such there. There is also a
 menu bar item that allows you to stop/start/restart the daemon, hot-toggle toolkits, view runtime status, and hop back to the portal.
 
-You can configure the daemon through the web portal or by manually editing `~/Library/Application\ Support/binjad/config.json`
+Use the web portal for configuration. The default configuration paths are:
+
+* macOS: `~/Library/Application Support/binjad/config.json`
+* Linux: `$XDG_DATA_HOME/binjad/config.json`, or `~/.local/share/binjad/config.json` when `XDG_DATA_HOME` is unset
+
+The installed `binjad` command is a small native launcher with no Binary Ninja dependency.
+
+It reads the configuration, sets the platform library search path, and executes `libexec/binjad-runtime`.
 
 Please thumbs-up the [Windows Support]() or [Linux Support]() issues if you need it on these platforms. 
 
@@ -120,27 +128,36 @@ binja'd (and new versions of it) are released in lockstep with BinaryNinja versi
 e.g. I push bugfixes, next time binaryninja-api gets pushed by v35 for a dev build it triggers a build on this repo and that bugfix gets rolled
 out for the latest version.
 
+I highly reccomend for the time being you run this on a BinaryNinja "Stable" release, to avoid having to update constantly.
 
 ##### If you run into a binaryninja bug while using this, file an issue here and we can figure out whether it's a bug w/ this project or with Binary Ninja itself before spamming their repo.
 
 
 ```shell
-INSTALLED_VERSION=/Applications/Binary\ Ninja.app/Contents/MacOS/bnpython3 -c "print(__import__('binaryninja').core_version().split('-')[0])"
-brew install 0cyn/tap/binjad@$INSTALLED_VERSION
-brew services start binjad
-# open configuration panel to set it up and get an MCP token. 
-open http://127.0.0.1:8712
+# The alias selects the current supported Binary Ninja version.
+brew install 0cyn/tap/binjad
+brew services start 0cyn/tap/binjad
+
+# Open the configuration panel to create the account and MCP token.
+open http://127.0.0.1:8712/portal  # macOS
+```
+
+Use an explicit formula when you must select a Binary Ninja version:
+
+```shell
+brew install 0cyn/tap/binjad@6.1.10695
+brew services start 0cyn/tap/binjad@6.1.10695
 ```
 
 #### restart/stop
 
 ```shell
 # restart the daemon
-brew services restart binjad
+brew services restart 0cyn/tap/binjad
 # stop it
-brew services stop binjad
+brew services stop 0cyn/tap/binjad
 # start it again
-brew services start binjad
+brew services start 0cyn/tap/binjad
 ```
 
 #### connecting to the MCP
@@ -157,6 +174,11 @@ brew services start binjad
   "enabled": true
 }
 ```
+
+#### exposing on LAN
+
+See [security notes](#security). This daemon will only ever advertise on loopback, you'll need to expose it yourself with
+nginx or something.
 
 ### commercial license
 

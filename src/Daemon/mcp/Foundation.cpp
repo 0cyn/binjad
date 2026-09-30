@@ -1,5 +1,6 @@
 #include "binjad/mcp/Foundation.hpp"
 
+#include "ModelFacingDocs.hpp"
 #include "ToolCall.hpp"
 
 #include "binjad/overseer/FileChildCoordinator.hpp"
@@ -23,7 +24,6 @@
 #include <fstream>
 #include <limits>
 #include <string_view>
-#include <tuple>
 #include <thread>
 #include <type_traits>
 #include <unordered_set>
@@ -561,50 +561,30 @@ namespace binjad::mcp {
 			const ValidatedRequest& request, std::string_view serverVersion, bool localProjects)
 		{
 			return Response(request, [&](auto& writer) {
+				const auto writeResource = [&](std::string_view uri) {
+					const auto& documentation = docs::Resource(uri);
+					writer.StartObject();
+					writer.Key("uri");
+					writer.String(uri.data(), static_cast<rapidjson::SizeType>(uri.size()));
+					writer.Key("name");
+					writer.String(
+						documentation.name.data(), static_cast<rapidjson::SizeType>(documentation.name.size()));
+					writer.Key("description");
+					writer.String(documentation.description.data(),
+						static_cast<rapidjson::SizeType>(documentation.description.size()));
+					writer.Key("mimeType");
+					writer.String(
+						documentation.mimeType.data(), static_cast<rapidjson::SizeType>(documentation.mimeType.size()));
+					writer.EndObject();
+				};
 				writer.Key("resources");
 				writer.StartArray();
-				writer.StartObject();
-				writer.Key("uri");
-				writer.String("binjad://docs");
-				writer.Key("name");
-				writer.String("Quick start");
-				writer.Key("description");
-				writer.String("Minimal binjad lifecycle and argument rules.");
-				writer.Key("mimeType");
-				writer.String("text/markdown");
-				writer.EndObject();
-				for (const auto& [uri, name, description] :
-					{std::tuple {"binjad://compute", "Compute status", "Current analysis capacity and allocation."},
-						std::tuple {"binjad://analysis-sessions", "Analysis sessions",
-							"Analysis sessions owned by this bearer token."},
-						std::tuple {"binjad://open-items", "Open items",
-							"Open files and BinaryView candidates owned by this bearer token."},
-						std::tuple {"binjad://jobs", "Detached jobs", "Detached jobs owned by this bearer token."}})
-				{
-					writer.StartObject();
-					writer.Key("uri");
-					writer.String(uri);
-					writer.Key("name");
-					writer.String(name);
-					writer.Key("description");
-					writer.String(description);
-					writer.Key("mimeType");
-					writer.String("application/json");
-					writer.EndObject();
-				}
+				writeResource("binjad://docs");
+				for (const auto uri :
+					{"binjad://compute", "binjad://analysis-sessions", "binjad://open-items", "binjad://jobs"})
+					writeResource(uri);
 				if (localProjects)
-				{
-					writer.StartObject();
-					writer.Key("uri");
-					writer.String("binjad://local-projects");
-					writer.Key("name");
-					writer.String("Local projects");
-					writer.Key("description");
-					writer.String("Shared local Binary Ninja project catalog.");
-					writer.Key("mimeType");
-					writer.String("application/json");
-					writer.EndObject();
-				}
+					writeResource("binjad://local-projects");
 				writer.EndArray();
 				if (IsModern(request.version))
 					WriteServerMeta(writer, serverVersion);
@@ -614,17 +594,21 @@ namespace binjad::mcp {
 		std::string TemplatesResponse(const ValidatedRequest& request, std::string_view serverVersion)
 		{
 			return Response(request, [&](auto& writer) {
+				constexpr std::string_view uri = "binjad://analysis-sessions/{analysisSession}";
+				const auto& documentation = docs::Resource(uri);
 				writer.Key("resourceTemplates");
 				writer.StartArray();
 				writer.StartObject();
 				writer.Key("uriTemplate");
-				writer.String("binjad://analysis-sessions/{analysisSession}");
+				writer.String(uri.data(), static_cast<rapidjson::SizeType>(uri.size()));
 				writer.Key("name");
-				writer.String("Analysis session");
+				writer.String(documentation.name.data(), static_cast<rapidjson::SizeType>(documentation.name.size()));
 				writer.Key("description");
-				writer.String("One analysis session owned by this bearer token.");
+				writer.String(documentation.description.data(),
+					static_cast<rapidjson::SizeType>(documentation.description.size()));
 				writer.Key("mimeType");
-				writer.String("application/json");
+				writer.String(
+					documentation.mimeType.data(), static_cast<rapidjson::SizeType>(documentation.mimeType.size()));
 				writer.EndObject();
 				writer.EndArray();
 				if (IsModern(request.version))
@@ -698,50 +682,6 @@ namespace binjad::mcp {
 			return {buffer.GetString(), buffer.GetSize()};
 		}
 
-		constexpr std::string_view kQuickStartDocs =
-			"Tool discovery: when bn_tools is advertised, use categories, list, and describe before calling an omitted "
-			"tool through bn_tools with operation=call. The common lifecycle and control surface remains direct.\n"
-			"Flow: project_list -> file_list -> project_file_open -> binary_view_open(recommended) -> "
-			"analysis_update_and_wait -> query/mutate -> binary_view_save(if changed) -> open_item_close.\n"
-			"Uploads: bn_upload_get_url returns a one-time PUT capability and explicit authorization requirements; "
-			"commit to a project-relative folder path; import-only commits return JSON and successful retries return "
-			"the original result; use bn_upload_list/cancel for cleanup. Local administrators should prefer "
-			"bn_local_project_file_import_batch for explicit files already on the server, or "
-			"bn_local_project_directory_import to preserve a directory tree; resume a partial directory import with "
-			"the returned lastCompleted value as startAfter.\n"
-			"Project files: project-relative paths are unique and select files together with project; imports accept "
-			"an initial description; bn_local_project_file_list returns descriptions; bn_local_project_file_update "
-			"sets or replaces one, and an empty description string clears it.\n"
-			"Project documents: use bn_project_text_read for line/query pagination over UTF-8 text and Markdown; use "
-			"bn_project_json_read with RFC 6901 pointers to page object keys or array indexes without expanding "
-			"unrelated subtrees. These tools read project files directly without a BinaryView.\n"
-			"Project writes: if a mutation says the project may be open or read-only, ask the user to close that "
-			"project in the Binary Ninja GUI, then retry. Failed upload commits remain staged and may be retried with "
-			"the same id without re-uploading.\n"
-			"Project recovery: bn_local_project_root_list returns private root indexes. "
-			"bn_local_project_relocate copies a closed outside-root project beneath one selected root, verifies its "
-			"durable ID, retains the old source on disk, and removes the old registration.\n"
-			"Headers: bn_binary_header_info summarizes Mach-O, ELF, or PE identity and security fields; use "
-			"bn_linked_library_list for dependencies and the format-specific Header Parsing lists for low-level rows.\n"
-			"Functions: FunctionSymbol is annotation only; use bn_entry_point_add for an analysis root and "
-			"bn_function_create for a persistent user function, then update analysis and save the BinaryView.\n"
-			"URLs: bn_url_open_item links owned arbitrary-path provenance. For a local-project item, call "
-			"bn_binary_view_save after the latest changes, then call bn_url_project_file with "
-			"updated_bndb_has_been_saved:true; its URL opens the committed project backing file, never unsaved child "
-			"state. "
-			"Use bn_url_remote_file for an absolute http, https, or file URL, and bn_url_navigate for a Binary Ninja "
-			"report-relative expression link. These tools percent-encode expr values.\n"
-			"Raw firmware: open only discovers candidates; select Mapped rather than Raw, call "
-			"bn_binary_view_load_settings, then pass fully qualified loader.platform, loader.imageBase, and "
-			"loader.entryPointOffset options to bn_binary_view_open. Thumb vector values have bit zero set, but Mapped "
-			"entry/function addresses use the aligned code address. loader.segments and loader.sections are serialized "
-			"JSON strings.\n"
-			"Rules: every view tool needs binaryView; query first, use small limits, and continue with nextOffset; "
-			"async job results are one-shot; direct C types use definition, while source+type selects a parsed "
-			"declaration; after function/variable mutation follow nextAction; set prototypes before variable names; "
-			"reopen BNDBs with reuseDatabase:true and analyze:false; close only items created by your workflow because "
-			"token-wide lists may include concurrent clients; legacy analysis sessions are transport-managed.";
-
 		ValidatedRequest DocumentationRequest(
 			ProtocolVersion version, std::uint64_t id, std::string method, std::string uri = {})
 		{
@@ -802,73 +742,22 @@ namespace binjad::mcp {
 		void WriteFailureContracts(WriterType& writer)
 		{
 			writer.StartObject();
-			const auto contract = [&](const char* id, const char* when, const char* surface) {
-				writer.Key(id);
+			const auto contract = [&](std::string_view id) {
+				const auto& documentation = docs::FailureContracts().at(id);
+				writer.Key(id.data(), static_cast<rapidjson::SizeType>(id.size()));
 				writer.StartObject();
 				writer.Key("when");
-				writer.String(when);
+				writer.String(documentation.when.data(), static_cast<rapidjson::SizeType>(documentation.when.size()));
 				writer.Key("surface");
-				writer.String(surface);
+				writer.String(
+					documentation.surface.data(), static_cast<rapidjson::SizeType>(documentation.surface.size()));
 				writer.EndObject();
 			};
-			contract("invalid_arguments",
-				"A required argument is absent, has the wrong type or range, or an unknown argument is supplied.",
-				"JSON-RPC -32602; HTTP 400 for modern MCP and HTTP 200 for legacy MCP.");
-			contract("analysis_session_unavailable",
-				"The analysis session is unknown, expired, belongs to another token, or is not valid for this protocol "
-				"flow.",
-				"JSON-RPC error, normally session not found; no tool result is produced.");
-			contract("binary_view_unavailable",
-				"The BinaryView reference is unknown, belongs to another session, is not materialized, or its file "
-				"child failed.",
-				"Tool result with isError:true and a structured error string.");
-			contract("open_item_unavailable",
-				"The open-item reference is unknown, belongs to another token/session, is busy, or requires discard "
-				"acknowledgement.",
-				"Tool result with isError:true and a structured error string.");
-			contract("project_unavailable",
-				"The project/file/folder is unknown, unauthorized, locked by another Binary Ninja process, read-only, "
-				"or unavailable in the active project mode.",
-				"Tool result with isError:true; lock failures instruct the caller to ask the user to close the GUI "
-				"project and retry.");
-			contract("job_unavailable",
-				"The job is unknown, owned by another token, not terminal, already consumed, or cannot be cancelled.",
-				"Tool result with isError:true and a structured error string.");
-			contract("function_unavailable",
-				"The function selector is absent or ambiguous, analysis has not created it, or the requested "
-				"architecture/view does not contain it.",
-				"Tool result with isError:true; FunctionSymbol-only failures direct callers to bn_function_create.");
-			contract("type_unavailable",
-				"A named type cannot be found, is the wrong class, already exists for a create operation, or C parsing "
-				"fails.",
-				"Tool result with isError:true and parse or selection details.");
-			contract("address_unavailable",
-				"The address expression is invalid, unmapped, outside loaded cache content, or unsuitable for the "
-				"requested operation.",
-				"Tool result with isError:true and contextual load/analyze guidance where available.");
-			contract("plugin_state",
-				"The optional plugin surface is disabled, unavailable, the view is incompatible, or required cache "
-				"content is not loaded.",
-				"Unavailable tools are omitted from discovery; runtime state failures are isError:true tool results.");
-			contract("debugger_state",
-				"The caller is not an admin, debuggercore is unavailable, target configuration is incomplete, or the "
-				"target state rejects the operation.",
-				"The surface is omitted for non-admins; runtime failures are isError:true tool results or failed "
-				"jobs.");
-			contract("diff_state",
-				"Google BinDiff is unavailable, a secondary is not a valid BNDB, the comparison is running, absent, "
-				"cancelled, or belongs to another explicit pair, or a requested match is absent.",
-				"Run failures are terminal job results; cached query and mutation failures are isError:true tool "
-				"results.");
-			contract("persistence_failure",
-				"Storage is locked, read-only, collides with an unrelated destination, upload state is invalid, or a "
-				"a persistence operation fails.",
-				"Tool result or terminal job with structured error/conflict data; documented retryable uploads retain "
-				"their staged id.");
-			contract("service_failure",
-				"A required daemon service/child is unavailable or an unexpected internal operation fails.",
-				"JSON-RPC -32603 when no tool result can be formed; otherwise an isError:true tool result or failed "
-				"job.");
+			for (const auto id : {"invalid_arguments", "analysis_session_unavailable", "binary_view_unavailable",
+					 "open_item_unavailable", "project_unavailable", "job_unavailable", "function_unavailable",
+					 "type_unavailable", "address_unavailable", "plugin_state", "debugger_state", "diff_state",
+					 "persistence_failure", "service_failure"})
+				contract(id);
 			writer.EndObject();
 		}
 	}  // namespace
@@ -993,11 +882,11 @@ namespace binjad::mcp {
 
 		const auto unavailableReason = [&](std::string_view name) -> std::string {
 			if (name == kToolBrokerName && config.tools.discoveryMode != ToolDiscoveryMode::Brokered)
-				return "Requires tools.discovery_mode to be 'brokered'.";
+				return std::string(docs::Availability("brokered_discovery"));
 			const auto* tool = FindToolCall(name);
 			return tool ?
 				tool->UnavailableReason(config, version, role) :
-				"Not advertised for the selected protocol, role, mode, or running options.";
+				std::string(docs::Availability("not_advertised"));
 		};
 
 		StringBuffer buffer;
@@ -1067,7 +956,8 @@ namespace binjad::mcp {
 			config.projects.allowArbitraryPaths, config.projects.allowProjectRegistration);
 		const auto resources = ResourcesResponse(resourcesRequest, serverVersion_, true);
 		const auto templates = TemplatesResponse(templatesRequest, serverVersion_);
-		const auto docs = ResourceResponse(docsRequest, kQuickStartDocs, serverVersion_, "text/markdown");
+		const auto quickStart = docs::QuickStart();
+		const auto docsPayload = ResourceResponse(docsRequest, quickStart, serverVersion_, "text/markdown");
 
 		Document toolsDocument;
 		toolsDocument.Parse(tools.data(), tools.size());
@@ -1137,14 +1027,13 @@ namespace binjad::mcp {
 		wire("tools/list", tools);
 		wire("resources/list", resources);
 		wire("resources/templates/list", templates);
-		wire("resources/read binjad://docs", docs);
+		wire("resources/read binjad://docs", docsPayload);
 		writer.EndArray();
 		writer.Key("openCodeProjection");
 		writer.StartObject();
 		writer.Key("boundary");
-		writer.String(
-			"OpenCode controls the final provider-specific model encoding. This projection applies its MCP namespace "
-			"convention to the exact current binjad tool definitions; only mcpWire is byte-for-byte server output.");
+		const auto boundary = docs::OpenCodeProjectionBoundary();
+		writer.String(boundary.data(), static_cast<rapidjson::SizeType>(boundary.size()));
 		writer.Key("clientNamespace");
 		writer.String(clientName.data(), static_cast<rapidjson::SizeType>(clientName.size()));
 		writer.Key("tools");
@@ -1169,7 +1058,7 @@ namespace binjad::mcp {
 		}
 		writer.EndArray();
 		writer.Key("resourceContext");
-		writer.String(kQuickStartDocs.data(), static_cast<rapidjson::SizeType>(kQuickStartDocs.size()));
+		writer.String(quickStart.data(), static_cast<rapidjson::SizeType>(quickStart.size()));
 		writer.EndObject();
 		writer.EndObject();
 		return {buffer.GetString(), buffer.GetSize()};
@@ -1194,7 +1083,7 @@ namespace binjad::mcp {
 		{
 			if (request.uri == "binjad://docs")
 			{
-				return {true, 200, ResourceResponse(request, kQuickStartDocs, serverVersion_, "text/markdown"), {}};
+				return {true, 200, ResourceResponse(request, docs::QuickStart(), serverVersion_, "text/markdown"), {}};
 			}
 			if (request.uri == "binjad://compute")
 			{

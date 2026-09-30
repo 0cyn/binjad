@@ -16,4 +16,9 @@ namespace binjad::platform {
 	{
 		return UserDataDirectory() / "config.json";
 	}
+
+	std::filesystem::path DefaultBinaryNinjaInstallationDirectory()
+	{
+		return "/Applications/Binary Ninja.app";
+	}
 }  // namespace binjad::platform

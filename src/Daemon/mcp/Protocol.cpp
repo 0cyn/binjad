@@ -1,5 +1,7 @@
 #include "binjad/mcp/Protocol.hpp"
 
+#include "ModelFacingDocs.hpp"
+
 #include <rapidjsonwrapper.h>
 
 #include <algorithm>
@@ -22,10 +24,6 @@ namespace binjad::mcp {
 			ProtocolVersion::V2025_06_18,
 			ProtocolVersion::V2025_03_26,
 		};
-
-		constexpr std::string_view kReferenceInstruction =
-			"Four-word references are opaque handles: pass them verbatim to tools, but do not "
-			"interpret or discuss their words in user-facing responses.";
 
 		ProtocolError Error(int code, int status, std::string message, std::optional<RequestId> id = std::nullopt,
 			std::string dataJson = {})
@@ -667,12 +665,8 @@ namespace binjad::mcp {
 		writer.Key("cacheScope");
 		writer.String("private");
 		writer.Key("instructions");
-		writer.String((
-			"Create a session. Flow: open item -> binary_view_open -> analyze -> "
-			"query/mutate -> save -> close. Query first, use small limits, and continue with nextOffset. "
-			"Always close items. "
-			+ std::string(kReferenceInstruction) + " See binjad://docs.")
-				.c_str());
+		const auto instructions = docs::ModernDiscoveryInstructions();
+		writer.String(instructions.data(), static_cast<rapidjson::SizeType>(instructions.size()));
 		writer.Key("_meta");
 		writer.StartObject();
 		writer.Key("io.modelcontextprotocol/serverInfo");
@@ -701,12 +695,8 @@ namespace binjad::mcp {
 		writer.Key("serverInfo");
 		WriteServerInfo(writer, serverVersion);
 		writer.Key("instructions");
-		writer.String((
-			"Flow: open item -> binary_view_open -> analyze -> query/mutate -> save -> "
-			"close. Query first, use small limits, and continue with nextOffset. Always close items; "
-			"the transport manages this legacy analysis session. "
-			+ std::string(kReferenceInstruction) + " See binjad://docs.")
-				.c_str());
+		const auto instructions = docs::LegacyInitializationInstructions();
+		writer.String(instructions.data(), static_cast<rapidjson::SizeType>(instructions.size()));
 		writer.EndObject();
 		writer.EndObject();
 		return {buffer.GetString(), buffer.GetSize()};

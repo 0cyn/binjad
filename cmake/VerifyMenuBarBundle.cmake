@@ -36,3 +36,14 @@ file(SHA256 "${icon}" bundled_icon_hash)
 if(NOT source_icon_hash STREQUAL bundled_icon_hash)
     message(FATAL_ERROR "bundled menu bar icon differs from resources/menubar.png")
 endif()
+
+execute_process(
+    COMMAND /usr/bin/codesign --verify --strict --verbose=2 "${BINJAD_MENU_BAR_BUNDLE}"
+    RESULT_VARIABLE signature_result
+    OUTPUT_VARIABLE signature_output
+    ERROR_VARIABLE signature_error)
+if(NOT signature_result EQUAL 0)
+    message(FATAL_ERROR
+        "menu bar application has an invalid ad hoc signature: "
+        "${signature_output}${signature_error}")
+endif()

@@ -23,6 +23,11 @@ namespace binjad {
 		std::uint16_t port = 8712;
 	};
 
+	struct BinaryNinjaConfig
+	{
+		std::filesystem::path installationDirectory;
+	};
+
 	struct HttpConfig
 	{
 		std::string publicBaseUrl;
@@ -105,6 +110,7 @@ namespace binjad {
 
 	struct Config
 	{
+		BinaryNinjaConfig binaryNinja;
 		ListenerConfig listener;
 		HttpConfig http;
 		CpuConfig cpu;
@@ -114,6 +120,12 @@ namespace binjad {
 		ProjectConfig projects;
 		StorageConfig storage;
 		ToolConfig tools;
+	};
+
+	struct ConfigPathSelection
+	{
+		std::optional<std::filesystem::path> path;
+		std::string error;
 	};
 
 	struct ConfigError
@@ -131,5 +143,6 @@ namespace binjad {
 	ConfigResult ParseConfig(std::string_view json, const std::filesystem::path& configPath);
 	ConfigResult LoadConfig(const std::filesystem::path& configPath);
 	ConfigResult LoadOrCreateConfig(const std::filesystem::path& configPath);
+	ConfigPathSelection SelectConfigPath(int argc, char* const argv[]);
 	std::string_view DefaultConfigJson();
 }  // namespace binjad
