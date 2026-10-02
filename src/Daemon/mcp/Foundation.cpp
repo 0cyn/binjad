@@ -802,10 +802,11 @@ namespace binjad::mcp {
 		session::OpenItemRegistry* openItems, overseer::FileChildCoordinator* fileCoordinator,
 		session::JobRegistry* jobs, project::LocalProjectRegistry* projects,
 		overseer::ProjectChildCoordinator* projectCoordinator, overseer::AnalysisScheduler* scheduler,
-		upload::UploadRegistry* uploads) :
+		upload::UploadRegistry* uploads, download::DownloadRegistry* downloads) :
 		config_(std::move(config)), toolConfig_(config_.tools), sessions_(sessions),
 		serverVersion_(std::move(serverVersion)), openItems_(openItems), fileCoordinator_(fileCoordinator), jobs_(jobs),
-		projects_(projects), projectCoordinator_(projectCoordinator), scheduler_(scheduler), uploads_(uploads)
+		projects_(projects), projectCoordinator_(projectCoordinator), scheduler_(scheduler), uploads_(uploads),
+		downloads_(downloads)
 	{}
 
 	void Foundation::SetToolConfig(ToolConfig config)
@@ -1153,7 +1154,7 @@ namespace binjad::mcp {
 			return {true, IsModern(request.version) ? 400 : 200, {},
 				ProtocolError {-32602, IsModern(request.version) ? 400 : 200, schemaError, request.id, {}}};
 		return tool->Execute({config, sessions_, serverVersion_, openItems_, fileCoordinator_, jobs_, projects_,
-			projectCoordinator_, scheduler_, uploads_, request, principal, currentSession, now, unixNow, progress,
-			attached, *arguments});
+			projectCoordinator_, scheduler_, uploads_, downloads_, request, principal, currentSession, now, unixNow,
+			progress, attached, *arguments});
 	}
 }  // namespace binjad::mcp

@@ -117,6 +117,8 @@ class BinjadAT@BINJAD_BINARY_NINJA_VERSION_IDENTIFIER@ < Formula
     assert_predicate bin/"binjad", :executable?
     assert_predicate libexec/"binjad-runtime", :executable?
     assert_path_exists share/"binjad/portal/index.html"
+    assert_path_exists share/"binjad/portal/setup.html"
+    assert_path_exists share/"binjad/portal/setup.js"
 
     %w[binaryninjacore kernelcache sharedcache debuggercore].each do |library|
       assert_empty prefix.glob("**/*#{library}*")

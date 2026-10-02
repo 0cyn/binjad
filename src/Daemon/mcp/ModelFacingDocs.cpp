@@ -30,12 +30,16 @@ namespace binjad::mcp::docs {
 			"tool through bn_tools with operation=call. The common lifecycle and control surface remains direct.\n"
 			"Flow: project_list -> file_list -> project_file_open -> binary_view_open(recommended) -> "
 			"analysis_update_and_wait -> query/mutate -> binary_view_save(if changed) -> open_item_close.\n"
-			"Uploads: bn_upload_get_url returns a one-time PUT capability and explicit authorization requirements; "
+			"Uploads: bn_upload_get_url returns a one-time PUT capability that authorizes the transfer; "
 			"commit to a project-relative folder path; import-only commits return JSON and successful retries return "
 			"the original result; use bn_upload_list/cancel for cleanup. Local administrators should prefer "
 			"bn_local_project_file_import_batch for explicit files already on the server, or "
 			"bn_local_project_directory_import to preserve a directory tree; resume a partial directory import with "
 			"the returned lastCompleted value as startAfter.\n"
+			"Downloads: local project file, batch, folder, and complete-project download tools prepare immutable "
+			"artifacts through attached or detached jobs. Results provide one-time GET capability URLs that expire "
+			"after one hour. Batch archives preserve project-relative paths; folder and complete-project archives "
+			"include their selected top directory.\n"
 			"Project files: project-relative paths are unique and select files together with project; imports accept "
 			"an initial description; bn_local_project_file_list returns descriptions; bn_local_project_file_update "
 			"sets or replaces one, and an empty description string clears it.\n"
@@ -118,7 +122,7 @@ namespace binjad::mcp::docs {
 		// clang-format off: one documentation record per line is easier to edit.
 		static const CategoryMap categories {
 			{"core", {"Core Workflow", "Projects, uploads, file and BinaryView lifecycle, analysis, jobs, and essential queries."}},
-			{"project_management", {"Project Management & Documents", "Project metadata, files, folders, imports, and project documents."}},
+			{"project_management", {"Project Management & Documents", "Project metadata, files, folders, imports, downloads, and project documents."}},
 			{"function_analysis", {"Function Analysis", "IL, calls, code references, and stack layout."}},
 			{"binary_data", {"Binary Data", "Imports, exports, entries, sections, segments, data, relocations, and references."}},
 			{"search", {"Search", "Comments, bytes, instructions, IL, constants, and project-wide search."}},
@@ -330,14 +334,18 @@ namespace binjad::mcp::docs {
 			{"bn_kernel_cache_symbol_list", {"KernelCache", "List exported KernelCache symbols.", {}}},
 			{"bn_linked_library_list", {"Header Parsing", "List libraries linked by Mach-O load commands, ELF DT_NEEDED entries, or PE import and delay-import tables.", {}}},
 			{"bn_local_project_create", {"Projects", "Create a local project beneath the configured default root, or at an absolute path for an administrator.", {}}},
+			{"bn_local_project_download", {"Downloads", "Prepare a complete local project as a ZIP archive containing its resolved .bnpr directory.", {}}},
 			{"bn_local_project_directory_import", {"Projects", "Import a server-local directory recursively as an attached or detached job, preserving hierarchy, including hidden files, skipping symlinks, and rejecting destination file collisions.", {}}},
 			{"bn_local_project_file_delete", {"Projects", "Delete a local project file selected by project and path.", {}}},
+			{"bn_local_project_file_download", {"Downloads", "Prepare one local project file for download through a one-time HTTP GET capability.", {}}},
+			{"bn_local_project_file_download_batch", {"Downloads", "Prepare up to 1000 selected local project files as a ZIP archive that preserves project-relative paths.", {}}},
 			{"bn_local_project_file_import", {"Projects", "Import one server-local regular file with optional project-file name and description; administrator only.", {}}},
 			{"bn_local_project_file_import_batch", {"Projects", "Import up to 1000 server-local regular files with optional per-file names and descriptions; administrator only.", {}}},
 			{"bn_local_project_file_list", {"Projects", "List local project files and their names, descriptions, paths, folders, and timestamps with optional filters.", {}}},
 			{"bn_local_project_file_update", {"Projects", "Update a local project file selected by project and path: set, replace, or clear its description, rename it, or move it to a folder path.", {}}},
 			{"bn_local_project_folder_create", {"Projects", "Create a local project folder beneath an optional parent path.", {}}},
 			{"bn_local_project_folder_delete", {"Projects", "Recursively delete a local project folder selected by project and path.", {}}},
+			{"bn_local_project_folder_download", {"Downloads", "Prepare one local project folder as a ZIP archive that includes the selected top directory.", {}}},
 			{"bn_local_project_folder_list", {"Projects", "List folders in a local project.", {}}},
 			{"bn_local_project_folder_update", {"Projects", "Update or move a local project folder selected by project and path.", {}}},
 			{"bn_local_project_info", {"Projects", "Inspect a local project.", {}}},
@@ -427,6 +435,9 @@ namespace binjad::mcp::docs {
 				{"bn_open_item_list", "limit", kPage50Response},
 				{"bn_binary_view_list", "limit", kPage50Response},
 				{"bn_function_list", "limit", "Defaults to 50; use query and continue with nextOffset."},
+				{"bn_local_project_file_download", "path", "Exact project-relative file path."},
+				{"bn_local_project_file_download_batch", "paths", "One through 1000 unique project-relative file paths."},
+				{"bn_local_project_folder_download", "path", "Exact project-relative folder path."},
 				{"bn_function_disassembly", "limit", kPage50},
 				{"bn_function_decompile", "language",
 					"Omit for automatic Pseudo Objective-C on Objective-C methods, Pseudo Rust on Rust symbols, and Pseudo C "

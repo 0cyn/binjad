@@ -57,6 +57,12 @@ int main()
 		Require(!rootPortal.config.has_value(), "root portal path was accepted despite the native redirect");
 		Require(HasError(rootPortal, "$.http.portal_path"), "root portal path did not report its field");
 
+		const auto reservedDownload =
+			binjad::ParseConfig(R"json({"http":{"upload_path":"/downloads"}})json", configPath);
+		Require(!reservedDownload.config.has_value(), "reserved download endpoint was accepted as another HTTP path");
+		Require(
+			HasError(reservedDownload, "$.http.upload_path"), "reserved download endpoint did not report its field");
+
 		std::string argv0 = "binjad";
 		std::string option = "--config";
 		std::string selectedPath = configPath.string();

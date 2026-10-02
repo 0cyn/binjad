@@ -818,6 +818,7 @@ namespace binjad {
 			case ipc::Command::kUpdateLocalProjectFile:
 			case ipc::Command::kDeleteLocalProjectFile:
 			case ipc::Command::kDeleteLocalProject:
+			case ipc::Command::kPrepareLocalProjectDownload:
 				throw std::invalid_argument("project command is not valid for a file child");
 			case ipc::Command::ACTION_NOT_SET:
 				throw std::invalid_argument("command has no action");

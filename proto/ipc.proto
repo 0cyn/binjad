@@ -52,6 +52,7 @@ message Command {
     UpdateLocalProjectFile update_local_project_file = 30;
     DeleteLocalProjectFile delete_local_project_file = 31;
     DeleteLocalProject delete_local_project = 32;
+    PrepareLocalProjectDownload prepare_local_project_download = 33;
     ExecuteAnalysisTool execute_analysis_tool = 50;
   }
 }
@@ -171,6 +172,21 @@ message DeleteLocalProject {
   string project_path = 1;
 }
 
+enum LocalProjectDownloadKind {
+  LOCAL_PROJECT_DOWNLOAD_KIND_UNSPECIFIED = 0;
+  LOCAL_PROJECT_DOWNLOAD_KIND_FILE = 1;
+  LOCAL_PROJECT_DOWNLOAD_KIND_FILES = 2;
+  LOCAL_PROJECT_DOWNLOAD_KIND_FOLDER = 3;
+  LOCAL_PROJECT_DOWNLOAD_KIND_PROJECT = 4;
+}
+
+message PrepareLocalProjectDownload {
+  string project_path = 1;
+  LocalProjectDownloadKind kind = 2;
+  repeated string paths = 3;
+  string destination = 4;
+}
+
 message ExecuteAnalysisTool {
   string view_type = 1;
   string name = 2;
@@ -197,6 +213,7 @@ message Reply {
     LocalProjectFolders local_project_folders = 25;
     LocalProjectFolder local_project_folder = 26;
     LocalProjectFile local_project_file = 27;
+    LocalProjectDownloadPrepared local_project_download_prepared = 28;
     AnalysisToolResult analysis_tool_result = 50;
   }
 }
@@ -276,6 +293,12 @@ message LocalProjectFolder {
   string path = 3;
   string name = 4;
   string description = 5;
+}
+
+message LocalProjectDownloadPrepared {
+  uint64 files = 1;
+  uint64 directories = 2;
+  string root_name = 3;
 }
 
 message AnalysisToolResult {

@@ -60,6 +60,7 @@ namespace binjad::portal {
 		using ProjectList = std::function<std::vector<ProjectSummary>()>;
 		using RuntimeStatusProvider = std::function<RuntimeStatus()>;
 		using ToolConfigApply = std::function<void(const ToolConfig&)>;
+		using RestartCallback = std::function<void()>;
 		using McpContextProvider =
 			std::function<std::string(mcp::ProtocolVersion, security::TokenRole, std::string_view)>;
 		using McpToolsProvider = std::function<std::string(mcp::ProtocolVersion, security::TokenRole)>;
@@ -71,17 +72,20 @@ namespace binjad::portal {
 		void SetProjectListCallback(ProjectList callback);
 		void SetRuntimeStatusProvider(RuntimeStatusProvider callback);
 		void SetToolConfigCallback(ToolConfigApply callback);
+		void SetRestartCallback(RestartCallback callback);
 		void SetMcpDocumentationProviders(McpContextProvider context, McpToolsProvider tools);
 		ToolConfig ActiveToolConfig() const;
 		Result<ToolPackUpdate> UpdateToolPacks(const std::vector<std::pair<std::string, bool>>& changes);
 		http::ImmediateResponse Handle(const ApiRequest& request);
 		http::ImmediateResponse PublicStatus() const;
 		http::ImmediateResponse Page() const;
+		http::ImmediateResponse SetupPage() const;
 		http::ImmediateResponse Asset(std::string_view name) const;
 
 	private:
 		std::optional<security::AccountRecord> Authenticate(
 			const ApiRequest& request, http::ImmediateResponse& error) const;
+		http::ImmediateResponse RenderPage(std::string_view name) const;
 
 		Config config_;
 		Service& service_;
@@ -92,10 +96,12 @@ namespace binjad::portal {
 		ProjectList projectList_;
 		RuntimeStatusProvider runtimeStatus_;
 		ToolConfigApply toolConfigApply_;
+		RestartCallback restartCallback_;
 		McpContextProvider mcpContext_;
 		McpToolsProvider mcpTools_;
 		std::string activeConfiguration_;
 		bool restartRequired_ = false;
+		bool restartScheduled_ = false;
 		mutable std::mutex configurationMutex_;
 	};
 }  // namespace binjad::portal

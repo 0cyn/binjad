@@ -32,6 +32,23 @@ namespace binjad::overseer {
 		std::string projectPath;
 	};
 
+	enum class ProjectDownloadKind
+	{
+		File,
+		Files,
+		Folder,
+		Project,
+	};
+
+	struct PreparedProjectDownload
+	{
+		std::filesystem::path contentDirectory;
+		std::filesystem::path workingDirectory;
+		std::uint64_t files = 0;
+		std::uint64_t directories = 0;
+		std::string rootName;
+	};
+
 	class ProjectChildCoordinator
 	{
 	public:
@@ -44,6 +61,8 @@ namespace binjad::overseer {
 
 		ProjectCoordinatorResult<std::vector<project::LocalProjectFileRecord>> ListFiles(std::string_view project);
 		ProjectCoordinatorResult<ExportedProjectFile> ExportFile(std::string_view project, std::string_view path);
+		ProjectCoordinatorResult<PreparedProjectDownload> PrepareDownload(
+			std::string_view project, ProjectDownloadKind kind, const std::vector<std::string>& paths = {});
 		ProjectCoordinatorResult<project::LocalProjectFileRecord> CommitFile(std::string_view project,
 			std::string_view path, const std::filesystem::path& source, bool replaceExisting,
 			bool createFolders = false, std::string_view description = "Saved analysis database");

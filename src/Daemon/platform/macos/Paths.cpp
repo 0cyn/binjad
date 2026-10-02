@@ -4,12 +4,17 @@
 #include <stdexcept>
 
 namespace binjad::platform {
-	std::filesystem::path UserDataDirectory()
+	std::filesystem::path HomeDirectory()
 	{
 		const char* home = std::getenv("HOME");
 		if (!home || !*home)
 			throw std::runtime_error("HOME is not set");
-		return std::filesystem::path(home) / "Library" / "Application Support" / "binjad";
+		return home;
+	}
+
+	std::filesystem::path UserDataDirectory()
+	{
+		return HomeDirectory() / "Library" / "Application Support" / "binjad";
 	}
 
 	std::filesystem::path DefaultConfigPath()

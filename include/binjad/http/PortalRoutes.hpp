@@ -24,6 +24,8 @@ namespace binjad::http {
 			DrogonResponseCallback callback) const;
 		void HandlePage(const drogon::HttpRequestPtr& request, drogon::RequestStreamPtr stream,
 			DrogonResponseCallback callback) const;
+		void HandleSetupPage(const drogon::HttpRequestPtr& request, drogon::RequestStreamPtr stream,
+			DrogonResponseCallback callback) const;
 		void HandleAsset(const drogon::HttpRequestPtr& request, drogon::RequestStreamPtr stream,
 			DrogonResponseCallback callback) const;
 		void HandleApi(const drogon::HttpRequestPtr& request, drogon::RequestStreamPtr stream,

@@ -293,6 +293,8 @@ namespace binjad {
 					AddError(errors, std::string(pathName), "must begin with '/' and contain no query or fragment");
 				else if (pathName == "$.http.portal_path" && path == "/")
 					AddError(errors, std::string(pathName), "must not use the root redirect path");
+				else if (path == kDownloadPath)
+					AddError(errors, std::string(pathName), "must not use the reserved download endpoint path");
 				else if (!uniquePaths.insert(path).second)
 					AddError(errors, std::string(pathName), "must not duplicate another HTTP endpoint path");
 			}
@@ -385,8 +387,6 @@ namespace binjad {
 					else
 						config.uploads.urlTtl = std::chrono::seconds(*value);
 				}
-				if (const auto value = ReadBool(*section, "require_bearer_authentication", "$.uploads", errors))
-					config.uploads.requireBearerAuthentication = *value;
 			}
 			if (config.uploads.memoryThresholdBytes > config.uploads.maxBytes)
 				AddError(errors, "$.uploads.memory_threshold_bytes", "must not exceed max_bytes");

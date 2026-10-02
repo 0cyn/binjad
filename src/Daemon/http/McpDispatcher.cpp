@@ -72,18 +72,18 @@ namespace binjad::http {
 	McpDispatcher::McpDispatcher(session::AnalysisSessionRegistry& sessions, std::string serverVersion, Config config,
 		SteadyNow steadyNow, UnixNow unixNow) :
 		McpDispatcher(sessions, std::move(serverVersion), std::move(config), nullptr, nullptr, nullptr, nullptr,
-			nullptr, nullptr, nullptr, std::move(steadyNow), std::move(unixNow))
+			nullptr, nullptr, nullptr, nullptr, std::move(steadyNow), std::move(unixNow))
 	{}
 
 	McpDispatcher::McpDispatcher(session::AnalysisSessionRegistry& sessions, std::string serverVersion, Config config,
 		session::OpenItemRegistry* openItems, overseer::FileChildCoordinator* fileCoordinator,
 		session::JobRegistry* jobs, project::LocalProjectRegistry* projects,
 		overseer::ProjectChildCoordinator* projectCoordinator, overseer::AnalysisScheduler* scheduler,
-		upload::UploadRegistry* uploads, SteadyNow steadyNow, UnixNow unixNow,
+		upload::UploadRegistry* uploads, download::DownloadRegistry* downloads, SteadyNow steadyNow, UnixNow unixNow,
 		std::shared_ptr<session::SubscriptionRegistry> subscriptions) :
 		sessions_(sessions), serverVersion_(std::move(serverVersion)),
 		foundation_(std::move(config), sessions, serverVersion_, openItems, fileCoordinator, jobs, projects,
-			projectCoordinator, scheduler, uploads),
+			projectCoordinator, scheduler, uploads, downloads),
 		steadyNow_(steadyNow ? std::move(steadyNow) : [] { return session::AnalysisSessionRegistry::Clock::now(); }),
 		unixNow_(unixNow ? std::move(unixNow) : CurrentUnixSeconds),
 		subscriptions_(subscriptions ? std::move(subscriptions) : std::make_shared<session::SubscriptionRegistry>())

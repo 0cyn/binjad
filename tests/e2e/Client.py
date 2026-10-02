@@ -32,7 +32,7 @@ class Transcript:
         if isinstance(value, list):
             return [Transcript.redact(item) for item in value]
         if isinstance(value, str):
-            return re.sub(r"(/uploads/)[^\s\"?]+", r"\1<redacted>", value)
+            return re.sub(r"(/(?:uploads|downloads)/)[^\s\"?]+", r"\1<redacted>", value)
         return value
 
     def write(self, **event):
@@ -50,7 +50,8 @@ class Http:
         self.transcript = transcript
         self.timeout = timeout
 
-    def request(self, method, path, body=None, headers=None, rpc_id=None, chunked=False, disconnect_phase=None):
+    def request(self, method, path, body=None, headers=None, rpc_id=None, chunked=False, disconnect_phase=None,
+                raw_response=False):
         url = urlsplit(path if "://" in path else self.base_url + path)
         headers = dict(headers or {})
         logged_body = body
@@ -114,7 +115,9 @@ class Http:
                 raw = response.read(64 * 1024 * 1024 + 1)
                 require(len(raw) <= 64 * 1024 * 1024, "HTTP response exceeded 64 MiB")
                 content_type = response_headers.get("content-type", "").split(";")[0]
-                if not raw:
+                if raw_response:
+                    payload = raw
+                elif not raw:
                     payload = None
                 elif content_type == "application/json" or content_type.endswith("+json"):
                     payload = json.loads(raw)
@@ -122,8 +125,9 @@ class Http:
                     payload = raw.decode("utf-8")
                 else:
                     payload = {"byteLength": len(raw)}
+            logged_payload = {"byteLength": len(payload)} if isinstance(payload, bytes) else payload
             self.transcript.write(direction="response", status=response.status, headers=response_headers,
-                                  body=payload, elapsed=time.monotonic() - started)
+                                  body=logged_payload, elapsed=time.monotonic() - started)
             return response.status, response_headers, payload, events
         except Exception as error:
             self.transcript.write(direction="transport_error", error=str(error), elapsed=time.monotonic() - started)

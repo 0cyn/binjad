@@ -27,7 +27,7 @@ namespace binjad::http {
 			session::JobRegistry* jobs, project::LocalProjectRegistry* projects = nullptr,
 			overseer::ProjectChildCoordinator* projectCoordinator = nullptr,
 			overseer::AnalysisScheduler* scheduler = nullptr, upload::UploadRegistry* uploads = nullptr,
-			SteadyNow steadyNow = {}, UnixNow unixNow = {},
+			download::DownloadRegistry* downloads = nullptr, SteadyNow steadyNow = {}, UnixNow unixNow = {},
 			std::shared_ptr<session::SubscriptionRegistry> subscriptions = {});
 		void Handle(AdmittedMcpRequest request, DrogonResponseCallback callback);
 		std::string ContextDocumentation(

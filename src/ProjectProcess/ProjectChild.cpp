@@ -13,6 +13,7 @@
 #include <fstream>
 #include <iterator>
 #include <map>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -48,10 +49,22 @@ namespace binjad {
 			return result.generic_string();
 		}
 
+		std::string ProjectOpenPath(const std::string& path)
+		{
+			const std::filesystem::path supplied(path);
+			const auto parent = supplied.parent_path();
+			std::error_code error;
+			if (supplied.extension() == ".bnpm" && parent.extension() == ".bnpr"
+				&& std::filesystem::is_directory(parent, error) && !error)
+				return parent.string();
+			return path;
+		}
+
 		class ProjectScope
 		{
 		public:
-			explicit ProjectScope(const std::string& path) : project_(BinaryNinja::Project::OpenProject(path))
+			explicit ProjectScope(const std::string& path) :
+				project_(BinaryNinja::Project::OpenProject(ProjectOpenPath(path)))
 			{
 				if (!project_)
 					throw std::runtime_error("cannot open Binary Ninja project");
@@ -121,6 +134,68 @@ namespace binjad {
 			if (matches.empty())
 				matches = project->GetFilesByPathInProject('/' + path);
 			return matches;
+		}
+
+		bool SafeDownloadPath(std::string_view path)
+		{
+			if (path.empty() || path.front() == '/' || path.find('\\') != std::string_view::npos
+				|| path.find(':') != std::string_view::npos)
+				return false;
+			const std::filesystem::path value(path);
+			const auto normalized = value.lexically_normal();
+			if (value.is_absolute() || normalized.empty() || normalized == "." || *normalized.begin() == "..")
+				return false;
+			return std::none_of(path.begin(), path.end(), [](unsigned char character) {
+				return character < 0x20 || character == 0x7f;
+			});
+		}
+
+		bool InFolder(std::string_view path, std::string_view folder)
+		{
+			return path == folder
+				|| (path.size() > folder.size() && path.starts_with(folder) && path[folder.size()] == '/');
+		}
+
+		void CopyProjectStorage(const std::filesystem::path& source, const std::filesystem::path& destination,
+			ipc::LocalProjectDownloadPrepared& result)
+		{
+			const auto sourceStatus = std::filesystem::symlink_status(source);
+			if (std::filesystem::is_symlink(sourceStatus) || !std::filesystem::is_directory(sourceStatus)
+				|| source.extension() != ".bnpr")
+				throw std::runtime_error("Binary Ninja did not resolve a complete .bnpr project directory");
+			const auto rootName = source.filename().string();
+			if (!SafeDownloadPath(rootName))
+				throw std::runtime_error("project storage has an unsafe archive name");
+			const auto root = destination / rootName;
+			std::filesystem::create_directories(root);
+			std::uint64_t files = 0;
+			std::uint64_t directories = 1;
+			for (std::filesystem::recursive_directory_iterator iterator(source), end; iterator != end; ++iterator)
+			{
+				const auto status = iterator->symlink_status();
+				const auto relative = iterator->path().lexically_relative(source);
+				if (!SafeDownloadPath(relative.generic_string()))
+					throw std::runtime_error("project storage contains an unsafe archive path");
+				const auto target = root / relative;
+				if (std::filesystem::is_symlink(status))
+					throw std::runtime_error("project storage contains a symbolic link");
+				if (std::filesystem::is_directory(status))
+				{
+					std::filesystem::create_directories(target);
+					++directories;
+				}
+				else if (std::filesystem::is_regular_file(status))
+				{
+					std::filesystem::create_directories(target.parent_path());
+					std::filesystem::copy_file(iterator->path(), target, std::filesystem::copy_options::none);
+					++files;
+				}
+				else
+					throw std::runtime_error("project storage contains an unsupported file type");
+			}
+			result.set_files(files);
+			result.set_directories(directories);
+			result.set_root_name(rootName);
 		}
 
 		std::vector<std::filesystem::path> Discover(const ipc::ScanLocalProjects& command)
@@ -242,6 +317,9 @@ namespace binjad {
 						DeleteFile(command.delete_local_project_file());
 					else if (command.has_delete_local_project())
 						DeleteProject(command.delete_local_project());
+					else if (command.has_prepare_local_project_download())
+						PrepareDownload(
+							command.prepare_local_project_download(), *reply.mutable_local_project_download_prepared());
 					else if (command.has_shutdown())
 						running = false;
 					else
@@ -304,6 +382,104 @@ namespace binjad {
 				result.set_id(matches.front()->GetId());
 				result.set_path(ExternalProjectPath(matches.front()->GetPathInProject()));
 				matches.clear();
+				project.Close();
+			}
+
+			void PrepareDownload(
+				const ipc::PrepareLocalProjectDownload& command, ipc::LocalProjectDownloadPrepared& result)
+			{
+				const std::filesystem::path destination(command.destination());
+				const auto destinationStatus = std::filesystem::symlink_status(destination);
+				if (!destination.is_absolute() || std::filesystem::is_symlink(destinationStatus)
+					|| !std::filesystem::is_directory(destinationStatus))
+					throw std::runtime_error("download destination is not an absolute non-symlink directory");
+
+				ProjectScope project(command.project_path());
+				if (command.kind() == ipc::LOCAL_PROJECT_DOWNLOAD_KIND_PROJECT)
+				{
+					if (command.paths_size() != 0)
+						throw std::runtime_error("complete project download does not accept paths");
+					CopyProjectStorage(project->GetPath(), destination, result);
+					project.Close();
+					return;
+				}
+
+				if (command.kind() == ipc::LOCAL_PROJECT_DOWNLOAD_KIND_FOLDER)
+				{
+					if (command.paths_size() != 1 || !SafeDownloadPath(command.paths(0)))
+						throw std::runtime_error("folder download selection is invalid");
+					const auto selected = std::filesystem::path(command.paths(0)).lexically_normal().generic_string();
+					bool found = false;
+					std::vector<std::string> directories;
+					for (const auto& folder : project->GetFolders())
+					{
+						const auto path = FolderPath(folder);
+						if (!SafeDownloadPath(path))
+							throw std::runtime_error("project folder has an unsafe archive path");
+						if (path == selected)
+							found = true;
+						if (InFolder(path, selected))
+							directories.push_back(path);
+					}
+					if (!found)
+						throw std::runtime_error("project folder not found");
+					std::sort(directories.begin(), directories.end());
+					for (const auto& path : directories)
+						std::filesystem::create_directories(destination / std::filesystem::path(path));
+
+					std::uint64_t files = 0;
+					for (const auto& file : project->GetFiles())
+					{
+						const auto path = ExternalProjectPath(file->GetPathInProject());
+						if (!InFolder(path, selected))
+							continue;
+						if (!SafeDownloadPath(path))
+							throw std::runtime_error("project file has an unsafe archive path");
+						const auto target = destination / std::filesystem::path(path);
+						std::filesystem::create_directories(target.parent_path());
+						if (!file->Export(target.string()))
+							throw std::runtime_error("cannot export project file");
+						++files;
+					}
+					result.set_files(files);
+					result.set_directories(directories.size());
+					result.set_root_name(std::filesystem::path(selected).filename().string());
+					project.Close();
+					return;
+				}
+
+				const bool one = command.kind() == ipc::LOCAL_PROJECT_DOWNLOAD_KIND_FILE;
+				if ((!one && command.kind() != ipc::LOCAL_PROJECT_DOWNLOAD_KIND_FILES) || command.paths_size() == 0
+					|| (one && command.paths_size() != 1) || command.paths_size() > 1000)
+					throw std::runtime_error("file download selection is invalid");
+				std::vector<std::pair<std::string, BinaryNinja::Ref<BinaryNinja::ProjectFile>>> files;
+				std::set<std::string> ids;
+				for (const auto& requested : command.paths())
+				{
+					if (!SafeDownloadPath(requested))
+						throw std::runtime_error("project file download path is unsafe");
+					auto matches = FilesByExternalPath(project, requested);
+					if (matches.size() != 1)
+						throw std::runtime_error(
+							matches.empty() ? "project file not found" : "project file path is ambiguous");
+					const auto path = ExternalProjectPath(matches.front()->GetPathInProject());
+					if (!SafeDownloadPath(path))
+						throw std::runtime_error("project file has an unsafe archive path");
+					if (!ids.insert(matches.front()->GetId()).second)
+						throw std::runtime_error("project file download paths select the same file");
+					files.emplace_back(path, matches.front());
+				}
+				for (const auto& [path, file] : files)
+				{
+					const auto target = destination / std::filesystem::path(path);
+					std::filesystem::create_directories(target.parent_path());
+					if (!file->Export(target.string()))
+						throw std::runtime_error("cannot export project file");
+				}
+				result.set_files(files.size());
+				result.set_directories(0);
+				result.set_root_name(one ? std::filesystem::path(files.front().first).filename().string() : "");
+				files.clear();
 				project.Close();
 			}
 

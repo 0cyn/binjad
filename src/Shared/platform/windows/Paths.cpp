@@ -8,6 +8,14 @@
 #include <stdexcept>
 
 namespace binjad::platform {
+	std::filesystem::path HomeDirectory()
+	{
+		const char* profile = std::getenv("USERPROFILE");
+		if (!profile || !*profile)
+			throw std::runtime_error("USERPROFILE is not set");
+		return profile;
+	}
+
 	std::filesystem::path UserDataDirectory()
 	{
 		const char* localAppData = std::getenv("LOCALAPPDATA");

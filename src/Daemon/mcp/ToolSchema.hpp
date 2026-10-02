@@ -84,9 +84,16 @@ namespace binjad::mcp::schema {
 		return {.name = name, .type = PropertyType::Array, .required = required, .description = description};
 	}
 
-	inline Property StringArray(std::string_view name, bool required = false, std::string_view description = {})
+	inline Property StringArray(std::string_view name, bool required = false,
+		std::optional<std::uint64_t> minimumItems = {}, std::optional<std::uint64_t> maximumItems = {},
+		std::string_view description = {})
 	{
-		return {.name = name, .type = PropertyType::StringArray, .required = required, .description = description};
+		return {.name = name,
+			.type = PropertyType::StringArray,
+			.required = required,
+			.minimumItems = minimumItems,
+			.maximumItems = maximumItems,
+			.description = description};
 	}
 
 	inline Property ObjectArray(std::string_view name, bool required, std::initializer_list<Property> itemProperties,

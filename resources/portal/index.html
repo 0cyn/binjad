@@ -13,22 +13,6 @@
     <div class="gate-box">
       <div class="brand">binja'd</div>
 
-      <section id="setup" class="hidden">
-        <div class="notice">Create the account for this new binja'd service.</div>
-        <div class="field-row">
-          <label>
-            Username
-            <input id="setup-user" autocomplete="username">
-          </label>
-          <label>
-            Password
-            <input id="setup-password" type="password" autocomplete="new-password">
-          </label>
-        </div>
-        <button class="primary" data-action="setup">Create account</button>
-        <hr>
-      </section>
-
       <form id="login-form">
         <label>
           Username
@@ -84,7 +68,7 @@
     <main class="main">
       <header class="content-head">
         <h1 id="view-title">Service overview</h1>
-        <div id="restart-badge" class="badge hidden">restart required</div>
+        <button id="restart-daemon" class="quiet restart-button hidden" data-action="restart-daemon">Restart daemon</button>
       </header>
 
       <section id="overview" class="view">
@@ -220,7 +204,6 @@
       </section>
 
       <section id="configuration" class="view hidden">
-        <div id="config-warning" class="notice hidden">Saved configuration differs from the running daemon. Restart the service to apply it.</div>
         <article class="block">
           <div class="block-head">
             <h2>Configuration</h2>
@@ -255,7 +238,6 @@
             <label><span>Upload limit bytes <span class="tooltip" tabindex="0" data-tooltip="The largest single file the upload endpoint will accept, in bytes.">?</span></span><input id="cfg-upload-max" type="number" min="1"></label>
             <label><span>Memory threshold bytes <span class="tooltip" tabindex="0" data-tooltip="Uploads at or below this size stay in memory. Larger uploads spill into the private spool.">?</span></span><input id="cfg-upload-memory" type="number" min="0"></label>
             <label><span>Upload URL TTL seconds <span class="tooltip" tabindex="0" data-tooltip="How long a one-time upload URL stays usable if nobody finishes an upload.">?</span></span><input id="cfg-upload-ttl" type="number" min="1"></label>
-            <label class="check"><input id="cfg-upload-auth" type="checkbox"><span>Require Bearer Header w/ MCP token on file uploads <span class="tooltip" tabindex="0" data-tooltip="Makes uploads include the same MCP Bearer token as normal MCP calls. Leave this off when the upload URL itself should be the credential.">?</span></span></label>
             <label><span>Project roots, one per line <span class="tooltip" tabindex="0" data-tooltip="Directories binja'd scans recursively for .bnpr and .bnpm projects when it starts.">?</span></span><textarea id="cfg-roots"></textarea></label>
             <label><span>Default project root <span class="tooltip" tabindex="0" data-tooltip="Where new projects go when no absolute destination is provided. It must also appear in Project roots.">?</span></span><input id="cfg-default-root"></label>
             <label><span>Spool path <span class="tooltip" tabindex="0" data-tooltip="Private scratch space for uploads and working files. Leave it empty to use the default beside this config.">?</span></span><input id="cfg-spool"></label>

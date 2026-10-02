@@ -4,7 +4,7 @@ if(APPLE AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)
     set(CMAKE_OSX_DEPLOYMENT_TARGET "14.0" CACHE STRING "Minimum macOS version")
 endif()
 
-project(binjad VERSION 0.1.1 LANGUAGES C CXX)
+project(binjad VERSION 0.2.0 LANGUAGES C CXX)
 
 if(APPLE)
     set(BINJAD_USE_KEYCHAIN_DEFAULT ON)
@@ -121,6 +121,15 @@ set_target_properties(binjad_zlib PROPERTIES OUTPUT_NAME z POSITION_INDEPENDENT_
 if(UNIX)
     target_compile_definitions(binjad_zlib PRIVATE HAVE_UNISTD_H)
 endif()
+
+add_library(binjad_minizip STATIC
+    vendor/zlib/contrib/minizip/ioapi.c
+    vendor/zlib/contrib/minizip/zip.c)
+target_include_directories(binjad_minizip
+    PUBLIC "${BINJAD_ZLIB_SOURCE_DIR}/contrib/minizip"
+    PRIVATE "${BINJAD_ZLIB_SOURCE_DIR}")
+target_link_libraries(binjad_minizip PUBLIC binjad_zlib)
+set_target_properties(binjad_minizip PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 set(BUILD_TESTING OFF CACHE BOOL "Build third-party tests" FORCE)
 set(ABSL_ENABLE_INSTALL OFF CACHE BOOL "Do not install vendored Abseil" FORCE)
@@ -264,6 +273,8 @@ add_library(binjad_security STATIC
     src/Daemon/session/OpenItemRegistry.cpp
     src/Daemon/session/SubscriptionRegistry.cpp
     src/Daemon/UploadRegistry.cpp
+    src/Daemon/DownloadRegistry.cpp
+    src/Daemon/download/ZipArchive.cpp
     ${BINJAD_PLATFORM_SECURITY_SOURCES})
 target_include_directories(binjad_security
     PUBLIC
@@ -275,7 +286,7 @@ target_include_directories(binjad_security
 target_compile_definitions(binjad_security PRIVATE
     BINJAD_PORTAL_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/resources/portal"
     BINJAD_PORTAL_INSTALL_DIR="${CMAKE_INSTALL_FULL_DATADIR}/binjad/portal")
-target_link_libraries(binjad_security PUBLIC binjad_foundation trantor PRIVATE binjad_argon2)
+target_link_libraries(binjad_security PUBLIC binjad_foundation trantor PRIVATE binjad_argon2 binjad_minizip)
 target_compile_features(binjad_security PUBLIC cxx_std_20)
 if(APPLE)
     find_library(BINJAD_SECURITY_FRAMEWORK Security REQUIRED)
@@ -283,6 +294,7 @@ if(APPLE)
 endif()
 
 add_library(binjad_http STATIC
+    src/Daemon/http/DownloadRoutes.cpp
     src/Daemon/http/DrogonRoutes.cpp
     src/Daemon/http/McpAdmission.cpp
     src/Daemon/http/McpDispatcher.cpp
@@ -577,6 +589,9 @@ install(FILES resources/SCOWL-LICENSE.txt
 install(FILES vendor/debugger/LICENSE
     DESTINATION "${CMAKE_INSTALL_DATAROOTDIR}/doc/binjad"
     RENAME Debugger-LICENSE.txt)
+install(FILES vendor/zlib/contrib/minizip/MiniZip64_info.txt
+    DESTINATION "${CMAKE_INSTALL_DATAROOTDIR}/doc/binjad"
+    RENAME MiniZip-LICENSE.txt)
 install(DIRECTORY resources/portal/
     DESTINATION "${CMAKE_INSTALL_DATADIR}/binjad/portal")
 install(CODE [[
@@ -629,6 +644,17 @@ if(BINJAD_BUILD_TESTS)
     endif()
     add_test(NAME binjad.model_facing_docs COMMAND binjad-model-facing-docs-tests)
     set_tests_properties(binjad.model_facing_docs PROPERTIES LABELS "binjad;mcp;documentation")
+
+    add_executable(binjad-zip-archive-tests tests/ZipArchiveTests.cpp)
+    target_link_libraries(binjad-zip-archive-tests PRIVATE binjad_security)
+    target_compile_features(binjad-zip-archive-tests PRIVATE cxx_std_20)
+    if(MSVC)
+        target_compile_options(binjad-zip-archive-tests PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(binjad-zip-archive-tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME binjad.zip_archive COMMAND binjad-zip-archive-tests)
+    set_tests_properties(binjad.zip_archive PROPERTIES LABELS "binjad;downloads;archive")
 
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         add_executable(binjad-linux-child-runtime-tests tests/LinuxChildRuntimeTests.cpp)

@@ -170,6 +170,189 @@ namespace binjad::portal {
 			return true;
 		}
 
+		bool BoolField(const Value& object, const char* name, bool& output, bool required, std::string& error)
+		{
+			const auto member = object.FindMember(name);
+			if (member == object.MemberEnd())
+			{
+				if (required)
+					error = std::string(name) + " is required";
+				return !required;
+			}
+			if (!member->value.IsBool())
+			{
+				error = std::string(name) + " must be a boolean";
+				return false;
+			}
+			output = member->value.GetBool();
+			return true;
+		}
+
+		bool HasControl(std::string_view value)
+		{
+			return std::any_of(value.begin(), value.end(), [](const unsigned char character) {
+				return character < 0x20 || character == 0x7f;
+			});
+		}
+
+		bool ValidOnboardingUsername(std::string_view value)
+		{
+			const auto validCharacter = [](const unsigned char character) {
+				return std::isalnum(character) != 0 || character == '.' || character == '_' || character == '-';
+			};
+			return !value.empty() && value.size() <= 64 && std::all_of(value.begin(), value.end(), validCharacter);
+		}
+
+		std::optional<std::filesystem::path> ResolveOnboardingProjectRoot(
+			std::string_view input, const std::filesystem::path& configPath, std::string& error)
+		{
+			if (input.empty())
+			{
+				error = "project_root must not be empty";
+				return std::nullopt;
+			}
+			if (HasControl(input))
+			{
+				error = "project_root must not contain control characters";
+				return std::nullopt;
+			}
+
+			try
+			{
+				std::filesystem::path root;
+				if (input == "~")
+				{
+					root = platform::HomeDirectory();
+				}
+				else if (input.starts_with("~/") || input.starts_with("~\\"))
+				{
+					root = platform::HomeDirectory() / std::filesystem::path(input.substr(2));
+				}
+				else
+				{
+					if (input.front() == '~')
+					{
+						error = "project_root can use '~' only for the current user's home directory";
+						return std::nullopt;
+					}
+					root = std::filesystem::path(input);
+				}
+				if (!root.is_absolute())
+					root = std::filesystem::absolute(configPath).parent_path() / root;
+				return root.lexically_normal();
+			}
+			catch (const std::exception& exception)
+			{
+				error = "cannot resolve project_root: " + std::string(exception.what());
+				return std::nullopt;
+			}
+		}
+
+		std::string DisplayOnboardingPath(const std::filesystem::path& path)
+		{
+			try
+			{
+				const auto home = platform::HomeDirectory().lexically_normal();
+				const auto normalized = path.lexically_normal();
+				auto homeIterator = home.begin();
+				auto pathIterator = normalized.begin();
+				while (homeIterator != home.end() && pathIterator != normalized.end() && *homeIterator == *pathIterator)
+				{
+					++homeIterator;
+					++pathIterator;
+				}
+				if (homeIterator == home.end())
+				{
+					std::filesystem::path relative;
+					for (; pathIterator != normalized.end(); ++pathIterator)
+						relative /= *pathIterator;
+					return relative.empty() ? "~" : "~/" + relative.generic_string();
+				}
+			}
+			catch (...)
+			{}
+			return path.string();
+		}
+
+		struct DirectoryStatus
+		{
+			bool exists = false;
+			bool directory = false;
+			std::string error;
+		};
+
+		DirectoryStatus InspectDirectory(const std::filesystem::path& path)
+		{
+			std::error_code error;
+			const auto status = std::filesystem::status(path, error);
+			if (error == std::errc::no_such_file_or_directory)
+				return {};
+			if (error)
+				return {false, false, error.message()};
+			return {std::filesystem::exists(status), std::filesystem::is_directory(status), {}};
+		}
+
+		Value& EnsureObjectMember(Value& parent, const char* name, Document::AllocatorType& allocator)
+		{
+			auto member = parent.FindMember(name);
+			if (member != parent.MemberEnd())
+			{
+				if (!member->value.IsObject())
+					member->value.SetObject();
+				return member->value;
+			}
+			Value key;
+			key.SetString(name, static_cast<rapidjson::SizeType>(std::char_traits<char>::length(name)), allocator);
+			Value object(rapidjson::kObjectType);
+			parent.AddMember(key, object, allocator);
+			return parent.FindMember(name)->value;
+		}
+
+		Value& EnsureArrayMember(Value& parent, const char* name, Document::AllocatorType& allocator)
+		{
+			auto member = parent.FindMember(name);
+			if (member != parent.MemberEnd())
+			{
+				if (!member->value.IsArray())
+					member->value.SetArray();
+				return member->value;
+			}
+			Value key;
+			key.SetString(name, static_cast<rapidjson::SizeType>(std::char_traits<char>::length(name)), allocator);
+			Value array(rapidjson::kArrayType);
+			parent.AddMember(key, array, allocator);
+			return parent.FindMember(name)->value;
+		}
+
+		void SetStringMember(
+			Value& object, const char* name, std::string_view value, Document::AllocatorType& allocator)
+		{
+			auto member = object.FindMember(name);
+			if (member != object.MemberEnd())
+			{
+				member->value.SetString(value.data(), static_cast<rapidjson::SizeType>(value.size()), allocator);
+				return;
+			}
+			Value key;
+			key.SetString(name, static_cast<rapidjson::SizeType>(std::char_traits<char>::length(name)), allocator);
+			Value stored;
+			stored.SetString(value.data(), static_cast<rapidjson::SizeType>(value.size()), allocator);
+			object.AddMember(key, stored, allocator);
+		}
+
+		void SetBoolMember(Value& object, const char* name, bool value, Document::AllocatorType& allocator)
+		{
+			auto member = object.FindMember(name);
+			if (member != object.MemberEnd())
+			{
+				member->value.SetBool(value);
+				return;
+			}
+			Value key;
+			key.SetString(name, static_cast<rapidjson::SizeType>(std::char_traits<char>::length(name)), allocator);
+			object.AddMember(key, value, allocator);
+		}
+
 		template <typename WriteValue>
 		std::string JsonResult(WriteValue writeValue)
 		{
@@ -247,9 +430,7 @@ namespace binjad::portal {
 				&& left.jobs.cancellationGrace == right.jobs.cancellationGrace
 				&& left.uploads.maxBytes == right.uploads.maxBytes
 				&& left.uploads.memoryThresholdBytes == right.uploads.memoryThresholdBytes
-				&& left.uploads.urlTtl == right.uploads.urlTtl
-				&& left.uploads.requireBearerAuthentication == right.uploads.requireBearerAuthentication
-				&& left.projects.roots == right.projects.roots
+				&& left.uploads.urlTtl == right.uploads.urlTtl && left.projects.roots == right.projects.roots
 				&& left.projects.defaultRoot == right.projects.defaultRoot
 				&& left.projects.allowArbitraryPaths == right.projects.allowArbitraryPaths
 				&& left.projects.allowProjectRegistration == right.projects.allowProjectRegistration
@@ -459,6 +640,12 @@ namespace binjad::portal {
 		toolConfigApply_ = std::move(callback);
 	}
 
+	void Api::SetRestartCallback(RestartCallback callback)
+	{
+		std::lock_guard lock(configurationMutex_);
+		restartCallback_ = std::move(callback);
+	}
+
 	void Api::SetMcpDocumentationProviders(McpContextProvider context, McpToolsProvider tools)
 	{
 		mcpContext_ = std::move(context);
@@ -530,6 +717,207 @@ namespace binjad::portal {
 	{
 		if (request.body.size() > kMaxBodyBytes)
 			return Error(413, "payload_too_large");
+		if (request.path == apiPath_ + "/onboarding" && request.method == http::Method::Get)
+		{
+			const auto required = service_.SetupRequired();
+			if (!required.value)
+				return Error(500, required.error);
+			if (!*required.value)
+			{
+				return Json(200, JsonResult([&](auto& writer) {
+					writer.StartObject();
+					writer.Key("required");
+					writer.Bool(false);
+					writer.EndObject();
+				}));
+			}
+
+			Config configured;
+			{
+				std::lock_guard lock(configurationMutex_);
+				configured = config_;
+				if (!configPath_.empty())
+				{
+					const auto current = platform::ReadPrivateFile(configPath_);
+					if (!current.error.empty())
+						return Error(500, current.error);
+					if (current.contents)
+					{
+						const auto parsed = ParseConfig(*current.contents, configPath_);
+						if (!parsed.config)
+							return Error(500, "saved configuration is invalid");
+						configured = *parsed.config;
+					}
+				}
+			}
+			std::filesystem::path projectRoot;
+			try
+			{
+				if (configured.projects.defaultRoot)
+					projectRoot = *configured.projects.defaultRoot;
+				else if (!configured.projects.roots.empty())
+					projectRoot = configured.projects.roots.front();
+				else
+					projectRoot = platform::HomeDirectory() / "binja-projects";
+			}
+			catch (const std::exception& exception)
+			{
+				return Error(500, "cannot determine the default project root: " + std::string(exception.what()));
+			}
+			const auto projectRootStatus = InspectDirectory(projectRoot);
+			if (!projectRootStatus.error.empty())
+				return Error(500, "cannot inspect the project root: " + projectRootStatus.error);
+			if (projectRootStatus.exists && !projectRootStatus.directory)
+				return Error(500, "the configured project root is not a directory");
+
+			const auto displayedRoot = DisplayOnboardingPath(projectRoot);
+			return Json(200, JsonResult([&](auto& writer) {
+				writer.StartObject();
+				writer.Key("required");
+				writer.Bool(true);
+				writer.Key("project_root");
+				writer.String(displayedRoot.data(), static_cast<rapidjson::SizeType>(displayedRoot.size()));
+				writer.Key("project_root_exists");
+				writer.Bool(projectRootStatus.exists);
+				writer.Key("public_base_url");
+				writer.String(configured.http.publicBaseUrl.data(),
+					static_cast<rapidjson::SizeType>(configured.http.publicBaseUrl.size()));
+				writer.Key("allow_arbitrary_paths");
+				writer.Bool(configured.projects.allowArbitraryPaths);
+				writer.Key("allow_project_registration");
+				writer.Bool(configured.projects.allowProjectRegistration);
+				writer.EndObject();
+			}));
+		}
+		if (request.path == apiPath_ + "/onboarding" && request.method == http::Method::Post)
+		{
+			if (configPath_.empty())
+				return Error(503, "configuration persistence is unavailable");
+			std::string error;
+			const auto body = ParseObject(request.body, error);
+			if (!body
+				|| !OnlyFields(*body,
+					{"username", "password", "project_root", "create_project_root", "public_base_url",
+						"allow_arbitrary_paths", "allow_project_registration"},
+					error))
+				return Error(400, error);
+
+			std::string username;
+			std::string password;
+			std::string projectRootInput;
+			std::string publicBaseUrl;
+			bool createProjectRoot = false;
+			bool allowArbitraryPaths = false;
+			bool allowProjectRegistration = false;
+			if (!StringField(*body, "username", username, true, error)
+				|| !StringField(*body, "password", password, true, error)
+				|| !StringField(*body, "project_root", projectRootInput, true, error)
+				|| !BoolField(*body, "create_project_root", createProjectRoot, true, error)
+				|| !StringField(*body, "public_base_url", publicBaseUrl, true, error)
+				|| !BoolField(*body, "allow_arbitrary_paths", allowArbitraryPaths, true, error)
+				|| !BoolField(*body, "allow_project_registration", allowProjectRegistration, true, error))
+				return Error(400, error);
+			if (!ValidOnboardingUsername(username))
+				return Error(400, "username must be 1 through 64 ASCII letters, digits, '.', '_', or '-'");
+			if (!security::IsValidPortalPassword(password))
+				return Error(400, "password must be valid UTF-8 from 9 through 1024 bytes");
+			if (publicBaseUrl.empty())
+				return Error(400, "public_base_url must not be empty");
+			const auto projectRoot = ResolveOnboardingProjectRoot(projectRootInput, configPath_, error);
+			if (!projectRoot)
+				return Error(400, error);
+
+			security::AccountRecord account;
+			bool restartRequired = false;
+			std::string portalUrl;
+			{
+				std::lock_guard lock(configurationMutex_);
+				const auto required = service_.SetupRequired();
+				if (!required.value)
+					return Error(500, required.error);
+				if (!*required.value)
+					return Error(409, "account is already configured");
+
+				const auto current = platform::ReadPrivateFile(configPath_);
+				if (!current.error.empty())
+					return Error(500, current.error);
+				if (!current.contents)
+					return Error(500, "configuration file is unavailable");
+				auto document = ParseObject(*current.contents, error);
+				if (!document)
+					return Error(500, "cannot update malformed configuration: " + error);
+				const auto currentConfig = ParseConfig(*current.contents, configPath_);
+				if (!currentConfig.config)
+					return Error(500, "cannot update invalid configuration");
+
+				auto& allocator = document->GetAllocator();
+				auto& projects = EnsureObjectMember(*document, "projects", allocator);
+				auto& roots = EnsureArrayMember(projects, "roots", allocator);
+				if (std::find(currentConfig.config->projects.roots.begin(), currentConfig.config->projects.roots.end(),
+						*projectRoot)
+					== currentConfig.config->projects.roots.end())
+				{
+					Value storedRoot;
+					const auto rootString = projectRoot->string();
+					storedRoot.SetString(
+						rootString.data(), static_cast<rapidjson::SizeType>(rootString.size()), allocator);
+					roots.PushBack(storedRoot, allocator);
+				}
+				const auto rootString = projectRoot->string();
+				SetStringMember(projects, "default_root", rootString, allocator);
+				SetBoolMember(projects, "allow_arbitrary_paths", allowArbitraryPaths, allocator);
+				SetBoolMember(projects, "allow_project_registration", allowProjectRegistration, allocator);
+				auto& http = EnsureObjectMember(*document, "http", allocator);
+				SetStringMember(http, "public_base_url", publicBaseUrl, allocator);
+
+				const auto serialized = Serialize(*document);
+				const auto configured = ParseConfig(serialized, configPath_);
+				if (!configured.config)
+				{
+					if (configured.errors.empty())
+						return Error(400, "onboarding produced an invalid configuration");
+					return Error(400, configured.errors.front().path + ": " + configured.errors.front().message);
+				}
+
+				const auto projectRootStatus = InspectDirectory(*projectRoot);
+				if (!projectRootStatus.error.empty())
+					return Error(400, "cannot inspect project_root: " + projectRootStatus.error);
+				if (projectRootStatus.exists && !projectRootStatus.directory)
+					return Error(400, "project_root exists but is not a directory");
+				if (!projectRootStatus.exists && !createProjectRoot)
+					return Error(400, "project_root does not exist; select create_project_root or choose a directory");
+				if (!projectRootStatus.exists)
+				{
+					if (const auto createError = platform::CreatePrivateDirectory(*projectRoot); !createError.empty())
+						return Error(400, createError);
+				}
+
+				const auto persisted = platform::ReplacePrivateFile(configPath_, serialized + "\n");
+				if (!persisted.installed)
+					return Error(500, persisted.error);
+				const auto created = service_.CreateInitialAccount(username, password);
+				if (!created.value)
+					return Error(created.error == "account is already configured" ? 409 : 400, created.error);
+				account = *created.value;
+				restartRequired_ = !SameRestartGatedConfig(config_, *configured.config);
+				restartRequired = restartRequired_;
+				portalUrl = configured.config->http.publicBaseUrl + configured.config->http.portalPath;
+			}
+
+			return Json(201, JsonResult([&](auto& writer) {
+				writer.StartObject();
+				writer.Key("account");
+				WriteAccount(writer, account);
+				writer.Key("project_root");
+				const auto rootString = projectRoot->string();
+				writer.String(rootString.data(), static_cast<rapidjson::SizeType>(rootString.size()));
+				writer.Key("restart_required");
+				writer.Bool(restartRequired);
+				writer.Key("portal_url");
+				writer.String(portalUrl.data(), static_cast<rapidjson::SizeType>(portalUrl.size()));
+				writer.EndObject();
+			}));
+		}
 		if (request.path == apiPath_ + "/setup" && request.method == http::Method::Get)
 		{
 			const auto required = service_.SetupRequired();
@@ -548,6 +936,7 @@ namespace binjad::portal {
 			if (!StringField(*body, "username", username, true, error)
 				|| !StringField(*body, "password", password, true, error))
 				return Error(400, error);
+			std::lock_guard lock(configurationMutex_);
 			const auto created = service_.CreateInitialAccount(std::move(username), std::move(password));
 			if (!created.value)
 				return Error(created.error == "account is already configured" ? 409 : 400, created.error);
@@ -623,6 +1012,72 @@ namespace binjad::portal {
 				writer.EndObject();
 				writer.EndObject();
 			}));
+		}
+
+		if (request.path == apiPath_ + "/restart" && request.method == http::Method::Post)
+		{
+			std::string error;
+			const auto body = ParseObject(request.body, error);
+			if (!body || !OnlyFields(*body, {}, error))
+				return Error(400, error);
+
+			RestartCallback restart;
+			Config configured;
+			bool schedule = false;
+			{
+				std::lock_guard lock(configurationMutex_);
+				if (!restartRequired_)
+					return Error(409, "daemon restart is not required");
+				if (!restartCallback_)
+					return Error(503, "daemon restart is unavailable");
+				if (configPath_.empty())
+					return Error(503, "configuration persistence is unavailable");
+
+				const auto current = platform::ReadPrivateFile(configPath_);
+				if (!current.error.empty())
+					return Error(500, current.error);
+				if (!current.contents)
+					return Error(500, "configuration file is unavailable");
+				const auto parsed = ParseConfig(*current.contents, configPath_);
+				if (!parsed.config)
+					return Error(409, "saved configuration is invalid");
+
+				configured = *parsed.config;
+				restart = restartCallback_;
+				if (!restartScheduled_)
+				{
+					restartScheduled_ = true;
+					schedule = true;
+				}
+			}
+
+			if (schedule)
+			{
+				try
+				{
+					restart();
+				}
+				catch (...)
+				{
+					std::lock_guard lock(configurationMutex_);
+					restartScheduled_ = false;
+					return Error(500, "daemon restart could not be scheduled");
+				}
+			}
+
+			const auto portalUrl = configured.http.publicBaseUrl + configured.http.portalPath;
+			auto response = Json(202, JsonResult([&](auto& writer) {
+				writer.StartObject();
+				writer.Key("restarting");
+				writer.Bool(true);
+				writer.Key("portal_url");
+				writer.String(portalUrl.data(), static_cast<rapidjson::SizeType>(portalUrl.size()));
+				writer.Key("retry_after_seconds");
+				writer.Uint(10);
+				writer.EndObject();
+			}));
+			response.headers.emplace_back("Retry-After", "10");
+			return response;
 		}
 
 		if ((request.path == apiPath_ + "/mcp/context" || request.path == apiPath_ + "/mcp/tools")
@@ -946,7 +1401,33 @@ namespace binjad::portal {
 
 	http::ImmediateResponse Api::Page() const
 	{
-		auto response = Asset("index.html");
+		const auto required = service_.SetupRequired();
+		if (!required.value)
+			return Error(500, required.error);
+		if (*required.value)
+		{
+			return {302, "text/plain; charset=utf-8", {},
+				{{"Location", config_.http.portalPath + "/setup"}, {"Cache-Control", "no-store"}}};
+		}
+		return RenderPage("index.html");
+	}
+
+	http::ImmediateResponse Api::SetupPage() const
+	{
+		const auto required = service_.SetupRequired();
+		if (!required.value)
+			return Error(500, required.error);
+		if (!*required.value)
+		{
+			return {302, "text/plain; charset=utf-8", {},
+				{{"Location", config_.http.portalPath}, {"Cache-Control", "no-store"}}};
+		}
+		return RenderPage("setup.html");
+	}
+
+	http::ImmediateResponse Api::RenderPage(std::string_view name) const
+	{
+		auto response = Asset(name);
 		const auto escapeAttribute = [](std::string_view value) {
 			std::string escaped;
 			escaped.reserve(value.size());
@@ -989,7 +1470,8 @@ namespace binjad::portal {
 
 	http::ImmediateResponse Api::Asset(std::string_view name) const
 	{
-		if (name != "index.html" && name != "app.css" && name != "app.js" && name != "binjad.png")
+		if (name != "index.html" && name != "setup.html" && name != "app.css" && name != "app.js" && name != "setup.js"
+			&& name != "binjad.png")
 			return Error(404, "not found");
 		const std::filesystem::path candidates[] {
 			std::filesystem::path(BINJAD_PORTAL_SOURCE_DIR) / name,
@@ -1001,11 +1483,11 @@ namespace binjad::portal {
 			if (!stream)
 				continue;
 			const std::string contents {std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>()};
-			const auto contentType = name == "index.html" ?
+			const auto contentType = name == "index.html" || name == "setup.html" ?
 				"text/html; charset=utf-8" :
 				name == "app.css" ?
 				"text/css; charset=utf-8" :
-				name == "app.js" ?
+				name == "app.js" || name == "setup.js" ?
 				"text/javascript; charset=utf-8" :
 				"image/png";
 			return {200, contentType, contents, {{"Cache-Control", "no-store"}}};

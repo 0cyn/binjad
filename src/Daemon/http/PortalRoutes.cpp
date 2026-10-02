@@ -146,7 +146,13 @@ namespace binjad::http {
 				self->HandlePage(request, std::move(stream), std::move(callback));
 			},
 			{drogon::Get});
-		for (const auto* asset : {"app.css", "app.js", "binjad.png"})
+		app.registerHandler(config_.http.portalPath + "/setup",
+			[self](const drogon::HttpRequestPtr& request, drogon::RequestStreamPtr&& stream,
+				DrogonResponseCallback&& callback) {
+				self->HandleSetupPage(request, std::move(stream), std::move(callback));
+			},
+			{drogon::Get});
+		for (const auto* asset : {"app.css", "app.js", "setup.js", "binjad.png"})
 		{
 			app.registerHandler(config_.http.portalPath + "/" + asset,
 				[self](const drogon::HttpRequestPtr& request, drogon::RequestStreamPtr&& stream,
@@ -194,6 +200,14 @@ namespace binjad::http {
 		if (stream)
 			stream->setStreamReader(drogon::RequestStreamReader::newNullReader());
 		callback(Response(api_->Page()));
+	}
+
+	void PortalRoutes::HandleSetupPage(
+		const drogon::HttpRequestPtr&, drogon::RequestStreamPtr stream, DrogonResponseCallback callback) const
+	{
+		if (stream)
+			stream->setStreamReader(drogon::RequestStreamReader::newNullReader());
+		callback(Response(api_->SetupPage()));
 	}
 
 	void PortalRoutes::HandleAsset(

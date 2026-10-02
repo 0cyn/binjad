@@ -101,8 +101,6 @@ namespace binjad::upload {
 		UploadIssueResult Issue(std::string ownerTokenId, std::string analysisSession, std::string project,
 			std::string filename, std::uint64_t nowUnix, Clock::time_point now);
 		std::pair<std::unique_ptr<UploadTransfer>, std::string> Begin(
-			std::string_view capability, std::string_view ownerTokenId, Clock::time_point now);
-		std::pair<std::unique_ptr<UploadTransfer>, std::string> Begin(
 			std::string_view capability, Clock::time_point now);
 		std::optional<UploadRecord> FindCompleted(std::string_view ownerTokenId, std::string_view analysisSession,
 			std::string_view id, Clock::time_point now) const;
@@ -138,9 +136,6 @@ namespace binjad::upload {
 		void Abort(std::string_view id, const std::filesystem::path& spoolDirectory);
 		void RemoveEntry(std::unordered_map<std::string, Entry>::iterator entry);
 		static bool ValidFilename(std::string_view filename);
-		std::pair<std::unique_ptr<UploadTransfer>, std::string> BeginImpl(
-			std::string_view capability, std::optional<std::string_view> ownerTokenId, Clock::time_point now);
-
 		Config config_;
 		reference::FriendlyReferencePool& references_;
 		session::AnalysisSessionRegistry& sessions_;

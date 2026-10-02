@@ -2,11 +2,13 @@
 
 from concurrent.futures import ThreadPoolExecutor
 import hashlib
+import io
 import json
 from pathlib import Path
 import socket
 import time
 import unittest
+import zipfile
 
 from Client import Agent, require
 from Fixtures import BANNER, BUSY_FUNCTIONS
@@ -101,8 +103,17 @@ class Workflows(unittest.TestCase):
 
     def upload(self, project, filename, data, folder="inputs", multipart=False, chunked=False, **commit_args):
         issued = self.agent.call("bn_upload_get_url", project=project, filename=filename)
+        require(issued["authorization"] == "URL capability"
+                and "requiresBearerAuthentication" not in issued,
+                f"upload capability advertised an additional credential: {issued}")
         body = data
         origin = "https://remote.example.invalid"
+        status, response_headers, _, _ = self.service.http.request(
+            "OPTIONS", issued["url"], headers={"Origin": origin})
+        allowed_headers = {header.strip().lower() for header in
+                           response_headers.get("access-control-allow-headers", "").split(",")}
+        require(status in {200, 204} and "authorization" not in allowed_headers,
+                f"upload preflight advertised bearer authorization: HTTP {status}: {response_headers}")
         headers = {"Content-Type": "application/octet-stream", "Origin": origin}
         method = "PUT"
         if multipart:
@@ -125,6 +136,40 @@ class Workflows(unittest.TestCase):
         again = self.agent.complete(self.agent.call("bn_upload_commit", id=issued["id"], folder=folder, **commit_args))
         require(again == result, "retrying a committed upload changed its identity or created another file")
         return result
+
+    def download(self, issued):
+        origin = "https://remote.example.invalid"
+        status, headers, _, _ = self.service.http.request("OPTIONS", issued["url"], headers={"Origin": origin})
+        allowed_methods = {method.strip() for method in headers.get("access-control-allow-methods", "").split(",")}
+        require(status in {200, 204} and headers.get("access-control-allow-origin") == origin
+                and {"GET", "OPTIONS"}.issubset(allowed_methods),
+                f"download preflight failed: HTTP {status}: {headers}")
+        status, headers, body, _ = self.service.http.request(
+            "GET", issued["url"], headers={"Origin": origin}, raw_response=True)
+        require(status == 200 and isinstance(body, bytes), f"download failed: HTTP {status}: {body}")
+        require(headers.get("access-control-allow-origin") == origin, "download did not echo the request Origin")
+        require(headers.get("cache-control") == "no-store", "download response was cacheable")
+        require(headers.get("x-content-type-options") == "nosniff", "download response permitted content sniffing")
+        require(headers.get("content-type", "").split(";")[0] == issued["contentType"],
+                f"download content type changed: {headers}")
+        require(headers.get("content-disposition") == "attachment; filename=" + issued["filename"],
+                f"download attachment name changed: {headers}")
+        require(len(body) == issued["size"], "download byte count changed")
+        require(hashlib.sha256(body).hexdigest() == issued["sha256"], "download digest changed")
+        status, _, response, _ = self.service.http.request("GET", issued["url"])
+        require(status == 404 and response == {"error": "download_not_found"},
+                f"one-time download capability was reusable: HTTP {status}: {response}")
+        return body
+
+    @staticmethod
+    def archive_entries(data):
+        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            require(archive.testzip() is None, "download ZIP failed its CRC check")
+            names = archive.namelist()
+            require(all(not name.startswith("/") and "\\" not in name
+                        and ".." not in Path(name).parts for name in names),
+                    f"download ZIP contains an unsafe path: {names}")
+            return names, {name: archive.read(name) for name in names if not name.endswith("/")}
 
     def inspect_packet(self, fixture, view_type):
         item, view = self.open(self.fixtures[fixture], view_type=view_type)
@@ -394,6 +439,101 @@ class Workflows(unittest.TestCase):
         _, view = self.open("packet.elf", project=project)
         self.function(view, "packet_dispatch")
 
+    def test_project_downloads(self):
+        original_configuration = self.service.portal("GET", "/config")["configuration"]
+        restore_configuration = {"required": False}
+
+        def restore_project_configuration():
+            if not restore_configuration["required"]:
+                return
+            saved = self.service.portal("PUT", "/config", original_configuration)
+            if saved["restart_required"]:
+                self.service.restart_from_portal()
+            restore_configuration["required"] = False
+
+        self.addCleanup(restore_project_configuration)
+        project_name = "e2e-" + self._testMethodName + "-0"
+        project = self.project()
+        self.agent.call("bn_local_project_folder_create", project=project, name="bundle")
+        self.agent.call("bn_local_project_folder_create", project=project, parent="bundle", name="nested")
+        self.agent.call("bn_local_project_folder_create", project=project, parent="bundle/nested", name="empty")
+        self.agent.call("bn_local_project_file_import", project=project, source=str(self.fixtures["raw"]),
+                        name="firmware.bin")
+        self.agent.call("bn_local_project_file_import", project=project, source=str(self.fixtures["elf"]),
+                        folder="bundle/nested", name="packet.elf")
+
+        single = self.agent.complete(self.agent.call(
+            "bn_local_project_file_download", project=project, path="firmware.bin"))
+        require(not single["archive"] and single["method"] == "GET" and single["singleUse"],
+                f"single-file download instructions are incomplete: {single}")
+        require(single["authorization"] == "URL capability", f"download authorization changed: {single}")
+        require(self.download(single) == self.fixtures["raw"].read_bytes(), "single-file download changed bytes")
+
+        batch = self.agent.complete(self.agent.call(
+            "bn_local_project_file_download_batch", project=project,
+            paths=["firmware.bin", "bundle/nested/packet.elf"]))
+        batch_names, batch_files = self.archive_entries(self.download(batch))
+        require(set(batch_files) == {"firmware.bin", "bundle/nested/packet.elf"},
+                f"batch download lost project-relative paths: {batch_names}")
+        require(batch_files["firmware.bin"] == self.fixtures["raw"].read_bytes(),
+                "batch download changed the raw file")
+        require(batch_files["bundle/nested/packet.elf"] == self.fixtures["elf"].read_bytes(),
+                "batch download changed the ELF file")
+
+        folder = self.agent.complete(self.agent.call(
+            "bn_local_project_folder_download", project=project, path="bundle"))
+        folder_names, folder_files = self.archive_entries(self.download(folder))
+        require("bundle/" in folder_names and "bundle/nested/" in folder_names
+                and "bundle/nested/empty/" in folder_names,
+                f"folder download lost its directory tree: {folder_names}")
+        require(folder_files["bundle/nested/packet.elf"] == self.fixtures["elf"].read_bytes(),
+                "folder download changed the nested file")
+
+        complete = self.agent.complete(self.agent.call("bn_local_project_download", project=project))
+        require(complete["filename"] == project_name + ".bnpr.zip",
+                f"complete project attachment name changed: {complete}")
+        project_names, project_files = self.archive_entries(self.download(complete))
+        roots = {name.split("/", 1)[0] for name in project_names}
+        require(len(roots) == 1 and next(iter(roots)).endswith(".bnpr"),
+                f"complete download did not contain one .bnpr root: {project_names}")
+        root = next(iter(roots))
+        require(root + "/project.bnpm" in project_names, "complete project download omitted project.bnpm")
+        require(self.fixtures["raw"].read_bytes() in project_files.values()
+                and self.fixtures["elf"].read_bytes() in project_files.values(),
+                "complete project download omitted project file data")
+
+        configuration = json.loads(json.dumps(original_configuration))
+        configuration["projects"] = {
+            "roots": [], "default_root": "", "allow_arbitrary_paths": True,
+            "allow_project_registration": True,
+        }
+        saved = self.service.portal("PUT", "/config", configuration)
+        require(saved["restart_required"], "project-registration test configuration did not require restart")
+        restore_configuration["required"] = True
+        self.service.restart_from_portal()
+        self.agent = Agent(self.service.http, self.service.token).start()
+        metadata_path = self.service.directory / "projects" / (project_name + ".bnpr") / "project.bnpm"
+        registered = self.agent.call("bn_local_project_register", path=str(metadata_path))["project"]
+        registered_download = self.agent.complete(self.agent.call("bn_local_project_download", project=registered))
+        require(registered_download["filename"] == project_name + ".bnpr.zip",
+                f".bnpm download did not use its resolved .bnpr attachment name: {registered_download}")
+        registered_names, _ = self.archive_entries(self.download(registered_download))
+        registered_roots = {name.split("/", 1)[0] for name in registered_names}
+        require(registered_roots == {project_name + ".bnpr"},
+                f".bnpm registration did not resolve its complete .bnpr directory: {registered_names}")
+
+        status, _, response, _ = self.service.http.request("GET", "/downloads/" + "0" * 64)
+        require(status == 404 and response == {"error": "download_not_found"},
+                f"unknown download capability leaked state: HTTP {status}: {response}")
+
+        pending = self.agent.complete(self.agent.call(
+            "bn_local_project_file_download", project=registered, path="firmware.bin"))
+        self.agent.call("bn_analysis_session_close", analysisSession=self.agent.session)
+        self.agent.session = None
+        status, _, response, _ = self.service.http.request("GET", pending["url"])
+        require(status == 404 and response == {"error": "download_not_found"},
+                f"session closure retained an unconsumed download: HTTP {status}: {response}")
+
     def test_diff_and_name_transfer(self):
         _, primary = self.open(self.fixtures["stripped"])
         _, secondary = self.open(self.fixtures["elf"])
@@ -441,6 +581,8 @@ class Workflows(unittest.TestCase):
 
         self.addCleanup(restore_full_discovery)
         self.service.portal("PATCH", "/tools", {"discovery_mode": "brokered"}, expected=400)
+        self.service.portal("POST", "/restart", {}, authenticated=False, expected=401)
+        self.service.portal("POST", "/restart", {}, expected=409)
         binary_ninja = self.service.config.parent / "Binary Ninja.app"
         binary_ninja.symlink_to("/Applications/Binary Ninja.app", target_is_directory=True)
         configured = save_discovery_mode("brokered", binary_ninja)
@@ -465,7 +607,7 @@ class Workflows(unittest.TestCase):
                 "pending Binary Ninja installation path was not preserved")
         self.service.portal("PATCH", "/tools", {"search": True})
 
-        self.service.restart()
+        self.service.restart_from_portal()
         self.agent = Agent(self.service.http, self.service.token).start()
         status = self.service.portal("GET", "/status")
         require(status["tools"]["discovery_mode"] == "brokered" and not status["restart_required"],

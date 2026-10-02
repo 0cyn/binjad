@@ -277,6 +277,78 @@ namespace binjad::overseer {
 		}
 	}
 
+	ProjectCoordinatorResult<PreparedProjectDownload> ProjectChildCoordinator::PrepareDownload(
+		std::string_view projectReference, ProjectDownloadKind kind, const std::vector<std::string>& paths)
+	{
+		const auto project = projects_.Find(projectReference);
+		if (!project)
+			return {{}, "project not found"};
+		if ((kind == ProjectDownloadKind::File && paths.size() != 1)
+			|| (kind == ProjectDownloadKind::Files && (paths.empty() || paths.size() > 1000))
+			|| (kind == ProjectDownloadKind::Folder && paths.size() != 1)
+			|| (kind == ProjectDownloadKind::Project && !paths.empty()))
+			return {{}, "download selection is invalid"};
+		std::unordered_set<std::string> unique;
+		for (const auto& path : paths)
+		{
+			if (!ValidProjectPath(path))
+				return {{}, "project download path must be relative and contained"};
+			if (!unique.insert(path).second)
+				return {{}, "project download paths must be unique"};
+		}
+
+		auto random = security::GenerateHex256();
+		if (!random.value)
+			return {{}, random.error};
+		const auto workingDirectory = config_.storage.spoolPath / "project-downloads" / *random.value;
+		const auto contentDirectory = workingDirectory / "content";
+		if (const auto error = platform::CreatePrivateDirectory(contentDirectory); !error.empty())
+			return {{}, error};
+
+		ProjectQueueGuard queue(*this);
+		try
+		{
+			ipc::Command command;
+			auto* prepare = command.mutable_prepare_local_project_download();
+			prepare->set_project_path(project->storagePath.string());
+			prepare->set_destination(contentDirectory.string());
+			for (const auto& path : paths)
+				prepare->add_paths(path);
+			switch (kind)
+			{
+			case ProjectDownloadKind::File:
+				prepare->set_kind(ipc::LOCAL_PROJECT_DOWNLOAD_KIND_FILE);
+				break;
+			case ProjectDownloadKind::Files:
+				prepare->set_kind(ipc::LOCAL_PROJECT_DOWNLOAD_KIND_FILES);
+				break;
+			case ProjectDownloadKind::Folder:
+				prepare->set_kind(ipc::LOCAL_PROJECT_DOWNLOAD_KIND_FOLDER);
+				break;
+			case ProjectDownloadKind::Project:
+				prepare->set_kind(ipc::LOCAL_PROJECT_DOWNLOAD_KIND_PROJECT);
+				break;
+			}
+			const auto reply = CallWithRecovery(command);
+			if (!reply.success() || !reply.has_local_project_download_prepared())
+			{
+				std::error_code ignored;
+				std::filesystem::remove_all(workingDirectory, ignored);
+				return {{}, reply.success() ? "project child returned no prepared download" : reply.error()};
+			}
+			const auto& prepared = reply.local_project_download_prepared();
+			PreparedProjectDownload result {
+				contentDirectory, workingDirectory, prepared.files(), prepared.directories(), prepared.root_name()};
+			return {std::move(result), {}};
+		}
+		catch (const std::exception& exception)
+		{
+			std::error_code ignored;
+			std::filesystem::remove_all(workingDirectory, ignored);
+			return {{}, exception.what()};
+		}
+	}
+
 	ProjectCoordinatorResult<project::LocalProjectFileRecord> ProjectChildCoordinator::CommitFile(
 		std::string_view projectReference, std::string_view path, const std::filesystem::path& source,
 		bool replaceExisting, bool createFolders, std::string_view description)

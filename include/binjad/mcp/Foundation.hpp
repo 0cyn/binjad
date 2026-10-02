@@ -26,6 +26,10 @@ namespace binjad::upload {
 	class UploadRegistry;
 }
 
+namespace binjad::download {
+	class DownloadRegistry;
+}
+
 namespace binjad::session {
 	class OpenItemRegistry;
 	class JobRegistry;
@@ -59,7 +63,8 @@ namespace binjad::mcp {
 			session::OpenItemRegistry* openItems = nullptr, overseer::FileChildCoordinator* fileCoordinator = nullptr,
 			session::JobRegistry* jobs = nullptr, project::LocalProjectRegistry* projects = nullptr,
 			overseer::ProjectChildCoordinator* projectCoordinator = nullptr,
-			overseer::AnalysisScheduler* scheduler = nullptr, upload::UploadRegistry* uploads = nullptr);
+			overseer::AnalysisScheduler* scheduler = nullptr, upload::UploadRegistry* uploads = nullptr,
+			download::DownloadRegistry* downloads = nullptr);
 		FoundationResult Handle(const ValidatedRequest& request, const security::TokenRecord& principal,
 			const std::optional<session::AnalysisSessionRecord>& currentSession,
 			session::AnalysisSessionRegistry::Clock::time_point now, std::uint64_t unixNow,
@@ -89,5 +94,6 @@ namespace binjad::mcp {
 		overseer::ProjectChildCoordinator* projectCoordinator_;
 		overseer::AnalysisScheduler* scheduler_;
 		upload::UploadRegistry* uploads_;
+		download::DownloadRegistry* downloads_;
 	};
 }  // namespace binjad::mcp

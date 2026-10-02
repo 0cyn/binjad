@@ -4,8 +4,11 @@
 #include "binjad/overseer/AnalysisScheduler.hpp"
 #include "binjad/overseer/FileChildCoordinator.hpp"
 #include "binjad/overseer/ProjectChildCoordinator.hpp"
+#include "binjad/download/DownloadRegistry.hpp"
+#include "binjad/download/ZipArchive.hpp"
 #include "binjad/platform/Paths.hpp"
 #include "binjad/project/LocalProjectRegistry.hpp"
+#include "binjad/security/Crypto.hpp"
 #include "binjad/security/Random.hpp"
 #include "binjad/session/JobRegistry.hpp"
 #include "binjad/session/OpenItemRegistry.hpp"
@@ -21,8 +24,10 @@
 #include <fstream>
 #include <limits>
 #include <set>
+#include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <vector>
 
 namespace binjad::mcp {
 	namespace {
@@ -1929,6 +1934,337 @@ namespace binjad::mcp {
 				schema::Integer("offset", false, 0), schema::Integer("limit", false, 1, 200, 50));
 		}  // namespace management_tools
 
+		namespace download_tools {
+			using rapidjson::StringBuffer;
+			using rapidjson::Writer;
+
+			struct ArtifactDigest
+			{
+				std::uint64_t size = 0;
+				std::string sha256;
+				std::string error;
+				bool cancelled = false;
+			};
+
+			std::string SafeAttachmentName(std::string_view requested, std::string_view fallback)
+			{
+				std::string result;
+				result.reserve(std::min<std::size_t>(requested.size(), 200));
+				for (const unsigned char character : requested)
+				{
+					if (result.size() == 200)
+						break;
+					const bool punctuation = character == '.' || character == '_' || character == '-';
+					const bool safe = character < 0x80 && (std::isalnum(character) != 0 || punctuation);
+					result.push_back(safe ? static_cast<char>(character) : '_');
+				}
+				if (result.empty() || result == "." || result == "..")
+					result = std::string(fallback);
+				return result;
+			}
+
+			void PublishProgress(session::JobRegistry& jobs, std::string_view owner, std::string_view job,
+				std::string phase, std::uint64_t completed, std::uint64_t total, std::string message,
+				const Foundation::JobProgressCallback& progress)
+			{
+				jobs.ReportProgress(
+					owner, job, std::move(phase), completed, total, std::move(message), detail::CurrentUnixSeconds());
+				if (progress)
+				{
+					const auto current = jobs.Info(owner, job);
+					if (current.job)
+						progress(*current.job);
+				}
+			}
+
+			ArtifactDigest HashArtifact(const std::filesystem::path& path, session::JobRegistry& jobs,
+				std::string_view owner, std::string_view job, const Foundation::JobProgressCallback& progress)
+			{
+				ArtifactDigest result;
+				std::error_code error;
+				result.size = std::filesystem::file_size(path, error);
+				if (error)
+				{
+					result.error = "cannot inspect prepared download: " + error.message();
+					return result;
+				}
+				std::ifstream input(path, std::ios::binary);
+				if (!input)
+				{
+					result.error = "cannot open prepared download";
+					return result;
+				}
+				security::Sha256Hasher hasher;
+				std::vector<char> buffer(1024 * 1024);
+				std::uint64_t completed = 0;
+				while (input)
+				{
+					if (management_tools::JobCancelled(jobs, owner, job))
+					{
+						result.cancelled = true;
+						return result;
+					}
+					input.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
+					const auto count = input.gcount();
+					if (count > 0)
+						hasher.Update(std::string_view(buffer.data(), static_cast<std::size_t>(count)));
+					completed += static_cast<std::uint64_t>(count);
+					PublishProgress(
+						jobs, owner, job, "hash", completed, result.size, path.filename().string(), progress);
+				}
+				if (input.bad())
+				{
+					result.error = "cannot read prepared download";
+					return result;
+				}
+				result.sha256 = hasher.FinalHex();
+				return result;
+			}
+
+			std::string DownloadJson(const download::DownloadIssueResult& issued, bool archive, std::uint64_t files,
+				std::uint64_t directories)
+			{
+				StringBuffer buffer;
+				Writer<StringBuffer> writer(buffer);
+				writer.StartObject();
+				writer.Key("url");
+				writer.String(issued.url.data(), static_cast<rapidjson::SizeType>(issued.url.size()));
+				writer.Key("filename");
+				writer.String(issued.download->attachmentName.data(),
+					static_cast<rapidjson::SizeType>(issued.download->attachmentName.size()));
+				writer.Key("contentType");
+				writer.String(issued.download->contentType.data(),
+					static_cast<rapidjson::SizeType>(issued.download->contentType.size()));
+				writer.Key("size");
+				writer.Uint64(issued.download->size);
+				writer.Key("sha256");
+				writer.String(
+					issued.download->sha256.data(), static_cast<rapidjson::SizeType>(issued.download->sha256.size()));
+				writer.Key("expiresAt");
+				writer.Uint64(issued.download->expiresAtUnix);
+				writer.Key("method");
+				writer.String("GET");
+				writer.Key("archive");
+				writer.Bool(archive);
+				writer.Key("files");
+				writer.Uint64(files);
+				writer.Key("directories");
+				writer.Uint64(directories);
+				writer.Key("singleUse");
+				writer.Bool(true);
+				writer.Key("authorization");
+				writer.String("URL capability");
+				writer.EndObject();
+				return {buffer.GetString(), buffer.GetSize()};
+			}
+
+			std::optional<std::string> DownloadPath(std::string_view requested)
+			{
+				const auto normalized = detail::ProjectPath(requested);
+				if (!normalized || normalized->find('\\') != std::string::npos
+					|| normalized->find(':') != std::string::npos
+					|| std::any_of(normalized->begin(), normalized->end(), [](unsigned char character) {
+						   return character < 0x20 || character == 0x7f;
+					   }))
+					return std::nullopt;
+				return normalized;
+			}
+
+			FoundationResult StartDownload(const ToolCallContext& context, overseer::ProjectDownloadKind kind,
+				std::vector<std::string> paths, std::string attachmentSeed)
+			{
+				if (!context.currentSession || !context.jobs || !context.projects || !context.projectCoordinator
+					|| !context.downloads)
+					return ToolCallSuccess(context,
+						detail::ErrorJson("analysis session, project, job, and download services are required"), true);
+				const auto project = detail::RequiredString(context.arguments, "project");
+				if (!context.projects->Find(project))
+					return ToolCallSuccess(context, detail::ErrorJson("local project not found"), true);
+
+				const auto owner = context.principal.id;
+				const auto analysisSession = context.currentSession->reference;
+				const auto operation = std::string(context.request.name);
+				const auto created =
+					context.jobs->Create(owner, analysisSession, {}, operation, context.unixNow, context.now);
+				if (!created.job)
+					return ToolCallSuccess(context, detail::ErrorJson(created.error), true);
+				const auto job = created.job->reference;
+				context.jobs->Start(owner, job, context.unixNow);
+				if (context.attached)
+					context.attached(job, [jobs = context.jobs, owner, job] { (void)jobs->Cancel(owner, job); });
+
+				const auto workerError = context.jobs->StartWorker(
+					[jobs = context.jobs, downloads = context.downloads, coordinator = context.projectCoordinator,
+						owner, analysisSession, project, job, kind, paths = std::move(paths),
+						attachmentSeed = std::move(attachmentSeed), progress = context.progress]() mutable {
+						std::filesystem::path workingDirectory;
+						auto cleanup = [&] {
+							if (workingDirectory.empty())
+								return;
+							std::error_code ignored;
+							std::filesystem::remove_all(workingDirectory, ignored);
+						};
+						auto fail = [&](std::string message) {
+							cleanup();
+							jobs->Fail(owner, job, detail::ErrorJson(message), detail::CurrentUnixSeconds());
+						};
+						auto cancel = [&] {
+							cleanup();
+							jobs->MarkCancelled(owner, job, detail::ErrorJson("download preparation cancelled"),
+								detail::CurrentUnixSeconds());
+						};
+						try
+						{
+							PublishProgress(*jobs, owner, job, "export", 0, 1, "Exporting project content", progress);
+							const auto prepared = coordinator->PrepareDownload(project, kind, paths);
+							if (!prepared.value)
+							{
+								fail(prepared.error);
+								return;
+							}
+							workingDirectory = prepared.value->workingDirectory;
+							PublishProgress(*jobs, owner, job, "export", 1, 1, "Project content exported", progress);
+							if (management_tools::JobCancelled(*jobs, owner, job))
+							{
+								cancel();
+								return;
+							}
+
+							const bool archive = kind != overseer::ProjectDownloadKind::File;
+							std::filesystem::path artifact;
+							std::string attachment;
+							std::string contentType;
+							std::uint64_t files = prepared.value->files;
+							std::uint64_t directories = prepared.value->directories;
+							if (archive)
+							{
+								artifact = workingDirectory / "download.zip";
+								if (kind == overseer::ProjectDownloadKind::Project)
+									attachmentSeed = prepared.value->rootName;
+								attachment = SafeAttachmentName(attachmentSeed, "project") + ".zip";
+								const download::ZipProgress archiveProgress =
+									[&](std::uint64_t completed, std::uint64_t total, std::string_view current) {
+										PublishProgress(*jobs, owner, job, "archive", completed, total,
+											std::string(current), progress);
+										return !management_tools::JobCancelled(*jobs, owner, job);
+									};
+								const auto zipped = download::CreateZipArchive(
+									prepared.value->contentDirectory, artifact, archiveProgress);
+								if (!zipped.created)
+								{
+									if (zipped.cancelled)
+										cancel();
+									else
+										fail(zipped.error);
+									return;
+								}
+								files = zipped.files;
+								directories = zipped.directories;
+								contentType = "application/zip";
+							}
+							else
+							{
+								artifact = prepared.value->contentDirectory / std::filesystem::path(paths.front());
+								attachment = SafeAttachmentName(
+									std::filesystem::path(paths.front()).filename().string(), "project-file");
+								contentType = "application/octet-stream";
+							}
+
+							const auto digest = HashArtifact(artifact, *jobs, owner, job, progress);
+							if (digest.cancelled)
+							{
+								cancel();
+								return;
+							}
+							if (!digest.error.empty())
+							{
+								fail(digest.error);
+								return;
+							}
+							const auto issued = downloads->Issue(owner, analysisSession, project, artifact,
+								workingDirectory, attachment, contentType, digest.size, digest.sha256,
+								detail::CurrentUnixSeconds(), download::DownloadRegistry::Clock::now());
+							if (!issued.download)
+							{
+								fail(issued.error);
+								return;
+							}
+							workingDirectory.clear();
+							jobs->Complete(owner, job, DownloadJson(issued, archive, files, directories),
+								detail::CurrentUnixSeconds());
+						}
+						catch (const std::exception& exception)
+						{
+							fail(exception.what());
+						}
+					});
+				if (!workerError.empty())
+					context.jobs->Fail(owner, job, detail::ErrorJson(workerError), context.unixNow);
+				return management_tools::WaitForProjectJob(context, owner, job);
+			}
+
+			FoundationResult LocalProjectFileDownload(const ToolCallContext& context)
+			{
+				const auto path = DownloadPath(detail::RequiredString(context.arguments, "path"));
+				if (!path)
+					return ToolCallInvalidArguments(context, "path must be a safe contained project-relative path");
+				return StartDownload(context, overseer::ProjectDownloadKind::File, {*path}, {});
+			}
+
+			FoundationResult LocalProjectFileDownloadBatch(const ToolCallContext& context)
+			{
+				std::vector<std::string> paths;
+				std::unordered_set<std::string> unique;
+				for (const auto& item : context.arguments["paths"].GetArray())
+				{
+					const auto path = DownloadPath({item.GetString(), item.GetStringLength()});
+					if (!path)
+						return ToolCallInvalidArguments(
+							context, "each path must be a safe contained project-relative path");
+					if (!unique.insert(*path).second)
+						return ToolCallInvalidArguments(context, "paths must select unique project files");
+					paths.push_back(*path);
+				}
+				const auto project = context.projects ?
+					context.projects->Find(detail::RequiredString(context.arguments, "project")) :
+					std::nullopt;
+				const auto attachment = SafeAttachmentName(project ? project->name : "project", "project") + "-files";
+				return StartDownload(context, overseer::ProjectDownloadKind::Files, std::move(paths), attachment);
+			}
+
+			FoundationResult LocalProjectFolderDownload(const ToolCallContext& context)
+			{
+				const auto path = DownloadPath(detail::RequiredString(context.arguments, "path"));
+				if (!path)
+					return ToolCallInvalidArguments(context, "path must be a safe contained project-relative path");
+				return StartDownload(context, overseer::ProjectDownloadKind::Folder, {*path},
+					SafeAttachmentName(std::filesystem::path(*path).filename().string(), "project-folder"));
+			}
+
+			FoundationResult LocalProjectDownload(const ToolCallContext& context)
+			{
+				return StartDownload(context, overseer::ProjectDownloadKind::Project, {}, {});
+			}
+
+			BINJAD_PROJECT_TOOL(LocalProjectFileDownloadTool, "bn_local_project_file_download",
+				"Prepare one local project file for download through a one-time HTTP GET capability.",
+				ProjectManagement, "Downloads", ToolCallAvailability::LocalMode, LocalProjectFileDownload,
+				schema::String("project", true), schema::String("path", true));
+			BINJAD_PROJECT_TOOL(LocalProjectFileDownloadBatchTool, "bn_local_project_file_download_batch",
+				"Prepare up to 1000 selected local project files as a ZIP archive that preserves project-relative "
+				"paths.",
+				ProjectManagement, "Downloads", ToolCallAvailability::LocalMode, LocalProjectFileDownloadBatch,
+				schema::String("project", true), schema::StringArray("paths", true, 1, 1000));
+			BINJAD_PROJECT_TOOL(LocalProjectFolderDownloadTool, "bn_local_project_folder_download",
+				"Prepare one local project folder as a ZIP archive that includes the selected top directory.",
+				ProjectManagement, "Downloads", ToolCallAvailability::LocalMode, LocalProjectFolderDownload,
+				schema::String("project", true), schema::String("path", true));
+			BINJAD_PROJECT_TOOL(LocalProjectDownloadTool, "bn_local_project_download",
+				"Prepare a complete local project as a ZIP archive containing its resolved .bnpr directory.",
+				ProjectManagement, "Downloads", ToolCallAvailability::LocalMode, LocalProjectDownload,
+				schema::String("project", true));
+		}  // namespace download_tools
+
 		namespace upload_tools {
 			using rapidjson::StringBuffer;
 			using rapidjson::Writer;
@@ -2015,12 +2351,8 @@ namespace binjad::mcp {
 				writer.String("application/octet-stream");
 				writer.Key("singleUse");
 				writer.Bool(true);
-				writer.Key("requiresBearerAuthentication");
-				writer.Bool(context.config.uploads.requireBearerAuthentication);
 				writer.Key("authorization");
-				writer.String(context.config.uploads.requireBearerAuthentication ?
-						"Bearer token plus URL capability" :
-						"URL capability");
+				writer.String("URL capability");
 				writer.EndObject();
 				return ToolCallSuccess(context, {buffer.GetString(), buffer.GetSize()});
 			}
@@ -2498,6 +2830,10 @@ namespace binjad::mcp {
 		tools.emplace_back(std::make_unique<management_tools::LocalProjectFileDeleteTool>());
 		tools.emplace_back(std::make_unique<management_tools::ProjectTextReadTool>());
 		tools.emplace_back(std::make_unique<management_tools::ProjectJsonReadTool>());
+		tools.emplace_back(std::make_unique<download_tools::LocalProjectFileDownloadTool>());
+		tools.emplace_back(std::make_unique<download_tools::LocalProjectFileDownloadBatchTool>());
+		tools.emplace_back(std::make_unique<download_tools::LocalProjectFolderDownloadTool>());
+		tools.emplace_back(std::make_unique<download_tools::LocalProjectDownloadTool>());
 	}
 
 	void RegisterCoreUploadTools(std::vector<std::unique_ptr<ToolCall>>& tools)

@@ -4,7 +4,6 @@
 
 #include <algorithm>
 #include <charconv>
-#include <chrono>
 #include <cctype>
 #include <optional>
 #include <string>
@@ -40,13 +39,6 @@ namespace binjad::http {
 			return escaped;
 		}
 
-		std::uint64_t UnixSeconds()
-		{
-			return static_cast<std::uint64_t>(
-				std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch())
-					.count());
-		}
-
 		drogon::HttpResponsePtr Response(int status, std::string body, const std::optional<std::string>& origin = {})
 		{
 			auto response = drogon::HttpResponse::newHttpResponse();
@@ -60,15 +52,6 @@ namespace binjad::http {
 				response->addHeader("Vary", "Origin");
 			}
 			return response;
-		}
-
-		std::optional<std::string> Bearer(const drogon::HttpRequestPtr& request)
-		{
-			const auto authorization = Header(request, "authorization");
-			constexpr std::string_view prefix = "Bearer ";
-			if (!authorization || !std::string_view(*authorization).starts_with(prefix))
-				return std::nullopt;
-			return authorization->substr(prefix.size());
 		}
 
 		std::optional<std::string> Capability(std::string_view path, std::string_view prefix)
@@ -237,8 +220,8 @@ namespace binjad::http {
 		}
 	}  // namespace
 
-	UploadRoutes::UploadRoutes(Config config, const security::TokenAuthenticator& authenticator,
-		upload::UploadRegistry& uploads) : config_(std::move(config)), authenticator_(authenticator), uploads_(uploads)
+	UploadRoutes::UploadRoutes(Config config, upload::UploadRegistry& uploads) :
+		config_(std::move(config)), uploads_(uploads)
 	{}
 
 	void UploadRoutes::Register(drogon::HttpAppFramework& app)
@@ -260,7 +243,7 @@ namespace binjad::http {
 				stream->setStreamReader(drogon::RequestStreamReader::newNullReader());
 			auto response = Response(204, {}, origin);
 			response->addHeader("Access-Control-Allow-Methods", "PUT, POST, OPTIONS");
-			response->addHeader("Access-Control-Allow-Headers", "Authorization, Content-Type");
+			response->addHeader("Access-Control-Allow-Headers", "Content-Type");
 			callback(response);
 			return;
 		}
@@ -271,21 +254,6 @@ namespace binjad::http {
 				stream->setStreamReader(drogon::RequestStreamReader::newNullReader());
 			callback(Response(404, "{\"error\":\"upload_not_found\"}", origin));
 			return;
-		}
-		std::optional<security::TokenRecord> principal;
-		if (config_.uploads.requireBearerAuthentication)
-		{
-			const auto token = Bearer(request);
-			principal = token ? authenticator_.Authenticate(*token, UnixSeconds()) : std::nullopt;
-			if (!principal)
-			{
-				if (stream)
-					stream->setStreamReader(drogon::RequestStreamReader::newNullReader());
-				auto response = Response(401, "{\"error\":\"unauthorized\"}", origin);
-				response->addHeader("WWW-Authenticate", "Bearer");
-				callback(response);
-				return;
-			}
 		}
 		if (request->method() == drogon::Put)
 		{
@@ -303,9 +271,7 @@ namespace binjad::http {
 				}
 			}
 		}
-		auto [transfer, error] = principal ?
-			uploads_.Begin(*capability, principal->id, session::AnalysisSessionRegistry::Clock::now()) :
-			uploads_.Begin(*capability, session::AnalysisSessionRegistry::Clock::now());
+		auto [transfer, error] = uploads_.Begin(*capability, session::AnalysisSessionRegistry::Clock::now());
 		if (!transfer)
 		{
 			if (stream)
@@ -348,10 +314,10 @@ namespace binjad::http {
 			std::move(write), [state](std::exception_ptr exception) { Finish(state, exception); }));
 	}
 
-	std::shared_ptr<UploadRoutes> RegisterUploadRoutes(drogon::HttpAppFramework& app, Config config,
-		const security::TokenAuthenticator& authenticator, upload::UploadRegistry& uploads)
+	std::shared_ptr<UploadRoutes> RegisterUploadRoutes(
+		drogon::HttpAppFramework& app, Config config, upload::UploadRegistry& uploads)
 	{
-		auto routes = std::make_shared<UploadRoutes>(std::move(config), authenticator, uploads);
+		auto routes = std::make_shared<UploadRoutes>(std::move(config), uploads);
 		routes->Register(app);
 		return routes;
 	}

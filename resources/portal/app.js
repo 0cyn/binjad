@@ -11,6 +11,7 @@ let polling = false;
 let memoryPollTimer = null;
 let memoryPolling = false;
 let memoryAbortController = null;
+let restartInProgress = false;
 
 const memoryStatusMeta = document.querySelector('meta[name="binjad-status-path"]');
 const configuredMemoryStatusPath = memoryStatusMeta?.dataset.configuredPath || "";
@@ -43,7 +44,7 @@ const toolPacks = [
   },
   {
     name: "Project Management & Documents",
-    description: "Project metadata, folders and files, server-side imports, and direct text or JSON document reading.",
+    description: "Project metadata, folders and files, server-side imports, capability downloads, and direct text or JSON document reading.",
     input: "cfg-tool-project-management",
     key: "project_management",
   },
@@ -336,33 +337,6 @@ async function call(path, options = {}) {
   return value;
 }
 
-async function loadSetupState() {
-  try {
-    const value = await call("/setup");
-    $("#setup").classList.toggle("hidden", !value.result);
-  } catch (error) {
-    toast(error.message, true);
-  }
-}
-
-async function setupAccount() {
-  try {
-    await call("/setup", {
-      method: "POST",
-      body: JSON.stringify({
-        username: $("#setup-user").value,
-        password: $("#setup-password").value,
-      }),
-    });
-    $("#login-user").value = $("#setup-user").value;
-    $("#setup-password").value = "";
-    $("#setup").classList.add("hidden");
-    toast("Account created; log in to create the MCP token");
-  } catch (error) {
-    toast(error.message, true);
-  }
-}
-
 async function login() {
   authorization = `Basic ${base64Utf8(`${$("#login-user").value}:${$("#login-password").value}`)}`;
 
@@ -414,9 +388,12 @@ function showView(id, button) {
 }
 
 function setRestartRequired(required) {
-  $("#restart-badge").classList.toggle("hidden", !required);
-  $("#restart-badge").classList.toggle("warn", required);
-  $("#config-warning").classList.toggle("hidden", !required);
+  const button = $("#restart-daemon");
+  button.classList.toggle("hidden", !required);
+  if (!restartInProgress) {
+    button.disabled = false;
+    button.textContent = "Restart daemon";
+  }
 }
 
 async function refreshStatus() {
@@ -463,6 +440,79 @@ async function refreshAll() {
     if (await refreshStatus()) await refreshVisibleMcpDocumentation();
     toast("Dashboard refreshed");
   } catch (error) {
+    toast(error.message, true);
+  }
+}
+
+function wait(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+async function waitForRestart(portalUrl, retryAfterSeconds) {
+  const destination = new URL(portalUrl, location.href);
+  const destinationPath = destination.pathname.replace(/\/$/, "");
+  const currentPath = location.pathname.replace(/\/$/, "");
+  if (destination.origin !== location.origin) {
+    const delay = Math.max(1000, (Number(retryAfterSeconds) + 2) * 1000);
+    toast("Daemon restart requested. The portal will open at its configured URL.");
+    setTimeout(() => location.assign(destination.href), delay);
+    return;
+  }
+
+  const statusUrl = `${destination.origin}${destinationPath}/api/status`;
+  const deadline = Date.now() + 90000;
+  while (Date.now() < deadline) {
+    await wait(1000);
+    try {
+      const response = await fetch(statusUrl, {
+        cache: "no-store",
+        headers: {Authorization: authorization},
+      });
+      if (!response.ok) continue;
+      const value = await response.json();
+      if (value.result?.restart_required !== false) continue;
+      if (destinationPath !== currentPath) {
+        location.assign(destination.href);
+        return;
+      }
+      await refreshStatus();
+      await loadConfiguration();
+      restartInProgress = false;
+      setRestartRequired(false);
+      startPolling();
+      toast("Daemon restarted");
+      return;
+    } catch {
+      // The managed service is still restarting.
+    }
+  }
+
+  restartInProgress = false;
+  setRestartRequired(true);
+  startPolling();
+  toast("The daemon did not return. Reload the portal after you check the service.", true);
+}
+
+async function restartDaemon() {
+  if (restartInProgress) return;
+  if (!confirm("Restart the daemon now?\n\nThis closes active sessions and jobs. Save all analysis changes before you continue.")) return;
+
+  restartInProgress = true;
+  stopPolling();
+  const button = $("#restart-daemon");
+  button.disabled = true;
+  button.textContent = "Restarting…";
+  try {
+    const value = await call("/restart", {
+      method: "POST",
+      body: "{}",
+    });
+    toast("Daemon restart requested");
+    await waitForRestart(value.result.portal_url, value.result.retry_after_seconds);
+  } catch (error) {
+    restartInProgress = false;
+    setRestartRequired(true);
+    startPolling();
     toast(error.message, true);
   }
 }
@@ -629,7 +679,7 @@ async function loadToolConfiguration(silent = false) {
   try {
     const value = await call("/tools");
     fillToolConfiguration(value.result.tools);
-    setRestartRequired(value.result.restart_required ?? $("#restart-badge").classList.contains("warn"));
+    setRestartRequired(value.result.restart_required ?? !$("#restart-daemon").classList.contains("hidden"));
   } catch (error) {
     if (!silent) toast(error.message, true);
   }
@@ -675,9 +725,6 @@ function fillConfiguration(configuration) {
   put("#cfg-upload-max", configuration.uploads?.max_bytes ?? 4294967296);
   put("#cfg-upload-memory", configuration.uploads?.memory_threshold_bytes ?? 268435456);
   put("#cfg-upload-ttl", configuration.uploads?.url_ttl_seconds ?? 3600);
-  $("#cfg-upload-auth").checked = Boolean(
-    configuration.uploads?.require_bearer_authentication,
-  );
   put("#cfg-roots", (configuration.projects?.roots || []).join("\n"));
   put("#cfg-default-root", configuration.projects?.default_root ?? "");
   put("#cfg-spool", configuration.storage?.spool_path ?? "");
@@ -736,7 +783,7 @@ function mergeConfiguration() {
   configuration.uploads.max_bytes = numberValue("#cfg-upload-max");
   configuration.uploads.memory_threshold_bytes = numberValue("#cfg-upload-memory");
   configuration.uploads.url_ttl_seconds = numberValue("#cfg-upload-ttl");
-  configuration.uploads.require_bearer_authentication = $("#cfg-upload-auth").checked;
+  delete configuration.uploads.require_bearer_authentication;
   configuration.projects.roots = $("#cfg-roots").value
     .split("\n")
     .map((value) => value.trim())
@@ -796,7 +843,7 @@ async function saveConfiguration() {
         : Promise.resolve(),
     ]);
     toast(value.result.restart_required
-      ? "Configuration saved; restart required"
+      ? "Configuration saved. Select Restart daemon to apply it."
       : "Configuration matches running service");
   } catch (error) {
     toast(error.message, true);
@@ -928,7 +975,6 @@ function stopPolling() {
 }
 
 const actions = {
-  setup: setupAccount,
   logout,
   "refresh-all": refreshAll,
   "change-password": changePassword,
@@ -938,6 +984,7 @@ const actions = {
   "create-project": createProject,
   "load-config": loadConfiguration,
   "save-config": saveConfiguration,
+  "restart-daemon": restartDaemon,
 };
 
 $("#login-form").addEventListener("submit", (event) => {
@@ -996,4 +1043,13 @@ document.addEventListener("visibilitychange", () => {
 });
 
 renderEnabledToolPacks();
-loadSetupState();
+
+try {
+  const onboardedUsername = sessionStorage.getItem("binjad-onboarded-username");
+  if (onboardedUsername) {
+    $("#login-user").value = onboardedUsername;
+    sessionStorage.removeItem("binjad-onboarded-username");
+  }
+} catch {
+  // Username prefill is optional when browser storage is unavailable.
+}

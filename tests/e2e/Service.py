@@ -38,19 +38,18 @@ class LaunchdService:
             port = listener.getsockname()[1]
         self.http = Http(f"http://127.0.0.1:{port}", transcript)
         self.token = None
-        (self.directory / "projects").mkdir()
         configuration = {
             "listener": {"addresses": ["127.0.0.1"], "port": port},
             "cpu": {"percentage": 1, "fairness": "job"},
             "jobs": {"detach_after_seconds": 1, "cancellation_grace_seconds": 5},
             "uploads": {"memory_threshold_bytes": 1024, "max_bytes": 67108864},
-            "projects": {"roots": ["projects"], "default_root": "projects", "allow_arbitrary_paths": True},
         }
         self.config.write_text(json.dumps(configuration, indent=2) + "\n")
         self.config.chmod(0o600)
         self.plist.write_bytes(plistlib.dumps({
             "Label": self.label, "ProgramArguments": [str(self.daemon), "--config", str(self.config)],
-            "RunAtLoad": True, "MachServices": {"me.cynder.binjad": True},
+            "RunAtLoad": True, "KeepAlive": True, "ThrottleInterval": 1,
+            "MachServices": {"me.cynder.binjad": True},
             "StandardOutPath": str(self.directory / "daemon.stdout.log"),
             "StandardErrorPath": str(self.directory / "daemon.stderr.log"),
         }))
@@ -83,18 +82,82 @@ class LaunchdService:
             require(status == 302 and headers.get("location") == "/portal",
                     f"root did not redirect to the portal: HTTP {status}, {headers}")
             status, headers, page, _ = self.http.request("GET", "/portal")
+            require(status == 302 and headers.get("location") == "/portal/setup",
+                    f"fresh portal did not redirect to onboarding: HTTP {status}, {headers}")
+            status, headers, setup_page, _ = self.http.request("GET", "/portal/setup")
             require(status == 200 and headers.get("content-type", "").startswith("text/html"),
-                    f"portal page was unavailable: HTTP {status}")
+                    f"onboarding page was unavailable: HTTP {status}")
+            require('id="onboarding-project-root"' in setup_page
+                    and 'id="onboarding-public-url"' in setup_page
+                    and 'id="onboarding-username"' in setup_page
+                    and 'data-profile="local"' in setup_page
+                    and 'data-profile="remote"' in setup_page
+                    and 'id="onboarding-token-ttl"' in setup_page
+                    and 'id="onboarding-token-secret"' in setup_page
+                    and 'id="login-form"' not in setup_page,
+                    "onboarding did not use its dedicated four-page surface")
+            status, headers, setup_script, _ = self.http.request("GET", "/portal/setup.js")
+            require(status == 200 and headers.get("content-type", "").startswith("text/javascript")
+                    and 'request("/onboarding"' in setup_script,
+                    f"onboarding script was unavailable: HTTP {status}")
+            onboarding = self.portal("GET", "/onboarding", authenticated=False)
+            require(onboarding["required"] is True and onboarding["project_root"] == "~/binja-projects",
+                    f"fresh onboarding defaults were wrong: {onboarding}")
+            missing_root = self.directory / "missing-projects"
+            self.portal("POST", "/onboarding", {
+                "username": self.username,
+                "password": self.password,
+                "project_root": str(missing_root),
+                "create_project_root": False,
+                "public_base_url": self.http.base_url,
+                "allow_arbitrary_paths": True,
+                "allow_project_registration": False,
+            }, authenticated=False, expected=400)
+            require(not missing_root.exists()
+                    and self.portal("GET", "/onboarding", authenticated=False)["required"] is True,
+                    "rejected onboarding changed the project root or account")
+            setup = self.portal("POST", "/onboarding", {
+                "username": self.username,
+                "password": self.password,
+                "project_root": "projects",
+                "create_project_root": True,
+                "public_base_url": self.http.base_url,
+                "allow_arbitrary_paths": True,
+                "allow_project_registration": False,
+            }, authenticated=False, expected=201)
+            require(setup["restart_required"] is True
+                    and Path(setup["project_root"]) == self.directory / "projects"
+                    and (self.directory / "projects").is_dir(),
+                    f"onboarding did not create and configure the project root: {setup}")
+            self.rotate_token()
+            self.restart_from_portal()
+            require(self.portal("GET", "/setup", authenticated=False) is False,
+                    "onboarding did not create the account")
+            status, headers, _, _ = self.http.request("GET", "/portal/setup")
+            require(status == 302 and headers.get("location") == "/portal",
+                    f"completed onboarding remained accessible: HTTP {status}, {headers}")
+            status, headers, page, _ = self.http.request("GET", "/portal")
+            require(status == 200 and headers.get("content-type", "").startswith("text/html"),
+                    f"portal page was unavailable after onboarding: HTTP {status}")
             require("{{STATUS_PATH}}" not in page
                     and ('<meta name="binjad-status-path" content="/healthz/status" '
                          'data-configured-path="/healthz/status">') in page,
                     "portal page did not receive its public status path")
             require('id="memory-panel"' in page and 'id="memory-chart"' in page and "Service posture" not in page,
                     "portal page did not contain the memory graph")
-            require(self.portal("GET", "/setup", authenticated=False) is True, "test daemon did not start with fresh state")
-            self.portal("POST", "/setup", {"username": self.username, "password": self.password},
-                        authenticated=False, expected=201)
-            self.rotate_token()
+            require('id="restart-daemon"' in page and 'data-action="restart-daemon"' in page
+                    and 'id="restart-badge"' not in page and 'id="config-warning"' not in page,
+                    "portal page did not contain the single daemon restart control")
+            require('id="setup-user"' not in page and 'data-action="setup"' not in page,
+                    "the login page still contained the old setup form")
+            persisted = self.portal("GET", "/config")["configuration"]
+            require(persisted["http"]["public_base_url"] == self.http.base_url
+                    and persisted["projects"]["roots"] == [str(self.directory / "projects")]
+                    and persisted["projects"]["default_root"] == str(self.directory / "projects")
+                    and persisted["projects"]["allow_arbitrary_paths"] is True
+                    and persisted["projects"]["allow_project_registration"] is False
+                    and "require_bearer_authentication" not in persisted["uploads"],
+                    f"onboarding settings were not persisted: {persisted}")
             return self
         except BaseException:
             self.__exit__(None, None, None)
@@ -144,6 +207,22 @@ class LaunchdService:
     def restart(self):
         self.stop()
         self.start()
+
+    def restart_from_portal(self):
+        result = self.portal("POST", "/restart", {}, expected=202)
+        require(result["restarting"] is True, "portal restart was not acknowledged")
+        require(result["portal_url"] == self.http.base_url + "/portal", "portal restart returned the wrong URL")
+        deadline = time.monotonic() + 90
+        while time.monotonic() < deadline:
+            try:
+                status = self.portal("GET", "/status")
+                if not status["restart_required"]:
+                    return result
+            except Exception:
+                pass
+            time.sleep(0.5)
+        self.command("launchctl", "print", self.target, check=False)
+        raise ContractError("daemon did not return after the portal restart request")
 
     def portal(self, method, path, body=None, authenticated=True, expected=200):
         headers = {"Origin": "https://remote.example.invalid"}

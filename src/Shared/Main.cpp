@@ -1,5 +1,7 @@
 #include "binjad/BinaryNinjaAbi.hpp"
 #include "binjad/Config.hpp"
+#include "binjad/download/DownloadRegistry.hpp"
+#include "binjad/http/DownloadRoutes.hpp"
 #include "binjad/http/DrogonRoutes.hpp"
 #include "binjad/http/McpDispatcher.hpp"
 #include "binjad/http/PortalRoutes.hpp"
@@ -77,6 +79,7 @@ namespace {
 			scheduler(std::make_shared<binjad::overseer::AnalysisScheduler>(config.cpu)),
 			jobs(std::make_shared<binjad::session::JobRegistry>(*references, *sessions)),
 			uploads(std::make_shared<binjad::upload::UploadRegistry>(config, *references, *sessions, *projects)),
+			downloads(std::make_shared<binjad::download::DownloadRegistry>(config, *sessions, *projects)),
 			dispatcher(nullptr)
 		{
 			openItems->SetChangedCallback([subscriptions = subscriptions](std::string_view owner) {
@@ -103,8 +106,8 @@ namespace {
 		{
 			dispatcher = std::make_shared<binjad::http::McpDispatcher>(*sessions, BINJAD_VERSION, config,
 				openItems.get(), coordinator, jobs.get(), projects.get(), projectCoordinator, scheduler.get(),
-				uploads.get(), binjad::http::McpDispatcher::SteadyNow {}, binjad::http::McpDispatcher::UnixNow {},
-				subscriptions);
+				uploads.get(), downloads.get(), binjad::http::McpDispatcher::SteadyNow {},
+				binjad::http::McpDispatcher::UnixNow {}, subscriptions);
 		}
 
 		std::shared_ptr<binjad::reference::FriendlyReferencePool> references;
@@ -115,6 +118,7 @@ namespace {
 		std::shared_ptr<binjad::overseer::AnalysisScheduler> scheduler;
 		std::shared_ptr<binjad::session::JobRegistry> jobs;
 		std::shared_ptr<binjad::upload::UploadRegistry> uploads;
+		std::shared_ptr<binjad::download::DownloadRegistry> downloads;
 		std::shared_ptr<binjad::http::McpDispatcher> dispatcher;
 	};
 
@@ -138,6 +142,12 @@ namespace {
 		std::shared_ptr<binjad::overseer::FileChildCoordinator> coordinator;
 		std::shared_ptr<binjad::overseer::ProjectChildCoordinator> projectCoordinator;
 
+		void Shutdown()
+		{
+			projectCoordinator.reset();
+			coordinator.reset();
+		}
+
 		std::uint64_t MemoryBytes() { return supervisor->MemoryUsage().TotalMemoryBytes(); }
 	};
 #elif defined(__linux__)
@@ -154,12 +164,22 @@ namespace {
 			projectCoordinator = std::make_shared<binjad::overseer::ProjectChildCoordinator>(config, executable,
 				runtime->Supervisor(), runtime->Acceptor(), projects, &childLaunchMutex, knownProjects);
 		}
-		~FileRuntime() { runtime->TerminateChildren(); }
+		~FileRuntime()
+		{
+			Shutdown();
+			runtime->TerminateChildren();
+		}
 
 		std::unique_ptr<binjad::ChildProcessRuntime> runtime;
 		std::mutex childLaunchMutex;
 		std::shared_ptr<binjad::overseer::FileChildCoordinator> coordinator;
 		std::shared_ptr<binjad::overseer::ProjectChildCoordinator> projectCoordinator;
+
+		void Shutdown()
+		{
+			projectCoordinator.reset();
+			coordinator.reset();
+		}
 
 		std::uint64_t MemoryBytes() { return runtime->Supervisor().MemoryUsage().TotalMemoryBytes(); }
 	};
@@ -240,11 +260,11 @@ namespace {
 				throw std::runtime_error(error);
 			auto sessionRuntime = std::make_shared<SessionRuntime>(*result.config);
 #if defined(__APPLE__) || defined(__linux__)
-#if defined(__linux__)
+	#if defined(__linux__)
 			const auto executable = std::filesystem::canonical("/proc/self/exe");
-#else
+	#else
 			const auto executable = std::filesystem::absolute(argc > 0 ? argv[0] : "binjad").lexically_normal();
-#endif
+	#endif
 			auto fileRuntime = std::make_shared<FileRuntime>(*result.config, executable, *sessionRuntime->openItems,
 				*sessionRuntime->projects, authenticationRuntime->knownProjects.get());
 			std::weak_ptr<SessionRuntime> weakSessionRuntime = sessionRuntime;
@@ -254,6 +274,7 @@ namespace {
 					return;
 				sessionRuntime->subscriptions->RemoveSession(session.reference);
 				sessionRuntime->uploads->RemoveByAnalysisSession(session.reference);
+				sessionRuntime->downloads->RemoveByAnalysisSession(session.reference);
 				fileRuntime->coordinator->CloseAnalysisSession(session.ownerTokenId, session.reference);
 				sessionRuntime->subscriptions->PublishResource(session.ownerTokenId, "binjad://analysis-sessions");
 			});
@@ -340,6 +361,7 @@ namespace {
 			sessionRuntime->sessions->SetClosedCallback([sessionRuntime](const auto& session) {
 				sessionRuntime->subscriptions->RemoveSession(session.reference);
 				sessionRuntime->uploads->RemoveByAnalysisSession(session.reference);
+				sessionRuntime->downloads->RemoveByAnalysisSession(session.reference);
 				auto& openItems = sessionRuntime->openItems;
 				openItems->CloseByAnalysisSession(session.reference);
 				sessionRuntime->subscriptions->PublishResource(session.ownerTokenId, "binjad://analysis-sessions");
@@ -357,6 +379,13 @@ namespace {
 				[dispatcher = sessionRuntime->dispatcher](const binjad::ToolConfig& tools) {
 					dispatcher->SetToolConfig(tools);
 				});
+			authenticationRuntime->portalApi.SetRestartCallback([] {
+				binjad::Log(binjad::LogLevel::Notice, "portal requested a daemon restart");
+				drogon::app().getLoop()->runAfter(1.0, [] {
+					binjad::Log(binjad::LogLevel::Notice, "stopping the daemon for managed restart");
+					drogon::app().quit();
+				});
+			});
 			authenticationRuntime->portalService.SetTokenRevokedCallback(
 				[sessionRuntime
 #if defined(__APPLE__) || defined(__linux__)
@@ -367,6 +396,7 @@ namespace {
 					sessionRuntime->jobs->CancelByToken(tokenId);
 					sessionRuntime->jobs->RemoveByToken(tokenId);
 					sessionRuntime->uploads->RemoveByToken(tokenId);
+					sessionRuntime->downloads->RemoveByToken(tokenId);
 					sessionRuntime->subscriptions->RemoveOwner(tokenId);
 					sessionRuntime->sessions->CloseByOwner(tokenId);
 				});
@@ -387,8 +417,8 @@ namespace {
 #endif
 					sessionRuntime->dispatcher->Handle(std::move(request), std::move(callback));
 				});
-			binjad::http::RegisterUploadRoutes(
-				drogon::app(), *result.config, authenticationRuntime->tokens.Authenticator(), *sessionRuntime->uploads);
+			binjad::http::RegisterUploadRoutes(drogon::app(), *result.config, *sessionRuntime->uploads);
+			binjad::http::RegisterDownloadRoutes(drogon::app(), *sessionRuntime->downloads);
 			auto portalApi =
 				std::shared_ptr<binjad::portal::Api>(authenticationRuntime, &authenticationRuntime->portalApi);
 #if defined(__APPLE__)
@@ -402,10 +432,7 @@ namespace {
 				[sessionRuntime
 #if defined(__APPLE__)
 					,
-					fileRuntime,
-					executable,
-					configPath,
-					config = *result.config
+					fileRuntime, executable, configPath, config = *result.config
 #elif defined(__linux__)
 					,
 					fileRuntime
@@ -413,7 +440,8 @@ namespace {
 			] {
 					binjad::Log(binjad::LogLevel::Notice, "binjad overseer is ready");
 #if defined(__APPLE__)
-					if (const auto error = binjad::platform::LaunchControlUi(executable, configPath, config); !error.empty())
+					if (const auto error = binjad::platform::LaunchControlUi(executable, configPath, config);
+						!error.empty())
 						binjad::Log(binjad::LogLevel::Error, error);
 #endif
 					drogon::app().getLoop()->runEvery(60.0,
@@ -426,9 +454,13 @@ namespace {
 							const auto now = binjad::session::AnalysisSessionRegistry::Clock::now();
 							sessionRuntime->sessions->Sweep(now);
 							sessionRuntime->uploads->Sweep(now);
+							sessionRuntime->downloads->Sweep(now);
 						});
 				});
 			drogon::app().run();
+#if defined(__APPLE__) || defined(__linux__)
+			fileRuntime->Shutdown();
+#endif
 			return EXIT_SUCCESS;
 		}
 		catch (const std::exception& exception)

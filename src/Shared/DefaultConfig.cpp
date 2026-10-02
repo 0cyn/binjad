@@ -40,8 +40,7 @@ namespace binjad {
   "uploads": {
     "max_bytes": 4294967296,
     "memory_threshold_bytes": 268435456,
-    "url_ttl_seconds": 3600,
-    "require_bearer_authentication": false
+    "url_ttl_seconds": 3600
   },
   "projects": {
     "_comment": "Relative roots are resolved against this file's directory. Outside-root project creation and registration are disabled unless allow_project_registration is true.",

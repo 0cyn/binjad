@@ -36,6 +36,10 @@ namespace binjad::upload {
 	class UploadRegistry;
 }
 
+namespace binjad::download {
+	class DownloadRegistry;
+}
+
 namespace binjad::mcp {
 	enum class ToolCallCategory
 	{
@@ -89,6 +93,7 @@ namespace binjad::mcp {
 		overseer::ProjectChildCoordinator* projectCoordinator;
 		overseer::AnalysisScheduler* scheduler;
 		upload::UploadRegistry* uploads;
+		download::DownloadRegistry* downloads;
 		const ValidatedRequest& request;
 		const security::TokenRecord& principal;
 		const std::optional<session::AnalysisSessionRecord>& currentSession;

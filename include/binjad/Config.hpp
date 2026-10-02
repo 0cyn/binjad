@@ -9,6 +9,8 @@
 #include <vector>
 
 namespace binjad {
+	inline constexpr std::string_view kDownloadPath = "/downloads";
+
 	enum class FairnessUnit
 	{
 		AnalysisSession,
@@ -61,7 +63,6 @@ namespace binjad {
 		std::uint64_t maxBytes = 4ULL * 1024 * 1024 * 1024;
 		std::uint64_t memoryThresholdBytes = 256ULL * 1024 * 1024;
 		std::chrono::seconds urlTtl {3600};
-		bool requireBearerAuthentication = false;
 	};
 
 	struct ProjectConfig

@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Set up binja'd</title>
+  <link rel="stylesheet" href="{{PORTAL_PATH}}/app.css">
+  <script src="{{PORTAL_PATH}}/setup.js" defer></script>
+</head>
+<body class="onboarding-page">
+  <main id="onboarding" class="onboarding-shell hidden">
+    <header class="onboarding-brand">
+      <img src="{{PORTAL_PATH}}/binjad.png" alt="">
+      <span>binja'd</span>
+    </header>
+
+    <ol class="onboarding-progress" aria-label="Setup progress">
+      <li class="on" data-progress="0"><span>1</span>Projects</li>
+      <li data-progress="1"><span>2</span>Access</li>
+      <li data-progress="2"><span>3</span>Account</li>
+      <li data-progress="3"><span>4</span>Connect</li>
+    </ol>
+
+    <form id="onboarding-form" novalidate>
+      <section class="onboarding-step" data-step="0">
+        <div class="onboarding-copy">
+          <div class="eyebrow">Step 1 of 4</div>
+          <h1>Where should projects live?</h1>
+        </div>
+        <div class="onboarding-fields">
+          <label>
+            <span>Projects root</span>
+            <input id="onboarding-project-root" autocomplete="off" required>
+          </label>
+          <label class="check onboarding-check">
+            <input id="onboarding-create-root" type="checkbox">
+            <span>
+              <b>Create this directory if it does not exist</b>
+            </span>
+          </label>
+        </div>
+      </section>
+
+      <section class="onboarding-step hidden" data-step="1">
+        <div class="onboarding-copy">
+          <div class="eyebrow">Step 2 of 4</div>
+          <h1>Access Controls</h1>
+        </div>
+        <div class="onboarding-fields">
+          <fieldset class="onboarding-profile-picker">
+            <legend>I'm running this...</legend>
+            <div class="onboarding-profile-options">
+              <button class="onboarding-profile" type="button" data-profile="local" aria-pressed="false">
+                <b>Locally</b>
+                <span>My MCP client and binja'd run on this computer.</span>
+                <small>Allow direct local files and projects outside the main root.</small>
+              </button>
+              <button class="onboarding-profile" type="button" data-profile="remote" aria-pressed="false">
+                <b>Remotely</b>
+                <span>I'm running this behind nginx or something</span>
+                <small>Keep work inside configured projects and uploaded files.</small>
+              </button>
+            </div>
+          </fieldset>
+          <label>
+            <span>Public URL</span>
+            <input id="onboarding-public-url" type="url" inputmode="url" required>
+            <small>A domain or IP reachable from your agent's computer; e.g. with my tailscale setup I use 'http://computerhostname:8712'</small>
+          </label>
+          <div class="onboarding-options">
+            <label class="check onboarding-check">
+              <input id="onboarding-arbitrary-paths" type="checkbox">
+              <span>
+                <b>Allow direct access to local files</b>
+                <small>MCP clients can open or import files with your operating-system permissions.</small>
+              </span>
+            </label>
+            <label class="check onboarding-check">
+              <input id="onboarding-project-registration" type="checkbox">
+              <span>
+                <b>Allow projects outside configured roots</b>
+                <small>MCP clients can create or register projects at other local paths.</small>
+              </span>
+            </label>
+          </div>
+        </div>
+      </section>
+
+      <section class="onboarding-step hidden" data-step="2">
+        <div class="onboarding-copy">
+          <div class="eyebrow">Step 3 of 4</div>
+          <h1>Account Setup</h1>
+          <p>Account for web panel access, token regen, etc. You can change the password later</p>
+        </div>
+        <div class="onboarding-fields">
+          <label>
+            <span>Username</span>
+            <input id="onboarding-username" autocomplete="username" maxlength="64" required>
+          </label>
+          <label>
+            <span>Password</span>
+            <input id="onboarding-password" type="password" autocomplete="new-password" required>
+            <small>Use 9 through 1,024 UTF-8 bytes.</small>
+          </label>
+          <label>
+            <span>Confirm password</span>
+            <input id="onboarding-password-confirm" type="password" autocomplete="new-password" required>
+          </label>
+        </div>
+      </section>
+
+      <section class="onboarding-step hidden" data-step="3">
+        <div class="onboarding-copy">
+          <div class="eyebrow">Step 4 of 4</div>
+          <h1>Connect your MCP client</h1>
+          <p>binja'd will create your first bearer token. The token appears once after setup.</p>
+        </div>
+        <div class="onboarding-fields">
+          <label>
+            <span>Token lifetime</span>
+            <select id="onboarding-token-ttl">
+              <option value="604800">One week</option>
+              <option value="2592000">30 days</option>
+              <option value="0">Never expires</option>
+            </select>
+            <small>You can rotate or revoke this token from the Access page.</small>
+          </label>
+          <div class="notice onboarding-token-notice">
+            Save the token when it appears. binja'd cannot show the same token again.
+          </div>
+          <div class="onboarding-review">
+            <div><span>Projects root</span><b id="onboarding-review-root"></b></div>
+            <div><span>Public URL</span><b id="onboarding-review-url"></b></div>
+          </div>
+        </div>
+      </section>
+
+      <div id="onboarding-error" class="onboarding-error hidden" role="alert"></div>
+      <footer class="onboarding-actions">
+        <button id="onboarding-back" class="quiet hidden" type="button" data-action="back">Back</button>
+        <button id="onboarding-next" class="primary" type="submit">Continue</button>
+      </footer>
+    </form>
+
+    <section id="onboarding-status" class="onboarding-status hidden" aria-live="polite">
+      <div class="onboarding-spinner" aria-hidden="true"></div>
+      <h1 id="onboarding-status-title">Saving setup</h1>
+      <p id="onboarding-status-message">Keep this page open while binja'd applies the new configuration.</p>
+      <div id="onboarding-issued-token" class="issued-token onboarding-issued-token hidden">
+        <div class="caption">Your MCP token · shown once</div>
+        <div class="token-box" id="onboarding-token-secret"></div>
+        <button id="onboarding-copy-token" class="quiet top-gap" type="button">Copy token</button>
+      </div>
+      <a id="onboarding-status-link" class="primary hidden" href="{{PORTAL_PATH}}">Open the login page</a>
+    </section>
+  </main>
+</body>
+</html>

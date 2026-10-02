@@ -4,14 +4,19 @@
 #include <stdexcept>
 
 namespace binjad::platform {
+	std::filesystem::path HomeDirectory()
+	{
+		const char* home = std::getenv("HOME");
+		if (!home || !*home)
+			throw std::runtime_error("HOME is not set");
+		return home;
+	}
+
 	std::filesystem::path UserDataDirectory()
 	{
 		if (const char* xdg = std::getenv("XDG_DATA_HOME"); xdg && *xdg)
 			return std::filesystem::path(xdg) / "binjad";
-		const char* home = std::getenv("HOME");
-		if (!home || !*home)
-			throw std::runtime_error("neither XDG_DATA_HOME nor HOME is set");
-		return std::filesystem::path(home) / ".local" / "share" / "binjad";
+		return HomeDirectory() / ".local" / "share" / "binjad";
 	}
 
 	std::filesystem::path DefaultConfigPath()
@@ -21,9 +26,6 @@ namespace binjad::platform {
 
 	std::filesystem::path DefaultBinaryNinjaInstallationDirectory()
 	{
-		const char* home = std::getenv("HOME");
-		if (!home || !*home)
-			throw std::runtime_error("HOME is not set");
-		return std::filesystem::path(home) / "binaryninja";
+		return HomeDirectory() / "binaryninja";
 	}
 }  // namespace binjad::platform

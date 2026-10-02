@@ -161,27 +161,15 @@ namespace binjad::upload {
 	}
 
 	std::pair<std::unique_ptr<UploadTransfer>, std::string> UploadRegistry::Begin(
-		std::string_view capability, std::string_view ownerTokenId, Clock::time_point now)
-	{
-		return BeginImpl(capability, std::optional<std::string_view>(ownerTokenId), now);
-	}
-
-	std::pair<std::unique_ptr<UploadTransfer>, std::string> UploadRegistry::Begin(
 		std::string_view capability, Clock::time_point now)
-	{
-		return BeginImpl(capability, std::nullopt, now);
-	}
-
-	std::pair<std::unique_ptr<UploadTransfer>, std::string> UploadRegistry::BeginImpl(
-		std::string_view capability, std::optional<std::string_view> ownerTokenId, Clock::time_point now)
 	{
 		std::lock_guard lock(mutex_);
 		const auto mapped = capabilities_.find(std::string(capability));
 		if (mapped == capabilities_.end())
 			return {std::unique_ptr<UploadTransfer> {}, std::string("upload not found")};
 		const auto upload = uploads_.find(mapped->second);
-		if (upload == uploads_.end() || (ownerTokenId && upload->second.record.ownerTokenId != *ownerTokenId)
-			|| now >= upload->second.expiresAt || upload->second.record.state != UploadState::Ready)
+		if (upload == uploads_.end() || now >= upload->second.expiresAt
+			|| upload->second.record.state != UploadState::Ready)
 			return {std::unique_ptr<UploadTransfer> {}, std::string("upload not found")};
 		upload->second.record.state = UploadState::Receiving;
 		const auto directory = config_.storage.spoolPath / "uploads" / upload->second.record.id;

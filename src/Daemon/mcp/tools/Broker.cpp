@@ -246,8 +246,9 @@ namespace binjad::mcp {
 				request.name = *name;
 				auto result = tool->Execute({context.config, context.sessions, context.serverVersion, context.openItems,
 					context.fileCoordinator, context.jobs, context.projects, context.projectCoordinator,
-					context.scheduler, context.uploads, request, context.principal, context.currentSession, context.now,
-					context.unixNow, context.progress, context.attached, arguments});
+					context.scheduler, context.uploads, context.downloads, request, context.principal,
+					context.currentSession, context.now, context.unixNow, context.progress, context.attached,
+					arguments});
 				result.invokedTool = *name;
 				return result;
 			}
