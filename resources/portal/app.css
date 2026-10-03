@@ -923,10 +923,6 @@ td.actions button + button {
   border-top: 0;
 }
 
-.memory-panel {
-  min-height: 212px;
-}
-
 .memory-panel .block-head {
   gap: 12px;
 }
@@ -1011,26 +1007,6 @@ td.actions button + button {
   color: var(--muted);
   font-size: 13px;
   place-items: center;
-}
-
-.memory-chart-foot {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 12px;
-  min-height: 34px;
-  padding: 5px 12px 8px;
-  color: var(--muted);
-  font-size: 11px;
-}
-
-.memory-chart-foot span:last-child {
-  text-align: right;
-}
-
-.memory-panel.stale #memory-updated {
-  color: var(--danger);
 }
 
 .table-wrap {

@@ -213,7 +213,6 @@ function renderMemoryChart(now = Date.now()) {
     $("#memory-current").textContent = "—";
     $("#memory-scale-high").textContent = "—";
     $("#memory-scale-low").textContent = "—";
-    $("#memory-updated").textContent = "Waiting for data";
     $("#memory-chart-description").textContent = "Waiting for the first memory sample.";
     line.classList.add("hidden");
     area.classList.add("hidden");
@@ -250,7 +249,6 @@ function renderMemoryChart(now = Date.now()) {
   $("#memory-current").textContent = formatMemoryBytes(current.bytes);
   $("#memory-scale-high").textContent = formatMemoryBytes(high);
   $("#memory-scale-low").textContent = formatMemoryBytes(low);
-  $("#memory-updated").textContent = `Updated ${new Date(current.time).toLocaleTimeString()}`;
   $("#memory-chart-description").textContent =
     `Current managed process memory is ${formatMemoryBytes(current.bytes)}. `
     + `The chart contains ${memorySamples.length} samples from the last five minutes.`;
@@ -262,20 +260,13 @@ function addMemorySample(value, time = Date.now()) {
   memorySamples.push({bytes, time});
   const cutoff = time - memoryWindow;
   while (memorySamples.length && memorySamples[0].time < cutoff) memorySamples.shift();
-  $("#memory-panel").classList.remove("stale");
   renderMemoryChart(time);
   return true;
 }
 
 function resetMemoryChart() {
   memorySamples.length = 0;
-  $("#memory-panel").classList.remove("stale");
   renderMemoryChart();
-}
-
-function markMemoryUnavailable() {
-  $("#memory-panel").classList.add("stale");
-  $("#memory-updated").textContent = "Update unavailable";
 }
 
 async function pollMemory() {
@@ -294,7 +285,7 @@ async function pollMemory() {
     const status = await response.json();
     if (!addMemorySample(status.memory_bytes)) throw new Error("invalid memory value");
   } catch {
-    if (authorization) markMemoryUnavailable();
+    // Keep the last rendered chart and retry on the next sample interval.
   } finally {
     clearTimeout(timeout);
     if (memoryAbortController === controller) memoryAbortController = null;
