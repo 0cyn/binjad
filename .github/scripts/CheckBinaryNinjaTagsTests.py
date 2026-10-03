@@ -37,6 +37,20 @@ class TagMonitorTests(unittest.TestCase):
         releases = discover_releases(refs, state, lambda _: False)
         self.assertEqual(releases[0]["version"], "6.1.10000")
 
+    def test_oldest_unseen_tag_is_selected(self):
+        old_sha = "2" * 40
+        first_sha = "3" * 40
+        second_sha = "4" * 40
+        refs = parse_remote_refs(
+            f"{old_sha}\trefs/tags/dev/6.1.10769\n"
+            f"{first_sha}\trefs/tags/dev/6.1.10774\n"
+            f"{second_sha}\trefs/tags/dev/6.1.10779\n"
+        )
+        state = self.state_file(f"dev/6.1.10769 {old_sha}")
+        releases = discover_releases(refs, state, lambda _: False)
+        self.assertEqual(releases[0]["tag"], "dev/6.1.10774")
+        self.assertEqual(releases[0]["sha"], first_sha)
+
     def test_stable_tags_are_ignored(self):
         stable_sha = "1" * 40
         dev_sha = "2" * 40

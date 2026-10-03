@@ -709,6 +709,7 @@ if(BINJAD_BUILD_TESTS)
             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/e2e/Run.py"
                 --daemon "$<TARGET_FILE:binjad>"
                 --artifacts "${CMAKE_CURRENT_BINARY_DIR}/e2e"
+                --binary-ninja "${BN_INSTALL_DIR}"
                 --clang "${BINJAD_E2E_CLANG}"
                 --elf-linker "${BINJAD_E2E_ELF_LINKER}"
                 --pe-linker "${BINJAD_E2E_PE_LINKER}"

@@ -1,0 +1,144 @@
+name: Propose development formula
+
+on:
+  push:
+    branches:
+      - dev
+    paths:
+      - .github/binaryninja-api-tags/dev.txt
+      - vendor/binaryninja-api
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: development-formula
+  cancel-in-progress: false
+
+jobs:
+  propose:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out source and submodules
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Read exact release metadata
+        id: metadata
+        run: |
+          read -r tag api_revision < .github/binaryninja-api-tags/dev.txt
+          [[ "$tag" =~ ^dev/([0-9]+\.[0-9]+\.[0-9]+)$ ]]
+          binary_ninja_version="${BASH_REMATCH[1]}"
+          [[ "$api_revision" =~ ^[0-9a-f]{40}$ ]]
+          actual_api_revision="$(git -C vendor/binaryninja-api rev-parse HEAD)"
+          test "$actual_api_revision" = "$api_revision"
+          binjad_version="$(python3 - <<'PY'
+          import pathlib
+          import re
+          source = pathlib.Path('CMakeLists.txt').read_text(encoding='utf-8')
+          match = re.search(r'project\(binjad VERSION ([0-9]+\.[0-9]+\.[0-9]+) ', source)
+          if not match:
+              raise SystemExit('cannot read binjad version')
+          print(match.group(1))
+          PY
+          )"
+          echo "api_revision=$api_revision" >> "$GITHUB_OUTPUT"
+          echo "binary_ninja_version=$binary_ninja_version" >> "$GITHUB_OUTPUT"
+          echo "binjad_version=$binjad_version" >> "$GITHUB_OUTPUT"
+          echo "branch=automation/binjad-dev-$binary_ninja_version" >> "$GITHUB_OUTPUT"
+          echo "source_revision=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Check tap credential
+        id: credential
+        env:
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_PR_TOKEN }}
+        run: |
+          if [[ -z "$TAP_TOKEN" ]]
+          then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "HOMEBREW_TAP_PR_TOKEN is not configured; no tap pull request was created." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create tap branch
+        id: tap
+        if: steps.credential.outputs.configured == 'true'
+        env:
+          API_REVISION: ${{ steps.metadata.outputs.api_revision }}
+          BINARY_NINJA_VERSION: ${{ steps.metadata.outputs.binary_ninja_version }}
+          BINJAD_VERSION: ${{ steps.metadata.outputs.binjad_version }}
+          BRANCH: ${{ steps.metadata.outputs.branch }}
+          SOURCE_REVISION: ${{ steps.metadata.outputs.source_revision }}
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_PR_TOKEN }}
+        run: |
+          if git ls-remote --exit-code --heads https://github.com/0cyn/homebrew-tap.git "refs/heads/$BRANCH" >/dev/null 2>&1
+          then
+            echo "created=false" >> "$GITHUB_OUTPUT"
+            echo "Tap branch $BRANCH already exists." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          git clone "https://x-access-token:${TAP_TOKEN}@github.com/0cyn/homebrew-tap.git" tap
+          test -f tap/.github/binjad-formulas.json
+          formula="tap/Formula/binjad@${BINARY_NINJA_VERSION}.rb"
+          if [[ -e "$formula" ]]
+          then
+            echo "created=false" >> "$GITHUB_OUTPUT"
+            echo "Formula binjad@${BINARY_NINJA_VERSION} is already published." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          git -C tap switch -c "$BRANCH"
+          python3 packaging/homebrew/RenderFormula.py \
+            --template packaging/homebrew/binjad.rb.in \
+            --output "$formula" \
+            --binary-ninja-version "$BINARY_NINJA_VERSION" \
+            --source-revision "$SOURCE_REVISION" \
+            --binjad-version "$BINJAD_VERSION" \
+            --channel dev
+          python3 packaging/homebrew/UpdateFormulaMatrix.py \
+            --manifest tap/.github/binjad-formulas.json \
+            --channel dev \
+            --binary-ninja-version "$BINARY_NINJA_VERSION" \
+            --api-revision "$API_REVISION" \
+            --source-revision "$SOURCE_REVISION" \
+            --binjad-version "$BINJAD_VERSION"
+          rm -f tap/Aliases/binjad-dev
+          ln -s "../Formula/binjad@${BINARY_NINJA_VERSION}.rb" tap/Aliases/binjad-dev
+
+          git -C tap config user.name "github-actions[bot]"
+          git -C tap config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git -C tap add ".github/binjad-formulas.json" "Aliases/binjad-dev" "Formula/binjad@${BINARY_NINJA_VERSION}.rb"
+          git -C tap commit -m "binjad@${BINARY_NINJA_VERSION} ${BINJAD_VERSION} (new formula)"
+          git -C tap push --set-upstream origin "$BRANCH"
+          echo "created=true" >> "$GITHUB_OUTPUT"
+
+      - name: Open tap pull request
+        if: steps.tap.outputs.created == 'true'
+        env:
+          API_REVISION: ${{ steps.metadata.outputs.api_revision }}
+          BINARY_NINJA_VERSION: ${{ steps.metadata.outputs.binary_ninja_version }}
+          BINJAD_VERSION: ${{ steps.metadata.outputs.binjad_version }}
+          BRANCH: ${{ steps.metadata.outputs.branch }}
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_PR_TOKEN }}
+          SOURCE_REVISION: ${{ steps.metadata.outputs.source_revision }}
+        run: |
+          body="$(printf '%s\n' \
+            'Reviewed development-channel formula proposal.' \
+            '' \
+            "- Binary Ninja: \`$BINARY_NINJA_VERSION\` development" \
+            "- Binary Ninja API: \`$API_REVISION\`" \
+            "- binjad: \`$BINJAD_VERSION\`" \
+            "- binjad source: \`$SOURCE_REVISION\`" \
+            '' \
+            'This pull request retains every earlier development formula and moves `binjad-dev` to this release.' \
+            'Review all three bottle jobs before manually dispatching `brew pr-pull`.')"
+          url="$(gh pr create --repo 0cyn/homebrew-tap --base main --head "$BRANCH" \
+            --title "binjad@${BINARY_NINJA_VERSION} ${BINJAD_VERSION}" --body "$body")"
+          printf 'Created %s\n' "$url"
+          printf '### binjad@%s\n\n%s\n' "$BINARY_NINJA_VERSION" "$url" >> "$GITHUB_STEP_SUMMARY"

@@ -37,6 +37,12 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Test release automation
+        run: |
+          python3 .github/scripts/CheckBinaryNinjaTagsTests.py
+          python3 packaging/homebrew/RenderFormulaTests.py
+          python3 packaging/homebrew/UpdateFormulaMatrixTests.py
+
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends uuid-dev

@@ -103,22 +103,25 @@ def discover_releases(tags, state_file, branch_exists):
     channel_tags = [tag for tag in tags.values() if tag.channel == CHANNEL]
     if not channel_tags:
         raise RuntimeError(f"upstream returned no {CHANNEL} release tags")
-    latest = max(channel_tags, key=lambda tag: tag.version)
     state = read_state(state_file, CHANNEL)
     recorded = tags.get(state.name)
     if not recorded:
         raise RuntimeError(f"recorded upstream tag disappeared: {state.name}")
     if recorded.commit != state.commit:
         raise RuntimeError(f"recorded upstream tag changed commit: {state.name}")
-    if latest.version <= state.version or branch_exists(latest.branch):
+    pending = sorted((tag for tag in channel_tags if tag.version > state.version), key=lambda tag: tag.version)
+    if not pending:
+        return []
+    release = pending[0]
+    if branch_exists(release.branch):
         return []
     return [{
         "base": BASE_BRANCH,
-        "branch": latest.branch,
-        "channel": latest.channel,
-        "sha": latest.commit,
-        "tag": latest.name,
-        "version": latest.version_text,
+        "branch": release.branch,
+        "channel": release.channel,
+        "sha": release.commit,
+        "tag": release.name,
+        "version": release.version_text,
     }]
 
 

@@ -38,6 +38,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--daemon", required=True, type=Path)
     parser.add_argument("--artifacts", required=True, type=Path)
+    parser.add_argument("--binary-ninja", type=Path, help="exact Binary Ninja installation root")
     parser.add_argument("--corpus", type=Path, help="JSON array of local real-world corpus entries")
     parser.add_argument("--require-corpus", action="store_true", help="fail rather than omit external-corpus coverage")
     parser.add_argument("--scenario", action="append", help="unittest method name; repeat to select several")
@@ -72,8 +73,10 @@ def main():
                                        for path in entry.get("companions", [])]
             report["externalCorpus"] = {"entries": len(corpus)}
         require(not options.require_corpus or corpus, "--require-corpus needs a nonempty --corpus manifest")
+        binary_ninja = options.binary_ninja.resolve(strict=True) if options.binary_ninja else None
+        require(not binary_ninja or binary_ninja.is_dir(), "--binary-ninja must name an installation directory")
         fixtures = build(directory / "fixtures", transcript, options.clang, options.elf_linker, options.pe_linker)
-        with LaunchdService(options.daemon, directory, transcript) as service:
+        with LaunchdService(options.daemon, directory, transcript, binary_ninja) as service:
             Workflows.service = service
             Workflows.fixtures = fixtures
             add_corpus_cases(corpus)

@@ -18,7 +18,7 @@ from Client import ContractError, Http, require
 
 
 class LaunchdService:
-    def __init__(self, daemon, directory, transcript):
+    def __init__(self, daemon, directory, transcript, binary_ninja=None):
         require(sys.platform == "darwin", "managed service adapter currently requires macOS")
         self.daemon = Path(daemon).resolve(strict=True)
         self.directory = directory.resolve()
@@ -33,12 +33,14 @@ class LaunchdService:
         self.lock_stream = None
         self.username = "e2e"
         self.password = secrets.token_urlsafe(32)
+        self.binary_ninja = Path(binary_ninja).resolve(strict=True) if binary_ninja else Path("/Applications/Binary Ninja.app")
         with socket.socket() as listener:
             listener.bind(("127.0.0.1", 0))
             port = listener.getsockname()[1]
         self.http = Http(f"http://127.0.0.1:{port}", transcript)
         self.token = None
         configuration = {
+            "binary_ninja": {"installation_dir": str(self.binary_ninja)},
             "listener": {"addresses": ["127.0.0.1"], "port": port},
             "cpu": {"percentage": 1, "fairness": "job"},
             "jobs": {"detach_after_seconds": 1, "cancellation_grace_seconds": 5},

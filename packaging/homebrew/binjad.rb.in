@@ -87,9 +87,9 @@ class BinjadAT@BINJAD_BINARY_NINJA_VERSION_IDENTIFIER@ < Formula
 
   def caveats
     requirement = <<~EOS
-      binjad requires Binary Ninja @BINJAD_BINARY_NINJA_VERSION@ and a license that permits headless operation.
+      binjad requires Binary Ninja @BINJAD_BINARY_NINJA_VERSION@@BINJAD_BINARY_NINJA_CHANNEL_QUALIFIER@ and a license that permits headless operation.
       Binary Ninja is not included in this package.
-    EOS
+@BINJAD_BINARY_NINJA_CHANNEL_NOTICE@    EOS
 
     if OS.mac?
       return requirement + <<~EOS

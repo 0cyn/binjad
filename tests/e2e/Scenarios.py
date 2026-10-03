@@ -584,7 +584,7 @@ class Workflows(unittest.TestCase):
         self.service.portal("POST", "/restart", {}, authenticated=False, expected=401)
         self.service.portal("POST", "/restart", {}, expected=409)
         binary_ninja = self.service.config.parent / "Binary Ninja.app"
-        binary_ninja.symlink_to("/Applications/Binary Ninja.app", target_is_directory=True)
+        binary_ninja.symlink_to(self.service.binary_ninja, target_is_directory=True)
         configured = save_discovery_mode("brokered", binary_ninja)
         restore_required["value"] = True
         require(configured["restart_required"], "brokered discovery save did not require restart")
