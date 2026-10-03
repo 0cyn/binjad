@@ -145,8 +145,9 @@ class LaunchdService:
                     and ('<meta name="binjad-status-path" content="/healthz/status" '
                          'data-configured-path="/healthz/status">') in page,
                     "portal page did not receive its public status path")
-            require('id="memory-panel"' in page and 'id="memory-chart"' in page and "Service posture" not in page,
-                    "portal page did not contain the memory graph")
+            require('id="memory-panel"' in page and 'id="memory-chart"' in page and "Service posture" not in page
+                    and 'class="memory-chart-foot"' not in page and 'id="memory-updated"' not in page,
+                    "portal page did not contain the footer-free memory graph")
             require('id="restart-daemon"' in page and 'data-action="restart-daemon"' in page
                     and 'id="restart-badge"' not in page and 'id="config-warning"' not in page,
                     "portal page did not contain the single daemon restart control")

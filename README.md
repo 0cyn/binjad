@@ -1,7 +1,8 @@
 ![logo](.github/img/logo.png)
 
 <p align="center">
-  <a href="#install">install</a> | <a href="#restart-stop">restart</a>
+  <a href="#install">install</a> | <a href="#restart-stop">restart</a> | <a href="#config">config</a> 
+  <br><a href="#uppdate-binjad">updating binjad</a> | <a href="#swapping-binaryninja-versions">Swapping Binary Ninja version</a>
 </p>
 
 This is an **UNOFFICIAL** HTTP MCP daemon for BinaryNinja **Commercial Edition** that offers "a few" things the official doesn't, and fixes some of my gripes
@@ -11,13 +12,14 @@ single agent guided analysis.
 > "ALPHA": This is currently in the process of being shaped and I want feedback from other people's workflows. I do a few specific 
 > things with my tooling and want to make this also good for other people's use cases. Reach out in the issues even if it's a stretch. 
 
+> This is probably a little buggy right now :P bear with me.
+
+> I am not currently an employee or affiliate of Vector 35 and this project is not associated with them in any way.
+
 This runs indefinitely in the background without binaryninja open. Config is done via a web panel, 
 and the daemon can be controlled from its macOS menu bar item or through `brew services`. You will need a 
 Commercial binaryninja license since that's required for using BinaryNinja headlessly. 
 
-I am not currently an employee or affiliate of Vector 35 and this project is not associated with them in any way.
-
-This is probably a little buggy right now :P bear with me. 
 
 ### big features
 
@@ -46,13 +48,17 @@ makes sense outside of insane enterprise automation.
 
 ### some other stuff
 
-![img.png](.github/img/menubar.png)
-
 * Markdown and JSON project file readers. Agents loooove putting these in Projects, so I just made it first-class behavior.
-* A nice non-claudeslop panel you can use to fuck w/ settings, handle auth, etc.
 * it's been tuned to work with smellier local models; several Qwen 3.8 27b agents on a 5090 doing binary analysis in parallel was a common use case while testing
 * and on that note, a lot has been done to make sure it doesn't obliterate context
-* Web configuration API :thumbsup:
+* Web Panel :thumbsup:
+* There is a menu bar for macOS w/ a few daemon controls. 
+
+![img.png](.github/img/menubar.png)
+
+
+> Caveat of project work: Due to a binaryninja limitation, if you are running the server locally, having a project in GUI open in any way holds
+> a 'lock' on the project, which will result in certain toolcalls that modify projects failing.
 
 
 ### a demonstration
@@ -80,13 +86,13 @@ Neat: Due to a binaryninja demangler bug, some stuff in this will crash binaryni
 just fine! 
 
 ![img.png](.github/img/demo1.png)
-<p align="center"><sub>prompt + initial exploration</sub></p>
+<p align="center"><sub>prompt + initial exploration</sub></p><br>
 
 ![img.png](.github/img/demo2.png)
-<p align="center"><sub>a subagent digging through the diff</sub></p>
+<p align="center"><sub>a subagent digging through the diff</sub></p><br>
 
 ![img.png](.github/img/demoresult.png)
-<p align="center"><sub>Digging through the generated report using `bntextviews` (unchecked, probably pretty close, but you've got hotlinks to make that validation so much easier on your end.)</sub></p>
+<p align="center"><sub>Digging through the generated report using `bntextviews` (unchecked, probably pretty close, but you've got hotlinks to make that validation so much easier on your end.)</sub></p><br>
 
 
 Use this with the `bntextviews` plugin to allow your agents to write markdown/json content into projects you can then display in
@@ -99,61 +105,75 @@ help lower-spec models through trickier things.
 
 ![img.png](.github/img/panel.png)
 
-<p align="center"><sub>actually, websites can look different from other websites, through the power of trying even a little bit</sub></p>
+### install
 
-> Caveat of project work: Due to a binaryninja limitation, if you are running the server locally, having a project in GUI open in any way holds
-> a 'lock' on the project, which will result in certain toolcalls that modify projects failing.
+binjad has to have a binaryninja versioned release installed because it's linked to binaryninja. 
+homebrew lets us have our own versioning inside of this. 
 
+so, installing an update _to binjad_ (e.g. we fix some bugs) looks like `brew update && brew upgrade binjad`, however
+if you swap to a different binaryninja build you'll need to install a different @version of the package. 
 
-### install note
+For this reason, it's ideal that you stay on a BinaryNinja Stable release.
 
-installation is currently done through homebrew. 
+current stable:
+```shell
+# Check your bn version in the app and install appropriate one
+# Current Stable:
+brew install 0cyn/tap/binjad@6.0.10601
+brew services start binjad
 
-The default Binary Ninja locations are `/Applications/Binary Ninja.app` on macOS and `~/binaryninja` on Linux.
+# Set up the daemon, grab the token, etc
+open http://127.0.0.1:8712/portal  # macOS
+```
 
-If you have it installed elsewhere, set `binary_ninja.installation_dir` in yr config. Once installed, start the service, 
-head to http://127.0.0.1:8712/portal, and create the account.
+any dev including/after this one: 
+``` 
+brew install 0cyn/tap/binjad@6.1.10811
+brew services start binjad
+
+# Set up the daemon, grab the token, etc
+open http://127.0.0.1:8712/portal  # macOS
+```
 
 On macOS, You'll be prompted by macOS for keychain password on daemon startup and acct creation since we store keys, login info, and such there. There is also a
 menu bar item that allows you to stop/start/restart the daemon, hot-toggle toolkits, view runtime status, and hop back to the portal.
 
-Use the web portal for configuration. The default configuration paths are:
+#### Swapping BinaryNinja versions
+
+``` 
+brew services stop binjad
+brew uninstall 0cyn/tap/binjad@<OLD_VERSION>
+brew install 0cyn/tap/binjad@<NEW_VERSION>
+brew services start binjad
+```
+
+!!! `brew upgrade` is for binjad bugfixes, not updating the linked build. 
+
+### update binjad 
+
+(for bugfixes and features)
+
+``` 
+brew update
+brew upgrade binjad
+brew services restart binjad
+```
+
+### config
+
+The default Binary Ninja locations are `/Applications/Binary Ninja.app` on macOS and `~/binaryninja` on Linux.
+
+If you have it installed elsewhere, set `binary_ninja.installation_dir` in yr config. Once installed, start the service,
+head to http://127.0.0.1:8712/portal, and create the account.
+
+You can configure everything from the panel henceforth. 
+
+Config locations:
 
 * macOS: `~/Library/Application Support/binjad/config.json`
 * Linux: `$XDG_DATA_HOME/binjad/config.json`, or `~/.local/share/binjad/config.json` when `XDG_DATA_HOME` is unset
 
-Please thumbs-up the [Windows Support]() issue if you need it on these platforms. 
-
-### install
-
-binja'd (and new versions of it) are released in lockstep with BinaryNinja versions. 
-
-e.g. I push bugfixes, next time binaryninja-api gets pushed by v35 for a dev build it triggers a build on this repo and that bugfix gets rolled
-out for the latest version.
-
-This is the best I could come up with for a really annoying problem; the alternative is every version of binjad shipping
-a wrapper dylib for every existing ABI version of binaryninja which is genuinely what I might end up doing in the future. :P 
-
-##### If you run into a binaryninja bug while using this, file an issue here and we can figure out whether it's a bug w/ this project or with Binary Ninja itself before spamming their repo.
-
-
-```shell
-# Check your bn version in the app and install appropriate one: 
-brew install 0cyn/tap/binjad@6.1.10695
-brew services start 0cyn/tap/binjad
-
-# Open the configuration panel to create the account and MCP token.
-open http://127.0.0.1:8712/portal  # macOS
-```
-
-Use an explicit formula when you must select a Binary Ninja version:
-
-```shell
-brew install 0cyn/tap/binjad@6.1.10695
-brew services start 0cyn/tap/binjad@6.1.10695
-```
-
-#### restart/stop
+### restart/stop
 
 ```shell
 # restart the daemon
@@ -164,7 +184,7 @@ brew services stop 0cyn/tap/binjad
 brew services start 0cyn/tap/binjad
 ```
 
-#### connecting to the MCP
+### connecting
 
 ``` json
 # example for opencode: 
@@ -179,10 +199,48 @@ brew services start 0cyn/tap/binjad
 }
 ```
 
-#### exposing on LAN
+### exposing on LAN
 
-See [security notes](#security). This daemon will only ever advertise on loopback, you'll need to expose it yourself with
-nginx or something.
+I run this on a server locally, wired up to tailscale, with nginx reverse-proxying crap to the daemon. 
+
+During setup, I configured remote options, handed it the tailscale my agent can reach it from (for file uploads/downloads),
+and set it to run on `8713`. nginx then forwards the traffic to it. presumably if you need this on lan you can do
+something similar to this. 
+
+``` 
+user@host:~$ cat /etc/nginx/sites-enabled/binjad
+server {
+    listen 0.0.0.0:8712;
+    server_name _;
+
+    client_max_body_size 4g;
+    client_body_timeout 3600s;
+    gzip off;
+
+    location / {
+        proxy_pass http://127.0.0.1:8713;
+        proxy_http_version 1.1;
+
+        proxy_set_header Host $http_host;
+        proxy_set_header Authorization $http_authorization;
+        proxy_set_header Connection "";
+
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Host $http_host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Port $server_port;
+
+        proxy_request_buffering off;
+        proxy_buffering off;
+        proxy_cache off;
+
+        proxy_connect_timeout 10s;
+        proxy_send_timeout 3600s;
+        proxy_read_timeout 3600s;
+    }
+}
+```
 
 ### commercial license
 
@@ -193,6 +251,8 @@ Usage by multiple individuals and/or usage in containerized deployments of infra
 You are intended to use this project on local hardware, by yourself. If you're trying to use this project for anything
 other than that, you should probably reach out to their support and ensure you're working within your current license, or 
 adjust your license agreement with them accordingly. 
+
+I am not responsible for you misusing this to break the law. 
 
 ---
 
@@ -254,6 +314,8 @@ the models this can be used with.
 * I'd love if the mac menu bar item worked for remote servers, packaging there needs thought about 
 * It's not a lot of work to do something like the code-mode MCP ida has, I just disagree w/ that design. Could be a toggle.
 * api script documentation tool
+
+Please thumbs-up the [Windows Support]() issue if you need that.
 
 ##### LLM disclosure
 
