@@ -836,7 +836,14 @@ namespace binjad::overseer {
 			const auto reply = child->Call(command, view.openItem);
 			if (!reply.success() || !reply.has_analysis_tool_result())
 				return {{}, reply.success() ? "file child returned no analysis result" : reply.error()};
-			return {reply.analysis_tool_result().json(), {}};
+			auto result = reply.analysis_tool_result().json();
+			if (name == "bn_binary_view_rebase")
+			{
+				auto refreshed = OpenBinaryView(ownerTokenId, analysisSession, binaryView, "{}", false);
+				if (!refreshed.value)
+					return {{}, std::move(refreshed.error)};
+			}
+			return {std::move(result), {}};
 		}
 		catch (const std::exception& exception)
 		{
