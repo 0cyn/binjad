@@ -1483,8 +1483,26 @@ namespace binjad {
 			else if (name == "bn_binary_view_rebase")
 			{
 				const auto address = parse("address");
-				if (!command.file->Rebase(state->view.GetPtr(), address))
+				BinaryNinja::Ref<BinaryNinja::BinaryView> oldView;
+				{
+					std::lock_guard lock(command.viewMutex);
+					if (state->analysisActive)
+						throw std::runtime_error("cannot rebase while analysis is active");
+					oldView = state->view;
+				}
+				if (!command.file->Rebase(oldView.GetPtr(), address))
 					throw std::runtime_error("Binary Ninja rejected the rebase");
+				auto rebasedView = command.file->GetViewOfType(command.view_type());
+				if (!rebasedView)
+					throw std::runtime_error("Binary Ninja did not return the rebased BinaryView");
+				std::vector<BinaryNinja::Ref<BinaryNinja::AnalysisCompletionEvent>> retiredCompletionEvents;
+				std::unordered_map<std::uint64_t, BinaryNinja::Ref<BinaryNinja::Function>> retiredUserFunctions;
+				{
+					std::lock_guard lock(command.viewMutex);
+					state->view = std::move(rebasedView);
+					retiredCompletionEvents = std::move(state->completionEvents);
+					retiredUserFunctions = std::move(state->userFunctions);
+				}
 				const auto text = HexAddress(address);
 				writer.Key("address");
 				writer.String(text.data(), text.size());
