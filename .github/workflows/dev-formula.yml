@@ -88,12 +88,14 @@ jobs:
           PY
           )"
           source_tag="source-${binjad_version}-bn-${binary_ninja_version}"
-          echo "api_revision=$api_revision" >> "$GITHUB_OUTPUT"
-          echo "binary_ninja_version=$binary_ninja_version" >> "$GITHUB_OUTPUT"
-          echo "binjad_version=$binjad_version" >> "$GITHUB_OUTPUT"
-          echo "branch=automation/binjad-dev-$binary_ninja_version" >> "$GITHUB_OUTPUT"
-          echo "source_revision=$SOURCE_REVISION" >> "$GITHUB_OUTPUT"
-          echo "source_tag=$source_tag" >> "$GITHUB_OUTPUT"
+          {
+            echo "api_revision=$api_revision"
+            echo "binary_ninja_version=$binary_ninja_version"
+            echo "binjad_version=$binjad_version"
+            echo "branch=automation/binjad-dev-$binary_ninja_version"
+            echo "source_revision=$SOURCE_REVISION"
+            echo "source_tag=$source_tag"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Preserve the immutable source revision
         env:
@@ -118,7 +120,7 @@ jobs:
             git tag "$SOURCE_TAG" "$SOURCE_REVISION"
             git push origin "refs/tags/$SOURCE_TAG"
           fi
-          printf 'Source tag: `%s`\n' "$SOURCE_TAG" >> "$GITHUB_STEP_SUMMARY"
+          printf "Source tag: \`%s\`\n" "$SOURCE_TAG" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Require the tap credential
         env:
@@ -219,7 +221,7 @@ jobs:
               "- binjad: \`$BINJAD_VERSION\`" \
               "- binjad source: \`$SOURCE_REVISION\`" \
               '' \
-              'This pull request retains every earlier development formula and moves `binjad-dev` to this release.' \
+              "This pull request retains every earlier development formula and moves \`binjad-dev\` to this release." \
               'A trusted workflow publishes this exact head automatically after all three bottle jobs pass.')"
             url="$(gh pr create --repo 0cyn/homebrew-tap --base main --head "$BRANCH" \
               --title "binjad@${BINARY_NINJA_VERSION} ${BINJAD_VERSION}" --body "$body")"
