@@ -111,7 +111,7 @@ jobs:
             dev_revision="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/dev" --jq '.object.sha')"
             if [[ "$merged" = true && "$source_revision" = "$dev_revision" && "$source_revision" =~ ^[0-9a-f]{40}$ ]]
             then
-              gh workflow run ci.yml --ref dev
+              gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref dev
               printf "Merged source revision: \`%s\`\n" "$source_revision" >> "$GITHUB_STEP_SUMMARY"
               exit 0
             fi
