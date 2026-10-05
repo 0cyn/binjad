@@ -759,10 +759,18 @@ namespace binjad {
 				if (arguments.HasParseError() || !arguments.IsObject())
 					throw std::invalid_argument("analysis tool arguments must be a JSON object");
 				const auto origin = envelope.request_id();
+				const auto state = View(request.view_type());
+				const bool replacesView = request.name() == "bn_binary_view_rebase";
+				BinaryNinja::Ref<BinaryNinja::BinaryView> originalView;
+				if (replacesView)
+				{
+					std::lock_guard lock(viewMutex_);
+					originalView = state->view;
+				}
 				const FileChildToolCallContext context {
 					request,
 					arguments,
-					View(request.view_type()),
+					state,
 					file_,
 					diffTools_,
 					activeUndoId_,
@@ -776,6 +784,12 @@ namespace binjad {
 					},
 				};
 				reply = tool->Execute(context);
+				if (replacesView)
+				{
+					std::lock_guard lock(viewMutex_);
+					if (data_.GetPtr() == originalView.GetPtr())
+						data_ = state->view;
+				}
 				break;
 			}
 			case ipc::Command::kCloseFile:
