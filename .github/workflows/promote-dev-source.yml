@@ -89,8 +89,10 @@ jobs:
           comparison="$(gh api "repos/$GITHUB_REPOSITORY/compare/$base_sha...$RUN_HEAD_SHA")"
           test "$(jq -r '.behind_by' <<<"$comparison")" = 0
 
-          echo "pull_request=$pull_request" >> "$GITHUB_OUTPUT"
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          {
+            echo "pull_request=$pull_request"
+            echo "tag=$tag"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Rebase-merge the source update
         env:
@@ -101,7 +103,7 @@ jobs:
         env:
           PULL_REQUEST: ${{ steps.validation.outputs.pull_request }}
         run: |
-          for attempt in {1..30}
+          for _ in {1..30}
           do
             pull="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PULL_REQUEST")"
             merged="$(jq -r '.merged' <<<"$pull")"
@@ -110,7 +112,7 @@ jobs:
             if [[ "$merged" = true && "$source_revision" = "$dev_revision" && "$source_revision" =~ ^[0-9a-f]{40}$ ]]
             then
               gh workflow run ci.yml --ref dev
-              printf 'Merged source revision: `%s`\n' "$source_revision" >> "$GITHUB_STEP_SUMMARY"
+              printf "Merged source revision: \`%s\`\n" "$source_revision" >> "$GITHUB_STEP_SUMMARY"
               exit 0
             fi
             sleep 2
