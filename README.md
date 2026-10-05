@@ -61,50 +61,6 @@ makes sense outside of insane enterprise automation.
 > a 'lock' on the project, which will result in certain toolcalls that modify projects failing.
 
 
-### a demonstration
-
-If you actually pay for compute usage, I'd highly recommend you work out a system with your harness to
-outsource interacting with the MCP to lower cost models. Even w/ local models, toolcall corpus gets cached,
-its solid.   
-
-The following is an example task (patch-diffing KDKs to look at n-days) for this project. This should collaterally showcase a lot of 
-what the MCP can do. It primarily leans on cheap luna agents and burns approx 5% of codex weekly for a task that
-involves patchdiffing 800 large kernel extensions for bugs.
-
-Through the power of a codified toolkit, instead of 30 messages and insane token burn trying to steer it to use the API properly,
-we can hands-off this task w/o even needing to give the agent filesystem access. Chain this with blacktop's `ipsw` for sourcing the files, 
-and tell it to extract and upload the KDKs to the proj beforehand for a truly depressing amount of automation. 
-
-> Take a look at the two KDK revisions in the binjad KDK project. I want you to diff each file and figure out which 
-> ones have changes. Once that's done, I want you to use a large amount of luna subagents to dig through the files with
-> code changes and identify vulnerability, bug, etc fixes. For each file, do thorough analysis to identify the problem,
-> effects, and how it was patched. Generate a markdown report that contains decompiled code representations, nested
-> categorization, contains BNURL links to relevant snippets in code and sources for decompiled bits. Keep view handles
-> open to avoid reanalysis and don't touch the filesystem for this.
-
-Neat: Due to a binaryninja demangler bug, some stuff in this will crash binaryninja. It won't take out the daemon, and the model will recover
-just fine! 
-
-![img.png](.github/img/demo1.png)
-<p align="center"><sub>prompt + initial exploration</sub></p><br>
-
-![img.png](.github/img/demo2.png)
-<p align="center"><sub>a subagent digging through the diff</sub></p><br>
-
-![img.png](.github/img/demoresult.png)
-<p align="center"><sub>Digging through the generated report using `bntextviews` (unchecked, probably pretty close, but you've got hotlinks to make that validation so much easier on your end.)</sub></p><br>
-
-
-Use this with the `bntextviews` plugin to allow your agents to write markdown/json content into projects you can then display in
-BinaryNinja with a nice document reader. It's good!
-
-I've found Qwen 3.8 27b on a 4-bit quant to be very capable of everything this toolkit exposes. Docs have been tuned to 
-help lower-spec models through trickier things. 
-
-> fun challenge: figure out how many of these vulnerabilities are actually exploitable ^..^
-
-![img.png](.github/img/panel.png)
-
 ### install
 
 binjad has to have a binaryninja versioned release installed because it's linked to binaryninja. 
@@ -199,6 +155,9 @@ brew services start 0cyn/tap/binjad
 }
 ```
 
+
+
+
 ### exposing on LAN
 
 I run this on a server locally, wired up to tailscale, with nginx reverse-proxying crap to the daemon. 
@@ -241,6 +200,53 @@ server {
     }
 }
 ```
+
+
+
+### a demonstration
+
+If you actually pay for compute usage, I'd highly recommend you work out a system with your harness to
+outsource interacting with the MCP to lower cost models. Even w/ local models, toolcall corpus gets cached,
+its solid.
+
+The following is an example task (patch-diffing KDKs to look at n-days) for this project. This should collaterally showcase a lot of
+what the MCP can do. It primarily leans on cheap luna agents and burns approx 5% of codex weekly for a task that
+involves patchdiffing 800 large kernel extensions for bugs.
+
+Through the power of a codified toolkit, instead of 30 messages and insane token burn trying to steer it to use the API properly,
+we can hands-off this task w/o even needing to give the agent filesystem access. Chain this with blacktop's `ipsw` for sourcing the files,
+and tell it to extract and upload the KDKs to the proj beforehand for a truly depressing amount of automation.
+
+> Take a look at the two KDK revisions in the binjad KDK project. I want you to diff each file and figure out which
+> ones have changes. Once that's done, I want you to use a large amount of luna subagents to dig through the files with
+> code changes and identify vulnerability, bug, etc fixes. For each file, do thorough analysis to identify the problem,
+> effects, and how it was patched. Generate a markdown report that contains decompiled code representations, nested
+> categorization, contains BNURL links to relevant snippets in code and sources for decompiled bits. Keep view handles
+> open to avoid reanalysis and don't touch the filesystem for this.
+
+Neat: Due to a binaryninja demangler bug, some stuff in this will crash binaryninja. It won't take out the daemon, and the model will recover
+just fine!
+
+![img.png](.github/img/demo1.png)
+<p align="center"><sub>prompt + initial exploration</sub></p><br>
+
+![img.png](.github/img/demo2.png)
+<p align="center"><sub>a subagent digging through the diff</sub></p><br>
+
+![img.png](.github/img/demoresult.png)
+<p align="center"><sub>Digging through the generated report using `bntextviews` (unchecked, probably pretty close, but you've got hotlinks to make that validation so much easier on your end.)</sub></p><br>
+
+
+Use this with the `bntextviews` plugin to allow your agents to write markdown/json content into projects you can then display in
+BinaryNinja with a nice document reader. It's good!
+
+I've found Qwen 3.8 27b on a 4-bit quant to be very capable of everything this toolkit exposes. Docs have been tuned to
+help lower-spec models through trickier things.
+
+> fun challenge: figure out how many of these vulnerabilities are actually exploitable ^..^
+
+![img.png](.github/img/panel.png)
+
 
 ### commercial license
 
