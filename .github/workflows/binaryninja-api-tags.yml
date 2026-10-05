@@ -39,6 +39,8 @@ jobs:
           python3 .github/scripts/CheckBinaryNinjaTags.py
           --dev-state channels/dev/.github/binaryninja-api-tags/dev.txt
           --remote "https://github.com/${GITHUB_REPOSITORY}.git"
+          --published-formula-base-url
+          "https://raw.githubusercontent.com/0cyn/homebrew-tap/main/Formula"
 
   propose:
     name: Propose ${{ matrix.release.tag }}
@@ -110,9 +112,10 @@ jobs:
             "- Tag: \`$TAG\`" \
             "- API commit: \`$SHA\`" \
             '' \
-            'The hourly monitor verified the official tag and updated the pinned submodule.' \
-            'The dispatched build workflow validates macOS and Linux against generated link stubs.' \
-            'This pull request does not publish a release or Homebrew bottle.')"
+             'The hourly monitor verified the official tag and updated the pinned submodule.' \
+             'The dispatched build workflow validates macOS and Linux against generated link stubs.' \
+             'A trusted workflow will rebase-merge this pull request after both builds pass.' \
+             'The later tap workflow publishes all three bottles automatically.')"
           url="$(gh pr create \
             --base "$BASE" \
             --head "$BRANCH" \

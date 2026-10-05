@@ -9,6 +9,8 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import urllib.error
+import urllib.request
 
 
 UPSTREAM = "https://github.com/Vector35/binaryninja-api.git"
@@ -99,7 +101,7 @@ def remote_branch_exists(remote, branch):
     return bool(result.stdout.strip())
 
 
-def discover_releases(tags, state_file, branch_exists):
+def discover_releases(tags, state_file, branch_exists, formula_is_published=lambda _: True):
     channel_tags = [tag for tag in tags.values() if tag.channel == CHANNEL]
     if not channel_tags:
         raise RuntimeError(f"upstream returned no {CHANNEL} release tags")
@@ -109,6 +111,8 @@ def discover_releases(tags, state_file, branch_exists):
         raise RuntimeError(f"recorded upstream tag disappeared: {state.name}")
     if recorded.commit != state.commit:
         raise RuntimeError(f"recorded upstream tag changed commit: {state.name}")
+    if not formula_is_published(state.version_text):
+        return []
     pending = sorted((tag for tag in channel_tags if tag.version > state.version), key=lambda tag: tag.version)
     if not pending:
         return []
@@ -125,6 +129,25 @@ def discover_releases(tags, state_file, branch_exists):
     }]
 
 
+def published_formula_exists(base_url, version):
+    if not base_url:
+        return True
+    request = urllib.request.Request(
+        f"{base_url.rstrip('/')}/binjad@{version}.rb",
+        method="HEAD",
+        headers={"User-Agent": "binjad-release-monitor"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            return response.status == 200
+    except urllib.error.HTTPError as error:
+        if error.code == 404:
+            return False
+        raise RuntimeError(f"cannot verify published formula: HTTP {error.code}") from error
+    except urllib.error.URLError as error:
+        raise RuntimeError(f"cannot verify published formula: {error.reason}") from error
+
+
 def write_github_output(path, releases):
     with Path(path).open("a", encoding="utf-8") as output:
         output.write(f"count={len(releases)}\n")
@@ -137,6 +160,7 @@ def main():
     parser.add_argument("--refs-file", type=Path)
     parser.add_argument("--dev-state", type=Path, required=True)
     parser.add_argument("--remote", default="")
+    parser.add_argument("--published-formula-base-url", default="")
     parser.add_argument("--github-output", default=os.environ.get("GITHUB_OUTPUT", ""))
     options = parser.parse_args()
 
@@ -150,6 +174,7 @@ def main():
         tags,
         options.dev_state,
         lambda branch: remote_branch_exists(options.remote, branch),
+        lambda version: published_formula_exists(options.published_formula_base_url, version),
     )
     print(json.dumps(releases, indent=2, sort_keys=True))
     if options.github_output:

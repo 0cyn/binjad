@@ -94,6 +94,28 @@ class TagMonitorTests(unittest.TestCase):
         releases = discover_releases(refs, state, lambda _: True)
         self.assertEqual(releases, [])
 
+    def test_unpublished_current_formula_blocks_next_tag(self):
+        old_sha = "2" * 40
+        new_sha = "3" * 40
+        refs = parse_remote_refs(
+            f"{old_sha}\trefs/tags/dev/6.1.10769\n"
+            f"{new_sha}\trefs/tags/dev/6.1.10779\n"
+        )
+        state = self.state_file(f"dev/6.1.10769 {old_sha}")
+        releases = discover_releases(refs, state, lambda _: False, lambda _: False)
+        self.assertEqual(releases, [])
+
+    def test_published_current_formula_allows_next_tag(self):
+        old_sha = "2" * 40
+        new_sha = "3" * 40
+        refs = parse_remote_refs(
+            f"{old_sha}\trefs/tags/dev/6.1.10769\n"
+            f"{new_sha}\trefs/tags/dev/6.1.10779\n"
+        )
+        state = self.state_file(f"dev/6.1.10769 {old_sha}")
+        releases = discover_releases(refs, state, lambda _: False, lambda _: True)
+        self.assertEqual([release["tag"] for release in releases], ["dev/6.1.10779"])
+
 
 if __name__ == "__main__":
     unittest.main()
