@@ -1,0 +1,119 @@
+name: Promote development source
+
+on:
+  workflow_run:
+    workflows:
+      - build
+    types:
+      - completed
+
+permissions: {}
+
+concurrency:
+  group: promote-development-source
+  cancel-in-progress: false
+
+jobs:
+  merge:
+    if: >-
+      ${{
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.event == 'workflow_dispatch' &&
+        startsWith(github.event.workflow_run.head_branch, 'automation/binaryninja-api-dev-')
+      }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      actions: write
+      contents: write
+      pull-requests: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      RUN_HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+      RUN_HEAD_REPOSITORY: ${{ github.event.workflow_run.head_repository.full_name }}
+      RUN_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+      RUN_ID: ${{ github.event.workflow_run.id }}
+    steps:
+      - name: Validate the tested source update
+        id: validation
+        run: |
+          test "$RUN_HEAD_REPOSITORY" = "$GITHUB_REPOSITORY"
+          [[ "$RUN_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$RUN_HEAD_BRANCH" =~ ^automation/binaryninja-api-dev-([0-9]+\.[0-9]+\.[0-9]+)$ ]]
+          branch_version="${BASH_REMATCH[1]}"
+
+          jobs="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/jobs?per_page=100")"
+          test "$(jq '[.jobs[] | select(.name == "Linux" and .conclusion == "success")] | length' <<<"$jobs")" = 1
+          test "$(jq '[.jobs[] | select(.name == "macOS" and .conclusion == "success")] | length' <<<"$jobs")" = 1
+
+          owner="${GITHUB_REPOSITORY%%/*}"
+          pulls="$(gh api "repos/$GITHUB_REPOSITORY/pulls?state=open&base=dev&head=$owner:$RUN_HEAD_BRANCH")"
+          test "$(jq 'length' <<<"$pulls")" = 1
+          pull_request="$(jq -r '.[0].number' <<<"$pulls")"
+          pull="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$pull_request")"
+          test "$(jq -r '.user.login' <<<"$pull")" = "github-actions[bot]"
+          test "$(jq -r '.base.ref' <<<"$pull")" = dev
+          test "$(jq -r '.head.ref' <<<"$pull")" = "$RUN_HEAD_BRANCH"
+          test "$(jq -r '.head.sha' <<<"$pull")" = "$RUN_HEAD_SHA"
+          test "$(jq -r '.head.repo.full_name' <<<"$pull")" = "$GITHUB_REPOSITORY"
+          test "$(jq -r '.commits' <<<"$pull")" = 1
+
+          files="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$pull_request/files?per_page=100")"
+          test "$(jq '[.[] | select(.filename == ".github/binaryninja-api-tags/dev.txt")] | length' <<<"$files")" = 1
+          test "$(jq '[.[] | select(.filename != ".github/binaryninja-api-tags/dev.txt" and .filename != "vendor/binaryninja-api")] | length' <<<"$files")" = 0
+
+          state="$(gh api -H "Accept: application/vnd.github.raw+json" \
+            "repos/$GITHUB_REPOSITORY/contents/.github/binaryninja-api-tags/dev.txt?ref=$RUN_HEAD_SHA")"
+          read -r tag api_revision extra <<<"$state"
+          test -z "${extra:-}"
+          test "$tag" = "dev/$branch_version"
+          [[ "$api_revision" =~ ^[0-9a-f]{40}$ ]]
+
+          tree="$(gh api "repos/$GITHUB_REPOSITORY/git/trees/$RUN_HEAD_SHA?recursive=1")"
+          gitlink="$(jq -r '.tree[] | select(.path == "vendor/binaryninja-api" and .type == "commit") | .sha' <<<"$tree")"
+          test "$gitlink" = "$api_revision"
+
+          refs="$(git ls-remote --tags https://github.com/Vector35/binaryninja-api.git \
+            "refs/tags/$tag" "refs/tags/$tag^{}")"
+          resolved=""
+          while read -r commit reference
+          do
+            if [[ -z "$resolved" || "$reference" = "refs/tags/$tag^{}" ]]
+            then
+              resolved="$commit"
+            fi
+          done <<<"$refs"
+          test "$resolved" = "$api_revision"
+
+          base_sha="$(jq -r '.base.sha' <<<"$pull")"
+          comparison="$(gh api "repos/$GITHUB_REPOSITORY/compare/$base_sha...$RUN_HEAD_SHA")"
+          test "$(jq -r '.behind_by' <<<"$comparison")" = 0
+
+          echo "pull_request=$pull_request" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Rebase-merge the source update
+        env:
+          PULL_REQUEST: ${{ steps.validation.outputs.pull_request }}
+        run: gh pr merge "$PULL_REQUEST" --repo "$GITHUB_REPOSITORY" --rebase --delete-branch
+
+      - name: Dispatch post-merge validation
+        env:
+          PULL_REQUEST: ${{ steps.validation.outputs.pull_request }}
+        run: |
+          for attempt in {1..30}
+          do
+            pull="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PULL_REQUEST")"
+            merged="$(jq -r '.merged' <<<"$pull")"
+            source_revision="$(jq -r '.merge_commit_sha' <<<"$pull")"
+            dev_revision="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/dev" --jq '.object.sha')"
+            if [[ "$merged" = true && "$source_revision" = "$dev_revision" && "$source_revision" =~ ^[0-9a-f]{40}$ ]]
+            then
+              gh workflow run ci.yml --ref dev
+              printf 'Merged source revision: `%s`\n' "$source_revision" >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "The rebase merge did not become the dev branch head." >&2
+          exit 1
