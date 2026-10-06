@@ -1,11 +1,6 @@
 name: Propose development formula
 
 on:
-  workflow_run:
-    workflows:
-      - build
-    types:
-      - completed
   workflow_dispatch:
     inputs:
       source_revision:
@@ -20,39 +15,18 @@ concurrency:
 
 jobs:
   propose:
-    if: >-
-      ${{
-        github.event_name == 'workflow_dispatch' ||
-        (
-          github.event.workflow_run.conclusion == 'success' &&
-          github.event.workflow_run.head_branch == 'dev' &&
-          (github.event.workflow_run.event == 'workflow_dispatch' || github.event.workflow_run.event == 'push')
-        )
-      }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
-      actions: read
       contents: write
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       REQUESTED_SOURCE_REVISION: ${{ inputs.source_revision }}
-      WORKFLOW_SOURCE_REVISION: ${{ github.event.workflow_run.head_sha }}
-      WORKFLOW_RUN_ID: ${{ github.event.workflow_run.id }}
     steps:
       - name: Validate the source revision
         id: source
         run: |
-          if [[ "$GITHUB_EVENT_NAME" = workflow_run ]]
-          then
-            source_revision="$WORKFLOW_SOURCE_REVISION"
-            jobs="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$WORKFLOW_RUN_ID/jobs?per_page=100")"
-            test "$(jq '[.jobs[] | select(.name == "Linux" and .conclusion == "success")] | length' <<<"$jobs")" = 1
-            test "$(jq '[.jobs[] | select(.name == "macOS" and .conclusion == "success")] | length' <<<"$jobs")" = 1
-          else
-            source_revision="$REQUESTED_SOURCE_REVISION"
-          fi
-
+          source_revision="$REQUESTED_SOURCE_REVISION"
           [[ "$source_revision" =~ ^[0-9a-f]{40}$ ]]
           dev_revision="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/dev" --jq '.object.sha')"
           test "$source_revision" = "$dev_revision"

@@ -47,7 +47,7 @@ jobs:
     needs: discover
     if: needs.discover.outputs.count != '0'
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 110
     strategy:
       fail-fast: false
       matrix:
@@ -92,7 +92,10 @@ jobs:
           git add vendor/binaryninja-api ".github/binaryninja-api-tags/$CHANNEL.txt"
           git commit -m "binaryninja-api: $TAG"
           git push --set-upstream origin "$BRANCH"
-          echo "created=true" >> "$GITHUB_OUTPUT"
+          {
+            echo "created=true"
+            echo "head_sha=$(git rev-parse HEAD)"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Open pull request
         if: steps.update.outputs.created == 'true'
@@ -124,9 +127,64 @@ jobs:
           printf 'Created %s\n' "$url"
           printf '### %s\n\n%s\n' "$TAG" "$url" >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Dispatch compatibility build
+      - name: Dispatch and wait for compatibility build
+        if: steps.update.outputs.created == 'true'
+        id: build
+        env:
+          BRANCH: ${{ matrix.release.branch }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HEAD_SHA: ${{ steps.update.outputs.head_sha }}
+        run: |
+          previous_run_id="$(gh api --method GET "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs" \
+            -f event=workflow_dispatch -f branch="$BRANCH" -f per_page=20 \
+            --jq '.workflow_runs[0].id // 0')"
+          gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref "$BRANCH"
+
+          run_id=""
+          for _ in {1..60}
+          do
+            runs="$(gh api --method GET "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs" \
+              -f event=workflow_dispatch -f branch="$BRANCH" -f per_page=20)"
+            run_id="$(jq -r --arg sha "$HEAD_SHA" --argjson previous "$previous_run_id" \
+              '[.workflow_runs[] | select(.head_sha == $sha and .id > $previous)] | max_by(.id).id // empty' \
+              <<<"$runs")"
+            if [[ -n "$run_id" ]]
+            then
+              break
+            fi
+            sleep 2
+          done
+          [[ "$run_id" =~ ^[1-9][0-9]*$ ]]
+
+          for _ in {1..400}
+          do
+            run="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id")"
+            status="$(jq -r '.status' <<<"$run")"
+            if [[ "$status" = completed ]]
+            then
+              test "$(jq -r '.conclusion' <<<"$run")" = success
+              test "$(jq -r '.head_branch' <<<"$run")" = "$BRANCH"
+              test "$(jq -r '.head_sha' <<<"$run")" = "$HEAD_SHA"
+              jobs="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/jobs?per_page=100")"
+              test "$(jq '[.jobs[] | select(.name == "Linux" and .conclusion == "success")] | length' <<<"$jobs")" = 1
+              test "$(jq '[.jobs[] | select(.name == "macOS" and .conclusion == "success")] | length' <<<"$jobs")" = 1
+              echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+              printf 'Validated build run: [%s](https://github.com/%s/actions/runs/%s)\n' \
+                "$run_id" "$GITHUB_REPOSITORY" "$run_id" >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            sleep 15
+          done
+          echo "Compatibility build $run_id did not complete before the promotion deadline." >&2
+          exit 1
+
+      - name: Dispatch source promotion
         if: steps.update.outputs.created == 'true'
         env:
           BRANCH: ${{ matrix.release.branch }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh workflow run ci.yml --ref "$BRANCH"
+          HEAD_SHA: ${{ steps.update.outputs.head_sha }}
+          RUN_ID: ${{ steps.build.outputs.run_id }}
+        run: >-
+          gh workflow run promote-dev-source.yml --repo "$GITHUB_REPOSITORY" --ref stable
+          -f run_id="$RUN_ID" -f head_branch="$BRANCH" -f head_sha="$HEAD_SHA"

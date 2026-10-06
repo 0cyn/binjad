@@ -1,11 +1,17 @@
 name: Promote development source
 
 on:
-  workflow_run:
-    workflows:
-      - build
-    types:
-      - completed
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: Exact successful build workflow run ID
+        required: true
+      head_branch:
+        description: Exact tested automation branch
+        required: true
+      head_sha:
+        description: Exact tested source commit
+        required: true
 
 permissions: {}
 
@@ -15,12 +21,6 @@ concurrency:
 
 jobs:
   merge:
-    if: >-
-      ${{
-        github.event.workflow_run.conclusion == 'success' &&
-        github.event.workflow_run.event == 'workflow_dispatch' &&
-        startsWith(github.event.workflow_run.head_branch, 'automation/binaryninja-api-dev-')
-      }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -29,18 +29,25 @@ jobs:
       pull-requests: write
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      RUN_HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
-      RUN_HEAD_REPOSITORY: ${{ github.event.workflow_run.head_repository.full_name }}
-      RUN_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
-      RUN_ID: ${{ github.event.workflow_run.id }}
+      RUN_HEAD_BRANCH: ${{ inputs.head_branch }}
+      RUN_HEAD_SHA: ${{ inputs.head_sha }}
+      RUN_ID: ${{ inputs.run_id }}
     steps:
       - name: Validate the tested source update
         id: validation
         run: |
-          test "$RUN_HEAD_REPOSITORY" = "$GITHUB_REPOSITORY"
+          [[ "$RUN_ID" =~ ^[1-9][0-9]*$ ]]
           [[ "$RUN_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
           [[ "$RUN_HEAD_BRANCH" =~ ^automation/binaryninja-api-dev-([0-9]+\.[0-9]+\.[0-9]+)$ ]]
           branch_version="${BASH_REMATCH[1]}"
+
+          run="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID")"
+          test "$(jq -r '.event' <<<"$run")" = workflow_dispatch
+          test "$(jq -r '.status' <<<"$run")" = completed
+          test "$(jq -r '.conclusion' <<<"$run")" = success
+          test "$(jq -r '.head_branch' <<<"$run")" = "$RUN_HEAD_BRANCH"
+          test "$(jq -r '.head_sha' <<<"$run")" = "$RUN_HEAD_SHA"
+          test "$(jq -r '.head_repository.full_name' <<<"$run")" = "$GITHUB_REPOSITORY"
 
           jobs="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/jobs?per_page=100")"
           test "$(jq '[.jobs[] | select(.name == "Linux" and .conclusion == "success")] | length' <<<"$jobs")" = 1
