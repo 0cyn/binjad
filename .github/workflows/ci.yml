@@ -6,6 +6,9 @@ on:
       - stable
       - dev
   pull_request:
+    paths-ignore:
+      - .github/binaryninja-api-tags/dev.txt
+      - vendor/binaryninja-api
   workflow_dispatch:
 
 permissions:
