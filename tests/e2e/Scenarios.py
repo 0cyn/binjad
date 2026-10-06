@@ -254,13 +254,20 @@ class Workflows(unittest.TestCase):
         self.agent.analyze(view)
         text = self.agent.call("bn_function_decompile", binaryView=view, function="0x80000000")["text"]
         require("0x2a" in text.lower() or "42" in text, f"firmware constant was not recovered: {text}")
-        self.agent.call("bn_comment_set", binaryView=view, address="0x80000000", text="firmware reset returns 42")
+        rebased = self.agent.call("bn_binary_view_rebase", binaryView=view, address="0x81000000")
+        require(rebased["rebased"] and rebased["address"] == "0x81000000", f"wrong rebase result: {rebased}")
+        memory = self.agent.call("bn_memory_read", binaryView=view, address="0x81000100", length=len(BANNER.encode()))
+        require(bytes.fromhex(memory["hex"]) == BANNER.encode(), "live view retained its pre-rebase mapping")
+        functions = self.agent.call("bn_function_list", binaryView=view, address="0x81000000")["functions"]
+        require(len(functions) == 1 and functions[0]["address"] == "0x81000000",
+                f"live view retained stale function metadata after rebase: {functions}")
+        self.agent.call("bn_comment_set", binaryView=view, address="0x81000000", text="firmware reset returns 42")
         saved = self.agent.complete(self.agent.call("bn_binary_view_save", binaryView=view))
         self.agent.call("bn_open_item_close", openItem=item, save="discard")
         _, reopened = self.open(saved["destination"], analyze=False)
-        require(self.agent.call("bn_comment_get", binaryView=reopened, address="0x80000000")["text"] ==
+        require(self.agent.call("bn_comment_get", binaryView=reopened, address="0x81000000")["text"] ==
                 "firmware reset returns 42", "raw-mapped annotation was not persisted")
-        memory = self.agent.call("bn_memory_read", binaryView=reopened, address="0x80000100", length=len(BANNER.encode()))
+        memory = self.agent.call("bn_memory_read", binaryView=reopened, address="0x81000100", length=len(BANNER.encode()))
         require(bytes.fromhex(memory["hex"]) == BANNER.encode(), "firmware mapping changed after reopen")
 
     def test_uploads_and_project_documents(self):
