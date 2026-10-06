@@ -99,7 +99,7 @@ jobs:
           PULL_REQUEST: ${{ steps.validation.outputs.pull_request }}
         run: gh pr merge "$PULL_REQUEST" --repo "$GITHUB_REPOSITORY" --rebase --delete-branch
 
-      - name: Dispatch post-merge validation
+      - name: Dispatch formula proposal for the merged source
         env:
           PULL_REQUEST: ${{ steps.validation.outputs.pull_request }}
         run: |
@@ -111,7 +111,11 @@ jobs:
             dev_revision="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/dev" --jq '.object.sha')"
             if [[ "$merged" = true && "$source_revision" = "$dev_revision" && "$source_revision" =~ ^[0-9a-f]{40}$ ]]
             then
-              gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref dev
+              tested_tree="$(gh api "repos/$GITHUB_REPOSITORY/git/commits/$RUN_HEAD_SHA" --jq '.tree.sha')"
+              merged_tree="$(gh api "repos/$GITHUB_REPOSITORY/git/commits/$source_revision" --jq '.tree.sha')"
+              test "$tested_tree" = "$merged_tree"
+              gh workflow run dev-formula.yml --repo "$GITHUB_REPOSITORY" --ref stable \
+                -f source_revision="$source_revision"
               printf "Merged source revision: \`%s\`\n" "$source_revision" >> "$GITHUB_STEP_SUMMARY"
               exit 0
             fi
