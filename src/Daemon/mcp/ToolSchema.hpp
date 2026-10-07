@@ -33,6 +33,7 @@ namespace binjad::mcp::schema {
 		std::optional<std::uint64_t> minimum;
 		std::optional<std::uint64_t> maximum;
 		std::optional<std::uint64_t> defaultValue;
+		std::optional<bool> defaultBoolean;
 		std::string_view defaultString;
 		std::optional<std::uint64_t> minimumLength;
 		std::optional<std::uint64_t> minimumItems;
@@ -40,7 +41,27 @@ namespace binjad::mcp::schema {
 		// Compatibility-only call-site text. Schema output always uses ModelFacingDocs.
 		std::string_view description;
 		std::initializer_list<std::string_view> values;
+		std::initializer_list<std::string_view> examples;
+		struct BitFlag
+		{
+			std::string_view name;
+			std::uint64_t value;
+		};
+		std::initializer_list<BitFlag> bitFlags;
 		std::initializer_list<Property> itemProperties;
+	};
+
+	struct DiscriminatedCase
+	{
+		std::string_view value;
+		std::initializer_list<std::string_view> required;
+		std::initializer_list<std::string_view> allowed;
+	};
+
+	struct ObjectCase
+	{
+		std::initializer_list<std::string_view> required;
+		std::initializer_list<std::string_view> allowed;
 	};
 
 	inline Property String(std::string_view name, bool required = false, std::string_view description = {})
@@ -56,9 +77,29 @@ namespace binjad::mcp::schema {
 		return {.name = name, .required = required, .minimumLength = 1, .description = description};
 	}
 
+	inline Property StringWithExamples(std::string_view name, bool required,
+		std::initializer_list<std::string_view> examples, std::string_view description = {})
+	{
+		return {.name = name,
+			.required = required,
+			.minimumLength = required ? std::optional<std::uint64_t>(1) : std::nullopt,
+			.description = description,
+			.examples = examples};
+	}
+
 	inline Property Boolean(std::string_view name, bool required = false, std::string_view description = {})
 	{
 		return {.name = name, .type = PropertyType::Boolean, .required = required, .description = description};
+	}
+
+	inline Property BooleanWithDefault(
+		std::string_view name, bool required, bool defaultValue, std::string_view description = {})
+	{
+		return {.name = name,
+			.type = PropertyType::Boolean,
+			.required = required,
+			.defaultBoolean = defaultValue,
+			.description = description};
 	}
 
 	inline Property Integer(std::string_view name, bool required = false, std::optional<std::uint64_t> minimum = {},
@@ -72,6 +113,18 @@ namespace binjad::mcp::schema {
 			.maximum = maximum,
 			.defaultValue = defaultValue,
 			.description = description};
+	}
+
+	inline Property IntegerBitmask(std::string_view name, bool required, std::uint64_t maximum,
+		std::initializer_list<Property::BitFlag> bitFlags, std::string_view description = {})
+	{
+		return {.name = name,
+			.type = PropertyType::Integer,
+			.required = required,
+			.minimum = 0,
+			.maximum = maximum,
+			.description = description,
+			.bitFlags = bitFlags};
 	}
 
 	inline Property Object(std::string_view name, bool required = false, std::string_view description = {})
@@ -153,8 +206,9 @@ namespace binjad::mcp::schema {
 			.values = values};
 	}
 
-	inline void WriteObject(
-		ToolCallSchemaWriter& writer, std::string_view toolName, std::initializer_list<Property> properties)
+	inline void WriteObject(ToolCallSchemaWriter& writer, std::string_view toolName,
+		std::initializer_list<Property> properties, std::string_view discriminator = {},
+		std::initializer_list<DiscriminatedCase> cases = {}, std::initializer_list<ObjectCase> alternatives = {})
 	{
 		writer.StartObject();
 		writer.Key("type");
@@ -268,6 +322,11 @@ namespace binjad::mcp::schema {
 				writer.Key("default");
 				writer.Uint64(*property.defaultValue);
 			}
+			if (property.defaultBoolean)
+			{
+				writer.Key("default");
+				writer.Bool(*property.defaultBoolean);
+			}
 			if (!property.defaultString.empty())
 			{
 				writer.Key("default");
@@ -297,6 +356,25 @@ namespace binjad::mcp::schema {
 					writer.String(value.data(), static_cast<rapidjson::SizeType>(value.size()));
 				writer.EndArray();
 			}
+			if (property.examples.size() != 0)
+			{
+				writer.Key("examples");
+				writer.StartArray();
+				for (const auto value : property.examples)
+					writer.String(value.data(), static_cast<rapidjson::SizeType>(value.size()));
+				writer.EndArray();
+			}
+			if (property.bitFlags.size() != 0)
+			{
+				writer.Key("x-bitFlags");
+				writer.StartObject();
+				for (const auto& flag : property.bitFlags)
+				{
+					writer.Key(flag.name.data(), static_cast<rapidjson::SizeType>(flag.name.size()));
+					writer.Uint64(flag.value);
+				}
+				writer.EndObject();
+			}
 			const auto description = docs::ToolArgument(toolName, property.name);
 			if (!property.description.empty() && description.empty())
 				throw std::logic_error("inline argument documentation was not centralized: " + std::string(toolName)
@@ -318,8 +396,112 @@ namespace binjad::mcp::schema {
 					writer.String(property.name.data(), static_cast<rapidjson::SizeType>(property.name.size()));
 			writer.EndArray();
 		}
+		if (cases.size() != 0 && alternatives.size() != 0)
+			throw std::logic_error("a schema cannot combine discriminated cases and object alternatives");
+		if (cases.size() != 0)
+		{
+			if (discriminator.empty())
+				throw std::logic_error("discriminated schema cases require a discriminator");
+			writer.Key("oneOf");
+			writer.StartArray();
+			for (const auto& item : cases)
+			{
+				writer.StartObject();
+				writer.Key("properties");
+				writer.StartObject();
+				writer.Key(discriminator.data(), static_cast<rapidjson::SizeType>(discriminator.size()));
+				writer.StartObject();
+				writer.Key("enum");
+				writer.StartArray();
+				writer.String(item.value.data(), static_cast<rapidjson::SizeType>(item.value.size()));
+				writer.EndArray();
+				writer.EndObject();
+				writer.EndObject();
+				if (item.required.size() != 0)
+				{
+					writer.Key("required");
+					writer.StartArray();
+					for (const auto name : item.required)
+						writer.String(name.data(), static_cast<rapidjson::SizeType>(name.size()));
+					writer.EndArray();
+				}
+				const auto forbidden = [&](const Property& property) {
+					return std::find(item.allowed.begin(), item.allowed.end(), property.name) == item.allowed.end();
+				};
+				if (std::any_of(properties.begin(), properties.end(), forbidden))
+				{
+					writer.Key("not");
+					writer.StartObject();
+					writer.Key("anyOf");
+					writer.StartArray();
+					for (const auto& property : properties)
+					{
+						if (!forbidden(property))
+							continue;
+						writer.StartObject();
+						writer.Key("required");
+						writer.StartArray();
+						writer.String(property.name.data(), static_cast<rapidjson::SizeType>(property.name.size()));
+						writer.EndArray();
+						writer.EndObject();
+					}
+					writer.EndArray();
+					writer.EndObject();
+				}
+				writer.EndObject();
+			}
+			writer.EndArray();
+		}
+		if (alternatives.size() != 0)
+		{
+			writer.Key("oneOf");
+			writer.StartArray();
+			for (const auto& item : alternatives)
+			{
+				writer.StartObject();
+				if (item.required.size() != 0)
+				{
+					writer.Key("required");
+					writer.StartArray();
+					for (const auto name : item.required)
+						writer.String(name.data(), static_cast<rapidjson::SizeType>(name.size()));
+					writer.EndArray();
+				}
+				const auto forbidden = [&](const Property& property) {
+					return std::find(item.allowed.begin(), item.allowed.end(), property.name) == item.allowed.end();
+				};
+				if (std::any_of(properties.begin(), properties.end(), forbidden))
+				{
+					writer.Key("not");
+					writer.StartObject();
+					writer.Key("anyOf");
+					writer.StartArray();
+					for (const auto& property : properties)
+					{
+						if (!forbidden(property))
+							continue;
+						writer.StartObject();
+						writer.Key("required");
+						writer.StartArray();
+						writer.String(property.name.data(), static_cast<rapidjson::SizeType>(property.name.size()));
+						writer.EndArray();
+						writer.EndObject();
+					}
+					writer.EndArray();
+					writer.EndObject();
+				}
+				writer.EndObject();
+			}
+			writer.EndArray();
+		}
 		writer.Key("additionalProperties");
 		writer.Bool(false);
 		writer.EndObject();
+	}
+
+	inline void WriteObjectAlternatives(ToolCallSchemaWriter& writer, std::string_view toolName,
+		std::initializer_list<Property> properties, std::initializer_list<ObjectCase> alternatives)
+	{
+		WriteObject(writer, toolName, properties, {}, {}, alternatives);
 	}
 }  // namespace binjad::mcp::schema

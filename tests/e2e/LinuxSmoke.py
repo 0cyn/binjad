@@ -57,7 +57,7 @@ def main():
         errors = []
         if agent and open_item:
             try:
-                agent.call("bn_open_item_close", openItem=open_item, save="discard")
+                agent.call("bn_open_item_close", openItem=open_item, unsavedChanges="discard")
             except Exception as error:
                 errors.append(str(error))
         if agent and agent.session:
