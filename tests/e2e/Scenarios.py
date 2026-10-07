@@ -41,7 +41,7 @@ class Workflows(unittest.TestCase):
         for item in inspector.pages("bn_open_item_list", "openItems", limit=50):
             try:
                 inspector.session = item["analysisSession"]
-                inspector.call("bn_open_item_close", openItem=item["openItem"], save="discard")
+                inspector.call("bn_open_item_close", openItem=item["openItem"], unsavedChanges="discard")
             except Exception as error:
                 errors.append(str(error))
         inspector.session = None
@@ -213,6 +213,20 @@ class Workflows(unittest.TestCase):
 
     def test_macho_analysis(self):
         _, view = self.inspect_packet("macho", "Mach-O")
+        probe = self.function(view, "constant_probe")
+        probe_info = self.agent.call("bn_function_info", binaryView=view, function=probe)
+        require(len(probe_info["ranges"]) == 1, f"constant probe is not contiguous: {probe_info}")
+        probe_range = probe_info["ranges"][0]
+        constants = self.agent.call(
+            "bn_constant_search", binaryView=view, value="0x1234", start=probe_range["start"],
+            end=probe_range["end"], limit=20)
+        require(constants["level"] == "llil" and constants["analysisComplete"] and not constants["partial"],
+                f"constant search reported incomplete LLIL coverage: {constants}")
+        require(len(constants["matches"]) == 1
+                and constants["matches"][0]["function"].lstrip("_") == "constant_probe"
+                and constants["matches"][0]["level"] == "llil"
+                and "0x1234" in constants["matches"][0]["text"].lower(),
+                f"constant search missed the rendered 0x1234 use: {constants}")
         libraries = self.agent.call("bn_linked_library_list", binaryView=view)
         require("libSystem" in json.dumps(libraries), "Mach-O system dependency is missing")
         commands = self.agent.call("bn_macho_load_command_list", binaryView=view)
@@ -263,7 +277,7 @@ class Workflows(unittest.TestCase):
                 f"live view retained stale function metadata after rebase: {functions}")
         self.agent.call("bn_comment_set", binaryView=view, address="0x81000000", text="firmware reset returns 42")
         saved = self.agent.complete(self.agent.call("bn_binary_view_save", binaryView=view))
-        self.agent.call("bn_open_item_close", openItem=item, save="discard")
+        self.agent.call("bn_open_item_close", openItem=item, unsavedChanges="discard")
         _, reopened = self.open(saved["destination"], analyze=False)
         require(self.agent.call("bn_comment_get", binaryView=reopened, address="0x81000000")["text"] ==
                 "firmware reset returns 42", "raw-mapped annotation was not persisted")
@@ -319,7 +333,7 @@ class Workflows(unittest.TestCase):
         self.agent.call("bn_comment_set", binaryView=view, address=dispatch, text="Reviewed twice — café 日本")
         again = self.agent.complete(self.agent.call("bn_binary_view_save_async", binaryView=view))
         require(not again["createdDatabase"] and again["destination"] == saved["destination"], "second save created another database")
-        self.agent.call("bn_open_item_close", openItem=item, save="discard")
+        self.agent.call("bn_open_item_close", openItem=item, unsavedChanges="discard")
         project_name = self.agent.call("bn_local_project_info", project=project)["name"]
         self.service.restart()
         self.agent = Agent(self.service.http, self.service.token).start()
@@ -659,7 +673,7 @@ class Workflows(unittest.TestCase):
         require(header["format"] == "ELF", "broker did not preserve the forwarded tool name")
         require(self.agent.call("bn_binary_header_info", binaryView=candidate["binaryView"]) == header,
                 "direct execution of an unadvertised tool changed its result")
-        self.agent.call("bn_open_item_close", openItem=item["openItem"], save="discard")
+        self.agent.call("bn_open_item_close", openItem=item["openItem"], unsavedChanges="discard")
 
         documented = self.service.portal("POST", "/mcp/tools", {"protocol": self.agent.protocol})
         function_list = next(tool for tool in documented["tools"] if tool["name"] == "bn_function_list")
@@ -688,7 +702,7 @@ class Workflows(unittest.TestCase):
         require(not any(row["name"] == "bn_analysis_session_create" for row in tools), "legacy discovery exposed explicit session creation")
         item, view = self.open(self.fixtures["elf"], agent=legacy)
         self.function(view, "packet_checksum", agent=legacy)
-        legacy.call("bn_open_item_close", openItem=item, save="discard")
+        legacy.call("bn_open_item_close", openItem=item, unsavedChanges="discard")
         status, _, _, _ = self.service.http.request("DELETE", "/mcp", headers={
             "Authorization": "Bearer " + self.service.token, "Mcp-Session-Id": legacy.transport_session,
             "MCP-Protocol-Version": legacy.protocol})
@@ -708,7 +722,7 @@ class Workflows(unittest.TestCase):
         self.agent.call("bn_comment_set", binaryView=view, address=address, text="unsaved work")
         self.agent.call("bn_open_item_close", openItem=item["openItem"], expect_error=True)
         require(self.agent.call("bn_comment_get", binaryView=view, address=address)["text"] == "unsaved work", "failed close discarded work")
-        self.agent.call("bn_open_item_close", openItem=item["openItem"], save="discard")
+        self.agent.call("bn_open_item_close", openItem=item["openItem"], unsavedChanges="discard")
         self.agent.call("bn_function_list", binaryView=view, expect_error=True)
         _, healthy = self.open(self.fixtures["elf"])
         self.function(healthy, "packet_dispatch")
@@ -754,7 +768,7 @@ class Workflows(unittest.TestCase):
             require(entry["textContains"] in text, "corpus semantic anchor is absent from decompilation")
         self.agent.call("bn_comment_set", binaryView=view, address=function, text="corpus save/reopen anchor")
         saved = self.agent.complete(self.agent.call("bn_binary_view_save", binaryView=view), timeout=entry.get("timeout", 900))
-        self.agent.call("bn_open_item_close", openItem=item, save="discard")
+        self.agent.call("bn_open_item_close", openItem=item, unsavedChanges="discard")
         _, restored = self.open(saved["destination"], project=project, analyze=False)
         require(self.agent.call("bn_comment_get", binaryView=restored, address=function)["text"] == "corpus save/reopen anchor",
                 "corpus analysis did not survive save/reopen")

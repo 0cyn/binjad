@@ -2,7 +2,7 @@
 
 <p align="center">
   <a href="#install">install</a> | <a href="#restart-stop">restart</a> | <a href="#config">config</a> 
-  <br><a href="#uppdate-binjad">updating binjad</a> | <a href="#swapping-binaryninja-versions">Swapping Binary Ninja version</a>
+  <br><a href="#update-binjad">updating binjad</a> | <a href="#swapping-binaryninja-versions">Swapping Binary Ninja version</a>
 </p>
 
 This is an **UNOFFICIAL** HTTP MCP daemon for BinaryNinja **Commercial Edition** that offers "a few" things the official doesn't, and fixes some of my gripes
@@ -66,10 +66,10 @@ makes sense outside of insane enterprise automation.
 binjad has to have a binaryninja versioned release installed because it's linked to binaryninja. 
 homebrew lets us have our own versioning inside of this. 
 
-so, installing an update _to binjad_ (e.g. we fix some bugs) looks like `brew update && brew upgrade binjad`, however
+so, installing an update _to binjad_ (e.g. i fix a broken toolcall) looks like `brew update && brew upgrade binjad`, however
 if you swap to a different binaryninja build you'll need to install a different @version of the package. 
 
-For this reason, it's ideal that you stay on a BinaryNinja Stable release.
+For this reason, it's ideal that you stay on a BinaryNinja Stable release, but dev builds are supported.
 
 current stable:
 ```shell
@@ -82,7 +82,12 @@ brew services start binjad
 open http://127.0.0.1:8712/portal  # macOS
 ```
 
-any dev including/after this one: 
+There is a rube-goldberg set of github actions scripts set up to try and get dev builds out automatically
+as soon as they're published on binaryninja-api. If anything changes on API that requires updating actual
+code in this project presumably something will break and it'll require manual intervention, but for most
+dev versions a build should be available within about an hour. 
+
+installing for any dev including/after this one: 
 ``` 
 brew install 0cyn/tap/binjad@6.1.10811
 brew services start binjad
@@ -101,9 +106,13 @@ brew services stop binjad
 brew uninstall 0cyn/tap/binjad@<OLD_VERSION>
 brew install 0cyn/tap/binjad@<NEW_VERSION>
 brew services start binjad
+
+# technically, uninstalling is optional; you could `stop binjad@<OLD_VERSION>` and 
+# then `start binjad@<NEW_VERSION>` but it'd require you to qualify the version every time,
+# :p better to just do this
 ```
 
-!!! `brew upgrade` is for binjad bugfixes, not updating the linked build. 
+!!! `brew upgrade binjad` is for binjad bugfixes, not updating the linked build. 
 
 ### update binjad 
 
