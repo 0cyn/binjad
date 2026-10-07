@@ -39,6 +39,7 @@ namespace binjad::file_process {
 	const char* SymbolBindingName(BNSymbolBinding binding);
 	const char* SectionSemanticsName(BNSectionSemantics semantics);
 	BNSectionSemantics ParseSectionSemantics(std::string_view semantics);
+	std::vector<std::string_view> SegmentFlagNames(std::uint32_t flags);
 	const char* TypeClassName(BNTypeClass type);
 	BNSymbolType ParseSymbolType(std::string_view type);
 	BNSymbolBinding ParseSymbolBinding(std::string_view binding);

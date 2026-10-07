@@ -55,7 +55,7 @@ namespace binjad::mcp {
 			return (value >= '0' && value <= '9') || (value >= 'a' && value <= 'f') || (value >= 'A' && value <= 'F');
 		}
 
-		bool ValidEncodedUrl(std::string_view url, std::string& error)
+		bool ValidRemoteUrl(std::string_view url, std::string& error)
 		{
 			for (std::size_t index = 0; index < url.size(); ++index)
 			{
@@ -345,7 +345,7 @@ namespace binjad::mcp {
 			{
 				const auto source = StringArgument(context.arguments, "url");
 				std::string error;
-				if (!ValidEncodedUrl(source, error))
+				if (!ValidRemoteUrl(source, error))
 					return ToolCallSuccess(context, ErrorJson(error), true);
 				const auto expression = StringArgument(context.arguments, "expr");
 				if (!expression.empty() && HasExpressionParameter(source))
@@ -359,7 +359,8 @@ namespace binjad::mcp {
 			{
 				schema::WriteObject(writer, "bn_url_remote_file",
 					{schema::String("url", true,
-						 "Percent-encoded absolute http, https, or file URL for Binary Ninja to download or open."),
+						 "Absolute http, https, or file URL in standard hierarchical form; do not encode the scheme or "
+						 ":// separators."),
 						schema::NonEmptyString("expr", false,
 							"Optional Binary Ninja navigation expression, such as a function, section, or address.")});
 			}
