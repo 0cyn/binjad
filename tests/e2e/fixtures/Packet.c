@@ -21,6 +21,11 @@ EXPORTED const char banner[] = "BINJAD-PACKET/v1 caf\xc3\xa9 \xe6\x97\xa5\xe6\x9
 EXPORTED const char denied[] = "packet rejected: invalid length";
 EXPORTED volatile u32 observed;
 
+EXPORTED NOINLINE int constant_probe(u32 selector)
+{
+	return selector == 0x1234 ? 17 : 29;
+}
+
 EXPORTED NOINLINE u32 packet_checksum(const u8* payload, u32 length)
 {
 	u32 value = 0x13579bdf;

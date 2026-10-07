@@ -153,7 +153,7 @@ namespace binjad::mcp {
 			return ToolCallSuccess(context, *result.value);
 		}
 
-		FoundationResult ExecuteDiffRun(const ToolCallContext& context)
+		FoundationResult ExecuteDiffRun(const ToolCallContext& context, bool detachImmediately)
 		{
 			FoundationResult error;
 			const auto target = ResolveDiffTarget(context, error);
@@ -171,8 +171,8 @@ namespace binjad::mcp {
 			const auto owner = context.principal.id;
 			const auto analysisSession = context.currentSession->reference;
 			const auto openItem = target->primaryView.openItem;
-			const auto created = context.jobs->Create(owner, analysisSession, target->primary, context.request.name,
-				context.unixNow, context.now,
+			const auto created = context.jobs->Create(
+				owner, analysisSession, target->primary, context.request.name, context.unixNow, context.now,
 				[coordinator = context.fileCoordinator, scheduler = context.scheduler, owner, analysisSession,
 					primary = target->primary, identity = target->identity, openItem] {
 					if (scheduler && scheduler->CancelQueued(owner, analysisSession, openItem) != 0)
@@ -180,19 +180,20 @@ namespace binjad::mcp {
 					const auto released = coordinator->ExecuteDiffTool(
 						owner, analysisSession, primary, identity, "binjad_internal_diff_release");
 					return released.value ? std::string {} : released.error;
-				});
+				},
+				detachImmediately ? Foundation::JobProgressCallback {} : context.progress);
 			if (!created.job)
 				return ToolCallSuccess(context, ErrorJson(created.error), true);
 			const auto job = created.job->reference;
 			context.jobs->Start(owner, job, context.unixNow);
-			if (context.attached)
+			if (!detachImmediately && context.attached)
 				context.attached(job, [jobs = context.jobs, owner, job] { (void)jobs->Cancel(owner, job); });
 			context.jobs->ReportProgress(owner, job, "diff", 0, 1000, "staging secondary database", context.unixNow);
 			const auto workerError = context.jobs->StartWorker(
 				[jobs = context.jobs, coordinator = context.fileCoordinator, scheduler = context.scheduler,
 					projectCoordinator = context.projectCoordinator, owner, analysisSession, primary = target->primary,
 					secondary = target->secondary, project = target->project, identity = target->identity, openItem,
-					job, progress = context.progress] {
+					job, progress = detachImmediately ? Foundation::JobProgressCallback {} : context.progress] {
 					const auto cancelled = [&] {
 						const auto info = jobs->Info(owner, job);
 						return info.job && info.job->cancelRequested;
@@ -279,6 +280,13 @@ namespace binjad::mcp {
 				});
 			if (!workerError.empty())
 				context.jobs->Fail(owner, job, ErrorJson(workerError), context.unixNow);
+			if (detachImmediately)
+			{
+				const auto info = context.jobs->Info(owner, job);
+				return info.job ?
+					ToolCallSuccess(context, JobJson(*info.job)) :
+					ToolCallSuccess(context, ErrorJson("job not found"), true);
+			}
 			const auto waited = context.jobs->WaitForTerminal(owner, job, context.config.jobs.detachAfter);
 			if (!waited.job)
 				return ToolCallSuccess(context, ErrorJson(waited.error), true);
@@ -288,6 +296,16 @@ namespace binjad::mcp {
 			if (!result.job)
 				return ToolCallSuccess(context, ErrorJson(result.error), true);
 			return ToolCallSuccess(context, result.job->resultJson, result.job->state != session::JobState::Complete);
+		}
+
+		FoundationResult ExecuteAttachedDiffRun(const ToolCallContext& context)
+		{
+			return ExecuteDiffRun(context, false);
+		}
+
+		FoundationResult ExecuteAsyncDiffRun(const ToolCallContext& context)
+		{
+			return ExecuteDiffRun(context, true);
 		}
 
 #define BINJAD_DIFF_TOOL(Type, Name, LegacyDescription, Handler, ...) \
@@ -305,15 +323,33 @@ namespace binjad::mcp {
 	}
 
 		BINJAD_DIFF_TOOL(DiffRunViewTool, "bn_diff_run_view",
-			"Run a job-backed Google BinDiff comparison after saving an open secondary BinaryView to a temporary BNDB; "
-			"results target the primary view.",
-			ExecuteDiffRun, schema::String("primary", true, "Materialized primary BinaryView to compare and mutate."),
+			"Run an attached Google BinDiff comparison after saving an open secondary BinaryView to a temporary BNDB; "
+			"return a terminal summary or automatically detach after the configured deadline.",
+			ExecuteAttachedDiffRun,
+			schema::String("primary", true, "Materialized primary BinaryView to compare and mutate."),
 			schema::String(
 				"secondary", true, "Materialized secondary BinaryView to save as a temporary read-only BNDB."));
 		BINJAD_DIFF_TOOL(DiffRunProjectTool, "bn_diff_run_project",
-			"Run a job-backed Google BinDiff comparison against a project-relative secondary BNDB; results target the "
-			"primary view.",
-			ExecuteDiffRun, schema::String("primary", true, "Materialized primary BinaryView to compare and mutate."),
+			"Run an attached Google BinDiff comparison against a project-relative secondary BNDB; return a terminal "
+			"summary or automatically detach after the configured deadline.",
+			ExecuteAttachedDiffRun,
+			schema::String("primary", true, "Materialized primary BinaryView to compare and mutate."),
+			schema::String("secondary", true,
+				"Secondary BinaryView reference when project is omitted, or project-relative BNDB path when project is "
+				"present. Repeat the run identity exactly."),
+			schema::String(
+				"project", true, "Project reference used by bn_diff_run_project; omit for a bn_diff_run_view cache."));
+		BINJAD_DIFF_TOOL(DiffRunViewAsyncTool, "bn_diff_run_view_async",
+			"Start a Google BinDiff comparison with an open secondary BinaryView. Return its detached job immediately.",
+			ExecuteAsyncDiffRun,
+			schema::String("primary", true, "Materialized primary BinaryView to compare and mutate."),
+			schema::String(
+				"secondary", true, "Materialized secondary BinaryView to save as a temporary read-only BNDB."));
+		BINJAD_DIFF_TOOL(DiffRunProjectAsyncTool, "bn_diff_run_project_async",
+			"Start a Google BinDiff comparison against a project-relative secondary BNDB and return its detached job "
+			"immediately.",
+			ExecuteAsyncDiffRun,
+			schema::String("primary", true, "Materialized primary BinaryView to compare and mutate."),
 			schema::String("secondary", true,
 				"Secondary BinaryView reference when project is omitted, or project-relative BNDB path when project is "
 				"present. Repeat the run identity exactly."),
@@ -336,12 +372,12 @@ namespace binjad::mcp {
 				"present. Repeat the run identity exactly."),
 			schema::NonEmptyString(
 				"project", false, "Project reference used by bn_diff_run_project; omit for a bn_diff_run_view cache."),
-			schema::String("query"), schema::Integer("minSimilarity", false, 0, 255),
-			schema::Integer("minConfidence", false, 0, 255),
+			schema::String("query"), schema::Integer("minSimilarity", false, 0, 255, 0),
+			schema::Integer("minConfidence", false, 0, 255, 0),
 			schema::Enum("sort", false,
 				{"similarity", "confidence", "primaryAddress", "secondaryAddress", "primaryName", "secondaryName"}),
-			schema::Enum("order", false, {"ascending", "descending"}), schema::Integer("offset", false, 0),
-			schema::Integer("limit", false, 1, 1000));
+			schema::Enum("order", false, {"ascending", "descending"}), schema::Integer("offset", false, 0, {}, 0),
+			schema::Integer("limit", false, 1, 1000, 50));
 		BINJAD_DIFF_TOOL(DiffPrimaryUnmatchedListTool, "bn_diff_primary_unmatched_list",
 			"List unmatched primary functions with deterministic sorting and pagination.", ExecuteDiffTool,
 			schema::String("primary", true, "Materialized primary BinaryView to compare and mutate."),
@@ -351,8 +387,8 @@ namespace binjad::mcp {
 			schema::NonEmptyString(
 				"project", false, "Project reference used by bn_diff_run_project; omit for a bn_diff_run_view cache."),
 			schema::String("query"), schema::Enum("sort", false, {"address", "name"}),
-			schema::Enum("order", false, {"ascending", "descending"}), schema::Integer("offset", false, 0),
-			schema::Integer("limit", false, 1, 1000));
+			schema::Enum("order", false, {"ascending", "descending"}), schema::Integer("offset", false, 0, {}, 0),
+			schema::Integer("limit", false, 1, 1000, 50));
 		BINJAD_DIFF_TOOL(DiffSecondaryUnmatchedListTool, "bn_diff_secondary_unmatched_list",
 			"List unmatched secondary functions with deterministic sorting and pagination.", ExecuteDiffTool,
 			schema::String("primary", true, "Materialized primary BinaryView to compare and mutate."),
@@ -362,8 +398,8 @@ namespace binjad::mcp {
 			schema::NonEmptyString(
 				"project", false, "Project reference used by bn_diff_run_project; omit for a bn_diff_run_view cache."),
 			schema::String("query"), schema::Enum("sort", false, {"address", "name"}),
-			schema::Enum("order", false, {"ascending", "descending"}), schema::Integer("offset", false, 0),
-			schema::Integer("limit", false, 1, 1000));
+			schema::Enum("order", false, {"ascending", "descending"}), schema::Integer("offset", false, 0, {}, 0),
+			schema::Integer("limit", false, 1, 1000, 50));
 		BINJAD_DIFF_TOOL(DiffFunctionMatchesTool, "bn_diff_function_matches",
 			"List Google BinDiff matches for one primary function.", ExecuteDiffTool,
 			schema::String("primary", true, "Materialized primary BinaryView to compare and mutate."),
@@ -372,7 +408,12 @@ namespace binjad::mcp {
 				"present. Repeat the run identity exactly."),
 			schema::NonEmptyString(
 				"project", false, "Project reference used by bn_diff_run_project; omit for a bn_diff_run_view cache."),
-			schema::String("primaryFunction", true));
+			schema::String("primaryFunction", true), schema::String("query"),
+			schema::Integer("minSimilarity", false, 0, 255, 0), schema::Integer("minConfidence", false, 0, 255, 0),
+			schema::Enum("sort", false,
+				{"similarity", "confidence", "primaryAddress", "secondaryAddress", "primaryName", "secondaryName"}),
+			schema::Enum("order", false, {"ascending", "descending"}), schema::Integer("offset", false, 0, {}, 0),
+			schema::Integer("limit", false, 1, 1000, 50));
 		BINJAD_DIFF_TOOL(DiffMatchInfoTool, "bn_diff_match_info",
 			"Return one exact primary-to-secondary function match.", ExecuteDiffTool,
 			schema::String("primary", true, "Materialized primary BinaryView to compare and mutate."),
@@ -410,7 +451,7 @@ namespace binjad::mcp {
 				"present. Repeat the run identity exactly."),
 			schema::String(
 				"project", false, "Project reference used by bn_diff_run_project; omit for a bn_diff_run_view cache."),
-			schema::Integer("minSimilarity", false, 0, 255), schema::Integer("minConfidence", false, 0, 255));
+			schema::Integer("minSimilarity", false, 0, 255, 255), schema::Integer("minConfidence", false, 0, 255, 255));
 
 #undef BINJAD_DIFF_TOOL
 	}  // namespace
@@ -419,6 +460,8 @@ namespace binjad::mcp {
 	{
 		tools.emplace_back(std::make_unique<DiffRunViewTool>());
 		tools.emplace_back(std::make_unique<DiffRunProjectTool>());
+		tools.emplace_back(std::make_unique<DiffRunViewAsyncTool>());
+		tools.emplace_back(std::make_unique<DiffRunProjectAsyncTool>());
 		tools.emplace_back(std::make_unique<DiffSummaryTool>());
 		tools.emplace_back(std::make_unique<DiffMatchListTool>());
 		tools.emplace_back(std::make_unique<DiffPrimaryUnmatchedListTool>());

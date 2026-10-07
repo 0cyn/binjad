@@ -11,6 +11,45 @@ namespace binjad {
 	using namespace file_process;
 
 	namespace {
+		void WriteSectionDescriptor(
+			rapidjson::Writer<rapidjson::StringBuffer>& writer, const BinaryNinja::Ref<BinaryNinja::Section>& section)
+		{
+			if (!section)
+				throw std::runtime_error("Binary Ninja did not return the mutated section");
+			const auto name = section->GetName();
+			const auto start = HexAddress(section->GetStart());
+			const auto end = HexAddress(section->GetEnd());
+			const auto typeName = section->GetType();
+			const auto linkedSection = section->GetLinkedSection();
+			const auto infoSection = section->GetInfoSection();
+			writer.StartObject();
+			writer.Key("name");
+			writer.String(name.data(), name.size());
+			writer.Key("start");
+			writer.String(start.data(), start.size());
+			writer.Key("end");
+			writer.String(end.data(), end.size());
+			writer.Key("length");
+			writer.Uint64(section->GetLength());
+			writer.Key("semantics");
+			writer.String(SectionSemanticsName(section->GetSemantics()));
+			writer.Key("typeName");
+			writer.String(typeName.data(), typeName.size());
+			writer.Key("alignment");
+			writer.Uint64(section->GetAlignment());
+			writer.Key("entrySize");
+			writer.Uint64(section->GetEntrySize());
+			writer.Key("linkedSection");
+			writer.String(linkedSection.data(), linkedSection.size());
+			writer.Key("infoSection");
+			writer.String(infoSection.data(), infoSection.size());
+			writer.Key("infoData");
+			writer.Uint64(section->GetInfoData());
+			writer.Key("autoDefined");
+			writer.Bool(section->AutoDefined());
+			writer.EndObject();
+		}
+
 #define BINJAD_ANALYSIS_TOOL(Type, Name) \
 	class Type final : public FileChildToolCall \
 	{ \
@@ -1080,7 +1119,13 @@ namespace binjad {
 			});
 			std::sort(references.dataRefs.begin(), references.dataRefs.end());
 			std::sort(references.typeRefs.begin(), references.typeRefs.end(), [](const auto& a, const auto& b) {
-				return a.name.GetString() < b.name.GetString();
+				const auto leftName = a.name.GetString();
+				const auto rightName = b.name.GetString();
+				if (leftName != rightName)
+					return leftName < rightName;
+				if (a.offset != b.offset)
+					return a.offset < b.offset;
+				return a.type < b.type;
 			});
 			const auto platform = state->view->GetDefaultPlatform();
 			rapidjson::StringBuffer buffer;
@@ -1132,6 +1177,7 @@ namespace binjad {
 			{
 				const auto name = reference.name.GetString();
 				const auto type = state->view->GetTypeByName(reference.name);
+				const auto offset = HexAddress(reference.offset);
 				writer.StartObject();
 				writer.Key("name");
 				writer.String(name.data(), name.size());
@@ -1140,6 +1186,23 @@ namespace binjad {
 					writer.String(TypeClassName(type->GetClass()));
 				else
 					writer.Null();
+				writer.Key("offset");
+				writer.String(offset.data(), offset.size());
+				writer.Key("referenceType");
+				switch (reference.type)
+				{
+				case DirectTypeReferenceType:
+					writer.String("direct");
+					break;
+				case IndirectTypeReferenceType:
+					writer.String("indirect");
+					break;
+				default:
+					writer.String("unknown");
+					writer.Key("rawReferenceType");
+					writer.Uint(static_cast<unsigned>(reference.type));
+					break;
+				}
 				writer.EndObject();
 			}
 			writer.EndArray();
@@ -1263,21 +1326,11 @@ namespace binjad {
 				infoData = v->value.GetUint64();
 			state->view->AddUserSection(
 				name, start, length, semantics, typeName, alignment, entrySize, linkedSection, infoSection, infoData);
-			const auto startText = HexAddress(start), endText = HexAddress(start + length);
 			rapidjson::StringBuffer buffer;
 			rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
 			writer.StartObject();
 			writer.Key("section");
-			writer.StartObject();
-			writer.Key("name");
-			writer.String(name.data(), name.size());
-			writer.Key("start");
-			writer.String(startText.data(), startText.size());
-			writer.Key("end");
-			writer.String(endText.data(), endText.size());
-			writer.Key("semantics");
-			writer.String(SectionSemanticsName(semantics));
-			writer.EndObject();
+			WriteSectionDescriptor(writer, state->view->GetSectionByName(name));
 			writer.EndObject();
 			ipc::Reply reply;
 			reply.set_success(true);
@@ -1380,21 +1433,11 @@ namespace binjad {
 			else
 				state->view->AddUserSection(
 					name, start, length, semantics, typeName, alignment, entrySize, linked, info, infoData);
-			const auto startText = HexAddress(start), endText = HexAddress(start + length);
 			rapidjson::StringBuffer buffer;
 			rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
 			writer.StartObject();
 			writer.Key("section");
-			writer.StartObject();
-			writer.Key("name");
-			writer.String(name.data(), name.size());
-			writer.Key("start");
-			writer.String(startText.data(), startText.size());
-			writer.Key("end");
-			writer.String(endText.data(), endText.size());
-			writer.Key("semantics");
-			writer.String(SectionSemanticsName(semantics));
-			writer.EndObject();
+			WriteSectionDescriptor(writer, state->view->GetSectionByName(name));
 			writer.EndObject();
 			ipc::Reply reply;
 			reply.set_success(true);
@@ -1432,11 +1475,40 @@ namespace binjad {
 				return BinaryNinja::Ref<BinaryNinja::Segment>();
 			};
 			const auto name = command.name();
+			std::string operation(name);
+			if (name == "bn_memory_map_preview")
+			{
+				const auto selected = a.FindMember("operation");
+				if (selected == a.MemberEnd() || !selected->value.IsString())
+					throw std::invalid_argument("operation is required");
+				operation.assign(selected->value.GetString(), selected->value.GetStringLength());
+				auto allowed = [&](std::string_view key) {
+					if (key == "binaryView" || key == "operation")
+						return true;
+					if (operation == "create")
+						return key == "start" || key == "length" || key == "dataOffset" || key == "dataLength"
+							|| key == "flags";
+					if (operation == "modify")
+						return key == "start" || key == "length" || key == "newStart" || key == "newLength"
+							|| key == "dataOffset" || key == "dataLength" || key == "flags";
+					if (operation == "delete")
+						return key == "start" || key == "length";
+					if (operation == "rebase")
+						return key == "address";
+					return false;
+				};
+				for (auto member = a.MemberBegin(); member != a.MemberEnd(); ++member)
+				{
+					const std::string_view key(member->name.GetString(), member->name.GetStringLength());
+					if (!allowed(key))
+						throw std::invalid_argument(std::string(key) + " is not valid for operation " + operation);
+				}
+			}
 			rapidjson::StringBuffer buffer;
 			rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
 			writer.StartObject();
 			writer.Key("operation");
-			writer.String(name.data(), name.size());
+			writer.String(operation.data(), operation.size());
 			if (name == "bn_function_delete")
 			{
 				const auto function = ResolveFunction(command, a);
@@ -1511,45 +1583,39 @@ namespace binjad {
 			}
 			else
 			{
-				const auto operation = name == "bn_memory_map_preview" ?
-					std::string(a["operation"].GetString(), a["operation"].GetStringLength()) :
-					name;
+				const bool preview = name == "bn_memory_map_preview";
 				const bool
 					remove = operation == "delete" || operation == "bn_segment_delete",
 					modify = operation == "modify" || operation == "bn_segment_modify",
 					create = operation == "create" || operation == "bn_segment_create", rebase = operation == "rebase";
 				if (!remove && !modify && !create && !rebase)
 					throw std::invalid_argument("operation must be create, modify, delete, or rebase");
-				if (name == "bn_memory_map_preview")
+				if (preview)
 				{
 					writer.Key("valid");
 					writer.Bool(true);
 					writer.Key("mutated");
 					writer.Bool(false);
-					if (rebase)
-					{
-						const auto address = parse("address");
-						const auto text = HexAddress(address);
-						writer.Key("address");
-						writer.String(text.data(), text.size());
-					}
-					else
-					{
-						const auto start = parse("start"), length = parse("length");
-						writer.Key("existingUserSegment");
-						writer.Bool(static_cast<bool>(exactSegment(start, length)));
-					}
+				}
+				if (rebase)
+				{
+					const auto address = parse("address");
+					const auto text = HexAddress(address);
+					writer.Key("address");
+					writer.String(text.data(), text.size());
 				}
 				else
 				{
 					const auto start = parse("start"), length = parse("length");
 					if (length == 0)
 						throw std::invalid_argument("segment length must be nonzero");
-					if ((remove || modify) && !exactSegment(start, length))
+					if (length > std::numeric_limits<std::uint64_t>::max() - start)
+						throw std::invalid_argument("segment range overflows");
+					const auto existing = exactSegment(start, length);
+					if ((remove || modify) && !existing)
 						throw std::invalid_argument("exact user segment not found");
-					if (remove || modify)
-						state->view->RemoveUserSegment(start, length);
-					std::uint64_t resultStart = start, resultLength = length;
+					std::uint64_t resultStart = start, resultLength = length, dataOffset = 0, dataLength = 0;
+					unsigned flags = 0;
 					if (!remove)
 					{
 						if (modify)
@@ -1557,28 +1623,97 @@ namespace binjad {
 							resultStart = parse("newStart", false, start);
 							resultLength = parse("newLength", false, length);
 						}
-						const auto dataOffset = parse("dataOffset"), dataLength = parse("dataLength");
+						dataOffset = parse("dataOffset");
+						dataLength = parse("dataLength");
 						if (resultLength == 0 || dataLength > resultLength)
 							throw std::invalid_argument("segment lengths are invalid");
-						const auto flags = a["flags"].GetUint();
-						state->view->AddUserSegment(resultStart, resultLength, dataOffset, dataLength, flags);
-						writer.Key("flags");
-						writer.Uint(flags);
+						if (resultLength > std::numeric_limits<std::uint64_t>::max() - resultStart)
+							throw std::invalid_argument("replacement segment range overflows");
+						if (dataLength > std::numeric_limits<std::uint64_t>::max() - dataOffset)
+							throw std::invalid_argument("segment data range overflows");
+						const auto flagValue = a.FindMember("flags");
+						if (flagValue == a.MemberEnd() || !flagValue->value.IsUint())
+							throw std::invalid_argument("flags is required");
+						flags = flagValue->value.GetUint();
 					}
-					const auto text = HexAddress(resultStart);
+					if (!preview)
+					{
+						if (remove || modify)
+							state->view->RemoveUserSegment(start, length);
+						if (!remove)
+							state->view->AddUserSegment(resultStart, resultLength, dataOffset, dataLength, flags);
+					}
+					const auto outputStart = preview && modify ? start : resultStart;
+					const auto outputLength = preview && modify ? length : resultLength;
+					const auto text = HexAddress(outputStart), resultText = HexAddress(resultStart);
 					writer.Key("start");
 					writer.String(text.data(), text.size());
 					writer.Key("length");
-					writer.Uint64(resultLength);
-					writer.Key("deleted");
-					writer.Bool(remove);
+					writer.Uint64(outputLength);
+					if (preview)
+					{
+						writer.Key("existingUserSegment");
+						writer.Bool(static_cast<bool>(existing));
+						if (modify)
+						{
+							writer.Key("newStart");
+							writer.String(resultText.data(), resultText.size());
+							writer.Key("newLength");
+							writer.Uint64(resultLength);
+						}
+						if (!remove)
+						{
+							writer.Key("dataOffset");
+							writer.Uint64(dataOffset);
+							writer.Key("dataLength");
+							writer.Uint64(dataLength);
+							writer.Key("flags");
+							writer.Uint(flags);
+							writer.Key("flagNames");
+							writer.StartArray();
+							for (const auto name : SegmentFlagNames(flags))
+								writer.String(name.data(), name.size());
+							writer.EndArray();
+						}
+					}
+					else if (!remove)
+					{
+						writer.Key("flags");
+						writer.Uint(flags);
+						writer.Key("flagNames");
+						writer.StartArray();
+						for (const auto name : SegmentFlagNames(flags))
+							writer.String(name.data(), name.size());
+						writer.EndArray();
+					}
+					if (preview)
+					{
+						writer.Key("wouldDelete");
+						writer.Bool(remove);
+					}
+					else
+					{
+						writer.Key("deleted");
+						writer.Bool(remove);
+					}
 				}
 			}
 			writer.Key("nextAction");
-			writer.String(
-				"Run bn_analysis_update_and_wait when analysis semantics changed, then bn_binary_view_save to persist "
-				"the "
-				"mutation.");
+			if (name == "bn_memory_map_preview")
+			{
+				if (operation == "create")
+					writer.String("Call bn_segment_create with the validated values to mutate the BinaryView.");
+				else if (operation == "modify")
+					writer.String("Call bn_segment_modify with the validated values to mutate the BinaryView.");
+				else if (operation == "delete")
+					writer.String("Call bn_segment_delete with the validated values to mutate the BinaryView.");
+				else
+					writer.String("Call bn_binary_view_rebase with the validated address to mutate the BinaryView.");
+			}
+			else
+				writer.String(
+					"Run bn_analysis_update_and_wait when analysis semantics changed, then bn_binary_view_save to "
+					"persist the mutation.");
 			writer.EndObject();
 			ipc::Reply reply;
 			reply.set_success(true);
@@ -1806,13 +1941,19 @@ namespace binjad {
 				{
 					const auto address = addressArg();
 					const auto typeName = bookmark ? std::string("Bookmarks") : stringArg("type");
+					const auto requestedIcon = bookmark ? std::string("B") : stringArg("icon", false);
 					auto type = state->view->GetTagType(typeName, bookmark ? BookmarksTagType : UserTagType);
+					bool tagTypeCreated = false;
 					if (!type)
 					{
-						type = new BinaryNinja::TagType(state->view.GetPtr(), typeName,
-							bookmark ? "B" : stringArg("icon", false), true, bookmark ? BookmarksTagType : UserTagType);
+						type = new BinaryNinja::TagType(state->view.GetPtr(), typeName, requestedIcon, true,
+							bookmark ? BookmarksTagType : UserTagType);
 						state->view->AddTagType(type);
+						tagTypeCreated = true;
 					}
+					else if (!bookmark && a.HasMember("icon") && type->GetIcon() != requestedIcon)
+						throw std::invalid_argument(
+							"tag type already exists with a different icon; omit icon to reuse the existing type");
 					const auto data = bookmark ? stringArg("note", false) : stringArg("data", false);
 					const auto tag = state->view->CreateUserDataTag(address, type, data, false);
 					const auto id = tag->GetId(), text = HexAddress(address);
@@ -1824,6 +1965,14 @@ namespace binjad {
 					writer.String(typeName.data(), typeName.size());
 					writer.Key(bookmark ? "note" : "data");
 					writer.String(data.data(), data.size());
+					if (!bookmark)
+					{
+						const auto icon = type->GetIcon();
+						writer.Key("icon");
+						writer.String(icon.data(), icon.size());
+						writer.Key("tagTypeCreated");
+						writer.Bool(tagTypeCreated);
+					}
 				}
 				else if (name.ends_with("_delete"))
 				{
@@ -1866,8 +2015,11 @@ namespace binjad {
 					for (std::size_t i = offset; i < end; ++i)
 					{
 						const auto& ref = refs[i];
-						const auto id = ref.tag->GetId(), text = HexAddress(ref.addr),
-								   type = ref.tag->GetType()->GetName(), data = ref.tag->GetData();
+						const auto tagType = ref.tag->GetType();
+						const auto id = ref.tag->GetId();
+						const auto text = HexAddress(ref.addr);
+						const auto type = tagType->GetName();
+						const auto data = ref.tag->GetData();
 						writer.StartObject();
 						writer.Key("id");
 						writer.String(id.data(), id.size());
@@ -1877,6 +2029,12 @@ namespace binjad {
 						writer.String(type.data(), type.size());
 						writer.Key(bookmark ? "note" : "data");
 						writer.String(data.data(), data.size());
+						if (!bookmark)
+						{
+							const auto icon = tagType->GetIcon();
+							writer.Key("icon");
+							writer.String(icon.data(), icon.size());
+						}
 						writer.EndObject();
 					}
 					writer.EndArray();

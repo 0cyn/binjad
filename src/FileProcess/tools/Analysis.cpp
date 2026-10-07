@@ -1761,18 +1761,11 @@ namespace binjad {
 				writer.Key("dataEnd");
 				writer.String(dataEnd.data(), dataEnd.size());
 				writer.Key("flags");
+				writer.Uint(flags);
+				writer.Key("flagNames");
 				writer.StartArray();
-				for (const auto& [flag, name] :
-					{std::pair {SegmentReadable, "SegmentReadable"}, std::pair {SegmentWritable, "SegmentWritable"},
-						std::pair {SegmentExecutable, "SegmentExecutable"},
-						std::pair {SegmentContainsData, "SegmentContainsData"},
-						std::pair {SegmentContainsCode, "SegmentContainsCode"},
-						std::pair {SegmentDenyWrite, "SegmentDenyWrite"},
-						std::pair {SegmentDenyExecute, "SegmentDenyExecute"}})
-				{
-					if ((flags & flag) != 0)
-						writer.String(name);
-				}
+				for (const auto name : SegmentFlagNames(flags))
+					writer.String(name.data(), name.size());
 				writer.EndArray();
 				writer.Key("readable");
 				writer.Bool((flags & SegmentReadable) != 0);
@@ -2108,6 +2101,8 @@ namespace binjad {
 					throw std::invalid_argument("relocation range length is invalid");
 				end = *start + length;
 			}
+			if (start && end && *end < *start)
+				throw std::invalid_argument("relocation range end must not precede start");
 			std::vector<std::pair<std::uint64_t, std::uint64_t>> ranges;
 			if (address)
 				ranges = state->view->GetRelocationRangesAtAddress(*address);
@@ -2343,8 +2338,12 @@ namespace binjad {
 				std::string kind;
 				std::string text;
 				std::string function;
+				std::string level {};
 			};
 			std::vector<Match> matches;
+			std::string searchMode;
+			std::string constantLevel;
+			bool constantAnalysisComplete = false;
 			const auto name = command.name();
 			if (name == "bn_comment_list" || name == "bn_comment_search")
 			{
@@ -2359,8 +2358,53 @@ namespace binjad {
 			else if (name == "bn_memory_search")
 			{
 				const auto pattern = stringArgument("pattern");
-				state->view->Search(
-					pattern, [](std::size_t, std::size_t) { return true; },
+				if (pattern.empty())
+					throw std::invalid_argument("pattern must not be empty");
+				if (end == start)
+					throw std::invalid_argument("end must be greater than start");
+				auto booleanArgument = [&](const char* argument, bool fallback) {
+					const auto value = arguments.FindMember(argument);
+					if (value == arguments.MemberEnd())
+						return fallback;
+					if (!value->value.IsBool())
+						throw std::invalid_argument(std::string(argument) + " must be a boolean");
+					return value->value.GetBool();
+				};
+				const auto raw = booleanArgument("raw", false);
+				const auto searchCaseSensitive = booleanArgument("caseSensitive", false);
+				const auto overlap = booleanArgument("overlap", false);
+				std::uint64_t alignment = 1;
+				if (const auto value = arguments.FindMember("alignment"); value != arguments.MemberEnd())
+				{
+					if (!value->value.IsUint64())
+						throw std::invalid_argument("alignment must be a positive integer");
+					alignment = value->value.GetUint64();
+				}
+				if (alignment == 0 || (alignment & (alignment - 1)) != 0)
+					throw std::invalid_argument("alignment must be a positive power of two");
+
+				rapidjson::StringBuffer searchBuffer;
+				rapidjson::Writer<rapidjson::StringBuffer> searchWriter(searchBuffer);
+				searchWriter.StartObject();
+				searchWriter.Key("pattern");
+				searchWriter.String(pattern.data(), pattern.size());
+				searchWriter.Key("start");
+				searchWriter.Uint64(start);
+				searchWriter.Key("end");
+				searchWriter.Uint64(end == std::numeric_limits<std::uint64_t>::max() ? end : end - 1);
+				searchWriter.Key("raw");
+				searchWriter.Bool(raw);
+				searchWriter.Key("ignoreCase");
+				searchWriter.Bool(!searchCaseSensitive);
+				searchWriter.Key("overlap");
+				searchWriter.Bool(overlap);
+				searchWriter.Key("align");
+				searchWriter.Uint64(alignment);
+				searchWriter.EndObject();
+				const std::string searchQuery(searchBuffer.GetString(), searchBuffer.GetSize());
+				searchMode = state->view->DetectSearchMode(searchQuery);
+				const auto searched = state->view->Search(
+					searchQuery, [](std::size_t, std::size_t) { return true; },
 					[&](std::uint64_t address, const BinaryNinja::DataBuffer& match) {
 						if (address < start || address >= end)
 							return true;
@@ -2368,6 +2412,8 @@ namespace binjad {
 						matches.push_back({address, "memory", HexBytes({bytes, match.GetLength()}), {}});
 						return true;
 					});
+				if (!searched)
+					throw std::runtime_error("Binary Ninja memory search failed");
 			}
 			else if (name == "bn_instruction_search")
 			{
@@ -2389,13 +2435,74 @@ namespace binjad {
 				std::string error;
 				if (!BinaryNinja::BinaryView::ParseExpression(state->view, expression, constant, 0, error))
 					throw std::invalid_argument(error.empty() ? "invalid constant expression" : error);
+				if (end == start)
+					throw std::invalid_argument("end must be greater than start");
+				constantLevel = stringArgument("level", false);
+				if (constantLevel.empty())
+					constantLevel = "llil";
+				if (constantLevel != "all" && constantLevel != "disassembly" && constantLevel != "llil"
+					&& constantLevel != "mlil" && constantLevel != "hlil")
+					throw std::invalid_argument("level must be all, disassembly, llil, mlil, or hlil");
+				constantAnalysisComplete = state->view->HasInitialAnalysis()
+					&& state->view->GetAnalysisState() == IdleState && !state->view->AnalysisIsAborted();
+				if ((constantLevel == "all" || constantLevel == "mlil" || constantLevel == "hlil")
+					&& !constantAnalysisComplete)
+					throw std::runtime_error(
+						"complete analysis is required for this constant-search level; call "
+						"bn_analysis_update_and_wait");
 				const auto settings = BinaryNinja::DisassemblySettings::GetDefaultLinearSettings();
-				state->view->FindAllConstant(
-					start, end, constant, settings, NormalFunctionGraph, [](std::size_t, std::size_t) { return true; },
-					[&](std::uint64_t address, const BinaryNinja::LinearDisassemblyLine& line) {
-						matches.push_back({address, "constant", TokenText(line.contents.tokens), {}});
-						return true;
+				auto containsConstant = [&](const std::vector<BinaryNinja::InstructionTextToken>& tokens) {
+					return std::any_of(tokens.begin(), tokens.end(), [&](const auto& token) {
+						return BinaryNinja::DisassemblyTextRenderer::IsIntegerToken(token.type)
+							&& token.value == constant;
 					});
+				};
+				auto addBlocks =
+					[&](const BinaryNinja::Ref<BinaryNinja::Function>& function, std::string_view level,
+						const std::vector<BinaryNinja::Ref<BinaryNinja::BasicBlock>>& blocks) {
+						const auto functionName = function->GetSymbol()->GetFullName();
+						for (const auto& block : blocks)
+							for (const auto& line : block->GetDisassemblyText(settings))
+								if (line.addr >= start && line.addr < end && containsConstant(line.tokens))
+									matches.push_back({line.addr, "constant", TokenText(line.tokens), functionName,
+										std::string(level)});
+					};
+				auto addLevel = [&](const BinaryNinja::Ref<BinaryNinja::Function>& function, std::string_view level) {
+					if (level == "disassembly")
+						addBlocks(function, level, function->GetBasicBlocks());
+					else if (level == "llil")
+					{
+						if (const auto il = function->GetLowLevelILIfAvailable())
+							addBlocks(function, level, il->GetBasicBlocks());
+					}
+					else if (level == "mlil")
+					{
+						if (const auto il = function->GetMediumLevelILIfAvailable())
+							addBlocks(function, level, il->GetBasicBlocks());
+					}
+					else if (level == "hlil")
+					{
+						if (const auto il = function->GetHighLevelILIfAvailable())
+							addBlocks(function, level, il->GetBasicBlocks());
+					}
+				};
+				for (const auto& function : state->view->GetAnalysisFunctionList())
+				{
+					if (constantLevel == "all")
+					{
+						addLevel(function, "hlil");
+						addLevel(function, "mlil");
+						addLevel(function, "llil");
+						addLevel(function, "disassembly");
+					}
+					else
+						addLevel(function, constantLevel);
+				}
+				std::set<std::uint64_t> seenAddresses;
+				matches.erase(
+					std::remove_if(matches.begin(), matches.end(),
+						[&](const auto& match) { return !seenAddresses.insert(match.address).second; }),
+					matches.end());
 			}
 			else if (name == "bn_il_search")
 			{
@@ -2493,6 +2600,20 @@ namespace binjad {
 			rapidjson::StringBuffer buffer;
 			rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
 			writer.StartObject();
+			if (!searchMode.empty())
+			{
+				writer.Key("searchMode");
+				writer.String(searchMode.data(), searchMode.size());
+			}
+			if (!constantLevel.empty())
+			{
+				writer.Key("level");
+				writer.String(constantLevel.data(), constantLevel.size());
+				writer.Key("analysisComplete");
+				writer.Bool(constantAnalysisComplete);
+				writer.Key("partial");
+				writer.Bool(!constantAnalysisComplete);
+			}
 			writer.Key("matches");
 			writer.StartArray();
 			for (std::size_t index = offset; index < finish; ++index)
@@ -2506,6 +2627,11 @@ namespace binjad {
 				writer.String(match.kind.data(), match.kind.size());
 				writer.Key("text");
 				writer.String(match.text.data(), match.text.size());
+				if (!match.level.empty())
+				{
+					writer.Key("level");
+					writer.String(match.level.data(), match.level.size());
+				}
 				if (!match.function.empty())
 				{
 					writer.Key("function");

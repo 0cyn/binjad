@@ -66,7 +66,9 @@ namespace binjad::mcp::docs {
 			"bn_binary_view_load_settings, then pass fully qualified loader.platform, loader.imageBase, and "
 			"loader.entryPointOffset options to bn_binary_view_open. Thumb vector values have bit zero set, but Mapped "
 			"entry/function addresses use the aligned code address. loader.segments and loader.sections are serialized "
-			"JSON strings.\n"
+			"JSON strings. Their start fields and loader.entryPointOffset are offsets relative to loader.imageBase; "
+			"loader.segments data_offset is relative to the source file. For example, imageBase 0x400000 and start 0 "
+			"map at 0x400000.\n"
 			"Rules: every view tool needs binaryView; query first, use small limits, and continue with nextOffset; "
 			"async job results are one-shot; direct C types use definition, while source+type selects a parsed "
 			"declaration; after function/variable mutation follow nextAction; set prototypes before variable names; "
@@ -85,7 +87,8 @@ namespace binjad::mcp::docs {
 		constexpr std::string_view kLoadOptions =
 			"Candidate-specific Binary Ninja load settings. Call bn_binary_view_load_settings first; Raw accepts none, "
 			"while Mapped exposes fully qualified loader.* keys and requires serialized JSON strings for segments and "
-			"sections.";
+			"sections. Mapped segment and section starts and entryPointOffset are relative to imageBase; segment "
+			"data_offset is relative to the source file.";
 		constexpr std::string_view kDiffPrimary = "Materialized primary BinaryView to compare and mutate.";
 		constexpr std::string_view kDiffSecondary =
 			"Secondary BinaryView reference when project is omitted, or project-relative BNDB path when project is "
@@ -233,7 +236,7 @@ namespace binjad::mcp::docs {
 			{"bn_analysis_update_async", {"Files and views", "Start analysis for a materialized BinaryView as an immediately detached job.", {}}},
 			{"bn_binary_header_info", {"Header Parsing", "Inspect generic and format-specific Mach-O, ELF, or PE header identity, layout, runtime, and security fields.", {}}},
 			{"bn_binary_view_list", {"Files and views", "List BinaryView candidates in the current analysis session.", {}}},
-			{"bn_binary_view_load_settings", {"Files and views", "Return the authoritative Binary Ninja load-settings schema and effective settings for one BinaryView candidate.", {}}},
+			{"bn_binary_view_load_settings", {"Files and views", "Return the authoritative Binary Ninja load-settings schema, effective settings, and explicit Mapped coordinate semantics for one BinaryView candidate.", {}}},
 			{"bn_binary_view_open", {"Files and views", "Materialize an explicit candidate; inspect load settings first, use Mapped for raw firmware, and use analyze:false for reused BNDB analysis.", {}}},
 			{"bn_binary_view_rebase", {"Files and views", "Rebase an explicit BinaryView to a new base address.", {}}},
 			{"bn_binary_view_save", {"Files and views", "Save and commit an explicit BinaryView.", {}}},
@@ -249,10 +252,10 @@ namespace binjad::mcp::docs {
 			{"bn_comment_search", {"Data and references", "Search global address comments case-insensitively.", {}}},
 			{"bn_comment_set", {"Data and references", "Set a non-empty comment at an address.", {}}},
 			{"bn_compute_status", {"Sessions and compute", "Report daemon analysis capacity and allocation.", {}}},
-			{"bn_constant_search", {"Data and references", "Search globally for rendered uses of one constant or address value.", {}}},
+			{"bn_constant_search", {"Data and references", "Search globally for exact rendered integer-token uses of one constant or address value; defaults to LLIL.", {}}},
 			{"bn_data_at", {"Data and references", "Return compact data context at an address.", {}}},
 			{"bn_data_variable_define", {"Data and references", "Define a typed user data variable; use definition for a direct type, or source plus optional type to select a parsed declaration.", {}}},
-			{"bn_data_variable_list", {"Data and references", "List typed data variables with compact rows.", {}}},
+			{"bn_data_variable_list", {"Data and references", "List typed data variables with compact rows using no selector, one exact address, or one half-open range.", {}}},
 			{"bn_data_variable_undefine", {"Data and references", "Remove an exact data variable.", {}}},
 			{"bn_data_xrefs_from", {"Data and references", "List addresses referenced by data values stored at an address or range; code instruction references are excluded.", {}}},
 			{"bn_data_xrefs_to", {"Data and references", "List data locations that reference a target address or range; code instruction references are excluded.", {}}},
@@ -292,15 +295,17 @@ namespace binjad::mcp::docs {
 			{"bn_debugger_step_return_and_wait", {"Debugger", "Run a bounded debugger control operation as an attached or detached job.", {}}},
 			{"bn_debugger_thread_list", {"Debugger", "List debugger target state.", {}}},
 			{"bn_debugger_thread_set", {"Debugger", "Select the active debugger target thread.", {}}},
-			{"bn_diff_apply_from_secondary", {"Diffing", "Explicitly invoke Google BinDiff's native metadata transfer for one exact match, mutating only the primary view.", {}}},
-			{"bn_diff_function_matches", {"Diffing", "List Google BinDiff matches for one primary function.", {}}},
+			{"bn_diff_apply_from_secondary", {"Diffing", "Explicitly invoke Google BinDiff's native symbol and function-type transfer for one exact match, mutating only the primary view and returning before, after, source, and changed-field readback.", {}}},
+			{"bn_diff_function_matches", {"Diffing", "List Google BinDiff matches for one primary function with query, inclusive 0-through-255 score thresholds, deterministic sorting, pagination, and effective score metadata.", {}}},
 			{"bn_diff_match_info", {"Diffing", "Return one exact primary-to-secondary function match.", {}}},
-			{"bn_diff_match_list", {"Diffing", "List cached function matches with query, metric thresholds, deterministic sorting, and pagination.", {}}},
+			{"bn_diff_match_list", {"Diffing", "List cached function matches with query, inclusive 0-through-255 score thresholds, deterministic sorting, pagination, and effective score metadata.", {}}},
 			{"bn_diff_port_name_from_secondary", {"Diffing", "Explicitly copy one matched secondary function name onto the primary function.", {}}},
-			{"bn_diff_port_names_from_secondary", {"Diffing", "Copy high-confidence secondary names onto auto-named primary functions while preserving existing primary names.", {}}},
+			{"bn_diff_port_names_from_secondary", {"Diffing", "Copy high-confidence secondary names onto auto-named primary functions while preserving existing primary names; return each decision with its scores and effective thresholds.", {}}},
 			{"bn_diff_primary_unmatched_list", {"Diffing", "List unmatched primary functions with deterministic sorting and pagination.", {}}},
-			{"bn_diff_run_project", {"Diffing", "Run a job-backed Google BinDiff comparison against a project-relative secondary BNDB; results target the primary view.", {}}},
-			{"bn_diff_run_view", {"Diffing", "Run a job-backed Google BinDiff comparison after saving an open secondary BinaryView to a temporary BNDB; results target the primary view.", {}}},
+			{"bn_diff_run_project", {"Diffing", "Run an attached Google BinDiff comparison against a project-relative secondary BNDB. It returns a terminal summary when complete before jobs.detach_after_seconds, or a detached job otherwise. An attached SSE disconnect requests cancellation. For a returned job, poll bn_job_info no more than every ten seconds and consume its terminal result once with bn_job_result. Results target the primary view.", {}}},
+			{"bn_diff_run_project_async", {"Diffing", "Start a Google BinDiff comparison against a project-relative secondary BNDB and return its detached job immediately. Client disconnect does not cancel it. Poll bn_job_info no more than every ten seconds and consume its terminal result once with bn_job_result. Results target the primary view.", {}}},
+			{"bn_diff_run_view", {"Diffing", "Run an attached Google BinDiff comparison after saving an open secondary BinaryView to a temporary read-only BNDB. It returns a terminal summary when complete before jobs.detach_after_seconds, or a detached job otherwise. An attached SSE disconnect requests cancellation. For a returned job, poll bn_job_info no more than every ten seconds and consume its terminal result once with bn_job_result. Results target the primary view.", {}}},
+			{"bn_diff_run_view_async", {"Diffing", "Start a Google BinDiff comparison after saving an open secondary BinaryView to a temporary read-only BNDB and return its detached job immediately. Client disconnect does not cancel it. Poll bn_job_info no more than every ten seconds and consume its terminal result once with bn_job_result. Results target the primary view.", {}}},
 			{"bn_diff_secondary_unmatched_list", {"Diffing", "List unmatched secondary functions with deterministic sorting and pagination.", {}}},
 			{"bn_diff_summary", {"Diffing", "Summarize one cached Google BinDiff comparison with matched/unmatched counts plus exact/changed and score aggregates.", {}}},
 			{"bn_elf_dynamic_entry_list", {"Header Parsing", "List parsed ELF dynamic entries and resolve string-valued tags such as NEEDED, SONAME, RPATH, and RUNPATH.", {}}},
@@ -355,13 +360,13 @@ namespace binjad::mcp::docs {
 			{"bn_local_project_root_list", {"Projects", "List configured project roots by config-order index without exposing filesystem paths.", {}}},
 			{"bn_local_project_update", {"Projects", "Update local project metadata.", {}}},
 			{"bn_macho_load_command_list", {"Header Parsing", "List parsed Mach-O load commands with command-specific fields.", {}}},
-			{"bn_memory_map_preview", {"Memory and strings", "Preview a segment or rebase operation without mutating the BinaryView.", {}}},
+			{"bn_memory_map_preview", {"Memory and strings", "Fully validate a segment create, modify, delete, or rebase request without mutating the BinaryView.", {}}},
 			{"bn_memory_read", {"Memory and strings", "Read mapped bytes as lowercase hexadecimal.", {}}},
-			{"bn_memory_search", {"Data and references", "Search mapped bytes with Binary Ninja advanced binary-search syntax.", {}}},
+			{"bn_memory_search", {"Data and references", "Search mapped bytes with Binary Ninja auto-detected FlexHex, byte-regex, or raw-string modes.", {}}},
 			{"bn_metadata_delete", {"Other", "Delete one persistent custom BinaryView metadata value in the binjad.user namespace.", {}}},
 			{"bn_metadata_get", {"Other", "Read one persistent custom BinaryView metadata value in the binjad.user namespace.", {}}},
 			{"bn_metadata_set", {"Other", "Store one arbitrary JSON custom BinaryView metadata value in the binjad.user namespace.", {}}},
-			{"bn_open_item_close", {"Files and views", "Close an open item.", {}}},
+			{"bn_open_item_close", {"Files and views", "Close an open item only when it is clean, or explicitly discard its uncommitted state.", {}}},
 			{"bn_open_item_list", {"Files and views", "List open items owned by this bearer token across concurrent analysis sessions; close only items created by your workflow.", {}}},
 			{"bn_open_item_open", {"Files and views", "Discover BinaryView candidates for an authorized path or project file; call bn_binary_view_open before using a candidate.", {}}},
 			{"bn_pe_data_directory_list", {"Header Parsing", "List parsed PE optional-header data directories with names, RVAs, mapped addresses, and sizes.", {}}},
@@ -370,11 +375,11 @@ namespace binjad::mcp::docs {
 			{"bn_project_json_read", {"Projects", "Navigate a project JSON file by RFC 6901 pointer; paginate object keys or array indexes without expanding unrelated subtrees.", {}}},
 			{"bn_project_text_read", {"Projects", "Read a UTF-8 project file by lines with resumable pagination and an optional case-insensitive line query.", {}}},
 			{"bn_redo", {"Other", "Redo the last undone mutation for an explicit BinaryView's file.", {}}},
-			{"bn_relocation_list", {"Data and references", "List full relocation metadata.", {}}},
-			{"bn_section_create", {"Sections and segments", "Create a user-defined section.", {}}},
+			{"bn_relocation_list", {"Data and references", "List full relocation metadata using no selector, one exact address, or one half-open range.", {}}},
+			{"bn_section_create", {"Sections and segments", "Create a user-defined section and return its complete effective Binary Ninja descriptor.", {}}},
 			{"bn_section_delete", {"Sections and segments", "Delete an exact auto- or user-defined section.", {}}},
 			{"bn_section_list", {"Sections and segments", "List section ranges and semantics.", {}}},
-			{"bn_section_modify", {"Sections and segments", "Modify an exact auto- or user-defined section.", {}}},
+			{"bn_section_modify", {"Sections and segments", "Modify an exact auto- or user-defined section and return its complete effective Binary Ninja descriptor.", {}}},
 			{"bn_segment_create", {"Sections and segments", "Create a user mapped segment.", {}}},
 			{"bn_segment_delete", {"Sections and segments", "Delete one exact user mapped segment.", {}}},
 			{"bn_segment_list", {"Sections and segments", "List full mapped-segment metadata.", {}}},
@@ -395,9 +400,9 @@ namespace binjad::mcp::docs {
 			{"bn_symbol_list_at", {"Symbols and entries", "Return full symbol metadata at an exact address.", {}}},
 			{"bn_symbol_rename", {"Symbols and entries", "Rename one exactly selected symbol.", {}}},
 			{"bn_symbol_undefine", {"Symbols and entries", "Undefine one exactly selected user symbol.", {}}},
-			{"bn_tag_create", {"Other", "Create a persistent user data tag at an address, creating its tag type when needed.", {}}},
+			{"bn_tag_create", {"Other", "Create a persistent user data tag at an address, creating its shared tag type when needed and returning the actual type icon.", {}}},
 			{"bn_tag_delete", {"Other", "Delete one persistent user tag by its Binary Ninja tag id.", {}}},
-			{"bn_tag_list", {"Other", "List persistent user tags with optional type/data query filters.", {}}},
+			{"bn_tag_list", {"Other", "List persistent user tags with optional type/data query filters and each shared tag-type icon.", {}}},
 			{"bn_tools", {"Tool discovery", "Discover and call enabled binjad tools omitted from brokered discovery. Operations: categories; list(category, query?, offset?, limit?); describe(name); call(name, arguments?). Categories: core, project_management, function_analysis, binary_data, search, types, annotations, binary_editing, history, header_parsing, url_generation, diffing, kernel_cache, shared_cache, debugger. Use describe before call so the selected tool's arguments follow its exact schema.", {}}},
 			{"bn_transaction_begin", {"Other", "Begin one explicit undo transaction for an explicit BinaryView's open item.", {}}},
 			{"bn_transaction_commit", {"Other", "Commit the active transaction for an explicit BinaryView.", {}}},
@@ -415,7 +420,7 @@ namespace binjad::mcp::docs {
 			{"bn_type_union_create", {"Types", "Parse and define exactly one new union type.", {}}},
 			{"bn_type_union_modify", {"Types", "Parse and replace exactly one existing union type.", {}}},
 			{"bn_type_xrefs_from", {"Types", "List outgoing named-type references.", {}}},
-			{"bn_type_xrefs_to", {"Types", "List grouped incoming code, data, and type references.", {}}},
+			{"bn_type_xrefs_to", {"Types", "List grouped incoming code, data, and type references; type rows preserve member offsets and direct or indirect reference kinds.", {}}},
 			{"bn_undo", {"Other", "Undo the last committed mutation for an explicit BinaryView's file.", {}}},
 			{"bn_upload_cancel", {"Uploads", "Cancel and remove an inactive staged upload.", {}}},
 			{"bn_upload_commit", {"Uploads", "Commit a completed staged upload idempotently to its bound project.", {}}},
@@ -432,13 +437,84 @@ namespace binjad::mcp::docs {
 			const std::tuple<std::string_view, std::string_view, std::string_view> arguments[] {
 				{"bn_analysis_session_list", "limit", kPage50Response},
 				{"bn_open_item_open", "options", kLoadOptions},
+				{"bn_open_item_close", "unsavedChanges",
+					"Close policy: requireClean rejects uncommitted state and is the default; discard explicitly discards it. "
+					"Save an intended BinaryView with bn_binary_view_save before a clean close."},
 				{"bn_open_item_list", "limit", kPage50Response},
 				{"bn_binary_view_list", "limit", kPage50Response},
 				{"bn_function_list", "limit", "Defaults to 50; use query and continue with nextOffset."},
+				{"bn_constant_search", "level",
+					"Rendered representation to search: disassembly, llil, mlil, hlil, or all; defaults to llil. All "
+					"collapses equal addresses with HLIL, MLIL, LLIL, then disassembly precedence."},
+				{"bn_memory_search", "pattern",
+					"Binary Ninja auto-detects FlexHex, byte-regex, or Raw String mode. FlexHex accepts contiguous or "
+					"space-separated byte tokens from 0-9, a-f, A-F, and ?. Whitespace between byte tokens is optional. "
+					"?? or a whitespace-separated lone ? matches one full byte; ?X and X? match one nibble. A lone ? must "
+					"be whitespace-separated: c3 ? 55 is valid, but c3?55 is not. A valid byte regex selects Regex. A "
+					"pattern that is neither valid FlexHex nor valid regex falls back to Raw String. Set raw:true to force "
+					"literal matching."},
+				{"bn_memory_search", "start", "Inclusive start address expression; omit for the BinaryView start."},
+				{"bn_memory_search", "end",
+					"Exclusive end address expression; it must be greater than start; omit for the BinaryView end."},
+				{"bn_memory_search", "raw",
+					"Force literal Raw String mode; defaults to false. Use raw:true for literal text that looks like "
+					"FlexHex, such as deadbeef."},
+				{"bn_memory_search", "caseSensitive", "Use case-sensitive matching; defaults to false."},
+				{"bn_memory_search", "overlap", "Include overlapping matches; defaults to false."},
+				{"bn_memory_search", "alignment",
+					"Require each match address to use this positive power-of-two alignment; defaults to 1."},
+				{"bn_memory_map_preview", "operation", "Operation to validate: create, modify, delete, or rebase."},
+				{"bn_memory_map_preview", "start",
+					"Proposed segment start for create, or exact existing user-segment start for modify and delete."},
+				{"bn_memory_map_preview", "length",
+					"Proposed segment length for create, or exact existing user-segment length for modify and delete."},
+				{"bn_memory_map_preview", "newStart", "Optional replacement segment start for modify."},
+				{"bn_memory_map_preview", "newLength", "Optional replacement segment length for modify."},
+				{"bn_memory_map_preview", "dataOffset", "Source-file data offset required by create and modify."},
+				{"bn_memory_map_preview", "dataLength", "Source-file data length required by create and modify."},
+				{"bn_memory_map_preview", "address", "New BinaryView base address required by rebase."},
+				{"bn_memory_map_preview", "flags",
+					"Binary Ninja segment bitmask required by create and modify: Executable=1, Writable=2, Readable=4, "
+					"ContainsData=8, ContainsCode=16, DenyWrite=32, and DenyExecute=64. Combine bits with OR."},
+				{"bn_segment_create", "flags",
+					"Binary Ninja segment bitmask: Executable=1, Writable=2, Readable=4, ContainsData=8, "
+					"ContainsCode=16, DenyWrite=32, and DenyExecute=64. Combine bits with OR."},
+				{"bn_segment_modify", "flags",
+					"Replacement Binary Ninja segment bitmask: Executable=1, Writable=2, Readable=4, ContainsData=8, "
+					"ContainsCode=16, DenyWrite=32, and DenyExecute=64. Combine bits with OR."},
+				{"bn_section_create", "semantics",
+					"Binary Ninja section semantics; defaults to DefaultSectionSemantics."},
+				{"bn_section_create", "typeName",
+					"Free-form, format-specific section type such as PROGBITS, NOBITS, or REGULAR; an empty string means "
+					"no type label."},
+				{"bn_section_modify", "semantics",
+					"Replacement Binary Ninja section semantics; omit it to preserve the current value."},
+				{"bn_section_modify", "typeName",
+					"Replacement free-form, format-specific section type such as PROGBITS, NOBITS, or REGULAR; an empty "
+					"string clears the type label."},
+				{"bn_tag_create", "icon",
+					"Icon for a newly created shared tag type. Omit it to reuse an existing type icon. If supplied for an "
+					"existing type, it must exactly match that type's icon. An empty icon is valid."},
+				{"bn_data_variable_list", "address",
+					"Exact data-variable address; do not combine it with start, end, or length."},
+				{"bn_data_variable_list", "start",
+					"Inclusive range start; it can stand alone or be combined with either end or length."},
+				{"bn_data_variable_list", "end",
+					"Exclusive range end; it requires start and cannot be combined with length."},
+				{"bn_data_variable_list", "length",
+					"Half-open range length as an integer or expression; it requires start and cannot be combined with end."},
+				{"bn_relocation_list", "address",
+					"Exact relocation address; do not combine it with start, end, or length."},
+				{"bn_relocation_list", "start",
+					"Inclusive range start; it can stand alone or be combined with either end or length."},
+				{"bn_relocation_list", "end",
+					"Exclusive range end; it requires start, must not precede start, and cannot be combined with length."},
+				{"bn_relocation_list", "length",
+					"Half-open range length as an integer or expression; it requires start and cannot be combined with end."},
 				{"bn_local_project_file_download", "path", "Exact project-relative file path."},
 				{"bn_local_project_file_download_batch", "paths", "One through 1000 unique project-relative file paths."},
 				{"bn_local_project_folder_download", "path", "Exact project-relative folder path."},
-				{"bn_function_disassembly", "limit", kPage50},
+				{"bn_function_disassembly", "limit", kRendered200},
 				{"bn_function_decompile", "language",
 					"Omit for automatic Pseudo Objective-C on Objective-C methods, Pseudo Rust on Rust symbols, and Pseudo C "
 					"otherwise; explicit names are case/separator insensitive."},
@@ -464,24 +540,44 @@ namespace binjad::mcp::docs {
 				{"bn_diff_run_view", "primary", kDiffPrimary},
 				{"bn_diff_run_view", "secondary",
 					"Materialized secondary BinaryView to save as a temporary read-only BNDB."},
+				{"bn_diff_run_view_async", "primary", kDiffPrimary},
+				{"bn_diff_run_view_async", "secondary",
+					"Materialized secondary BinaryView to save as a temporary read-only BNDB."},
 				{"bn_diff_run_project", "primary", kDiffPrimary},
 				{"bn_diff_run_project", "secondary", kDiffSecondary},
 				{"bn_diff_run_project", "project", kDiffProject},
+				{"bn_diff_run_project_async", "primary", kDiffPrimary},
+				{"bn_diff_run_project_async", "secondary", kDiffSecondary},
+				{"bn_diff_run_project_async", "project", kDiffProject},
 				{"bn_diff_summary", "primary", kDiffPrimary},
 				{"bn_diff_summary", "secondary", kDiffSecondary},
 				{"bn_diff_summary", "project", kDiffProject},
 				{"bn_diff_match_list", "primary", kDiffPrimary},
 				{"bn_diff_match_list", "secondary", kDiffSecondary},
 				{"bn_diff_match_list", "project", kDiffProject},
+				{"bn_diff_match_list", "minSimilarity",
+					"Inclusive minimum similarity score from 0 through 255; 255 is strongest and binjad counts it as "
+					"exact. Defaults to 0."},
+				{"bn_diff_match_list", "minConfidence",
+					"Inclusive minimum provider-confidence score from 0 through 255; 255 is strongest. Defaults to 0."},
+				{"bn_diff_match_list", "limit", kPage50},
 				{"bn_diff_primary_unmatched_list", "primary", kDiffPrimary},
 				{"bn_diff_primary_unmatched_list", "secondary", kDiffSecondary},
 				{"bn_diff_primary_unmatched_list", "project", kDiffProject},
+				{"bn_diff_primary_unmatched_list", "limit", kPage50},
 				{"bn_diff_secondary_unmatched_list", "primary", kDiffPrimary},
 				{"bn_diff_secondary_unmatched_list", "secondary", kDiffSecondary},
 				{"bn_diff_secondary_unmatched_list", "project", kDiffProject},
+				{"bn_diff_secondary_unmatched_list", "limit", kPage50},
 				{"bn_diff_function_matches", "primary", kDiffPrimary},
 				{"bn_diff_function_matches", "secondary", kDiffSecondary},
 				{"bn_diff_function_matches", "project", kDiffProject},
+				{"bn_diff_function_matches", "minSimilarity",
+					"Inclusive minimum similarity score from 0 through 255; 255 is strongest and binjad counts it as "
+					"exact. Defaults to 0."},
+				{"bn_diff_function_matches", "minConfidence",
+					"Inclusive minimum provider-confidence score from 0 through 255; 255 is strongest. Defaults to 0."},
+				{"bn_diff_function_matches", "limit", kPage50},
 				{"bn_diff_match_info", "primary", kDiffPrimary},
 				{"bn_diff_match_info", "secondary", kDiffSecondary},
 				{"bn_diff_match_info", "project", kDiffProject},
@@ -494,6 +590,11 @@ namespace binjad::mcp::docs {
 				{"bn_diff_port_names_from_secondary", "primary", kDiffPrimary},
 				{"bn_diff_port_names_from_secondary", "secondary", kDiffSecondary},
 				{"bn_diff_port_names_from_secondary", "project", kDiffProject},
+				{"bn_diff_port_names_from_secondary", "minSimilarity",
+					"Inclusive minimum similarity score from 0 through 255; 255 is strongest and binjad counts it as "
+					"exact. Defaults to 255."},
+				{"bn_diff_port_names_from_secondary", "minConfidence",
+					"Inclusive minimum provider-confidence score from 0 through 255; 255 is strongest. Defaults to 255."},
 				{"bn_local_project_list", "limit", kPage50Response},
 				{"bn_local_project_file_list", "folder", "Exact project-relative folder path."},
 				{"bn_project_file_open", "options", kLoadOptions},
@@ -531,7 +632,9 @@ namespace binjad::mcp::docs {
 					"URL opens committed project contents and cannot include unsaved file-child state."},
 				{"bn_url_project_file", "expr", kUrlExpression},
 				{"bn_url_remote_file", "url",
-					"Percent-encoded absolute http, https, or file URL for Binary Ninja to download or open."},
+					"Absolute http, https, or file URL in standard hierarchical form, for example "
+					"https://example.com/sample.bin. Do not encode the scheme or :// separators; valid percent escapes inside "
+					"path, query, and fragment components are preserved."},
 				{"bn_url_remote_file", "expr", kUrlExpression},
 			};
 			// clang-format on
