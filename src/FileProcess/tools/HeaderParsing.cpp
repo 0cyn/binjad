@@ -2,6 +2,8 @@
 #include "../ToolCall.hpp"
 #include "../ToolSupport.hpp"
 
+#include <view/elf/elfview.h>
+
 #include <algorithm>
 #include <array>
 #include <iomanip>
@@ -541,74 +543,183 @@ namespace binjad {
 			std::string text;
 		};
 
-		std::string_view ElfDynamicTag(std::int64_t tag)
+		std::string_view ElfDynamicTag(std::int64_t tag, std::uint16_t machine)
 		{
+			const bool mips = machine == EM_MIPS || machine == EM_MIPS_RS3_LE || machine == EM_MIPS_X;
+			if (tag == ELF_DT_MIPS_RLD_VERSION)
+			{
+				if (machine == EM_SPARC || machine == EM_SPARC32PLUS || machine == EM_SPARCV9)
+					return "DT_SPARC_REGISTER";
+				return mips ? "DT_MIPS_RLD_VERSION" : "UNKNOWN";
+			}
+			if (tag >= ELF_DT_MIPS_TIME_STAMP && tag <= ELF_DT_MIPS_RLD_MAP_REL && !mips)
+				return "UNKNOWN";
 			switch (tag)
 			{
-			case 0:
+			case ELF_DT_NULL:
 				return "DT_NULL";
-			case 1:
+			case ELF_DT_NEEDED:
 				return "DT_NEEDED";
-			case 2:
+			case ELF_DT_PLTRELSZ:
 				return "DT_PLTRELSZ";
-			case 3:
+			case ELF_DT_PLTGOT:
 				return "DT_PLTGOT";
-			case 4:
+			case ELF_DT_HASH:
 				return "DT_HASH";
-			case 5:
+			case ELF_DT_STRTAB:
 				return "DT_STRTAB";
-			case 6:
+			case ELF_DT_SYMTAB:
 				return "DT_SYMTAB";
-			case 7:
+			case ELF_DT_RELA:
 				return "DT_RELA";
-			case 8:
+			case ELF_DT_RELASZ:
 				return "DT_RELASZ";
-			case 9:
+			case ELF_DT_RELAENT:
 				return "DT_RELAENT";
-			case 10:
+			case ELF_DT_STRSZ:
 				return "DT_STRSZ";
-			case 11:
+			case ELF_DT_SYMENT:
 				return "DT_SYMENT";
-			case 12:
+			case ELF_DT_INIT:
 				return "DT_INIT";
-			case 13:
+			case ELF_DT_FINI:
 				return "DT_FINI";
-			case 14:
+			case ELF_DT_SONAME:
 				return "DT_SONAME";
-			case 15:
+			case ELF_DT_RPATH:
 				return "DT_RPATH";
-			case 16:
+			case ELF_DT_SYMBOLIC:
 				return "DT_SYMBOLIC";
-			case 17:
+			case ELF_DT_REL:
 				return "DT_REL";
-			case 18:
+			case ELF_DT_RELSZ:
 				return "DT_RELSZ";
-			case 19:
+			case ELF_DT_RELENT:
 				return "DT_RELENT";
-			case 20:
+			case ELF_DT_PLTREL:
 				return "DT_PLTREL";
-			case 21:
+			case ELF_DT_DEBUG:
 				return "DT_DEBUG";
-			case 22:
+			case ELF_DT_TEXTREL:
 				return "DT_TEXTREL";
-			case 23:
+			case ELF_DT_JMPREL:
 				return "DT_JMPREL";
-			case 24:
+			case ELF_DT_BIND_NOW:
 				return "DT_BIND_NOW";
-			case 25:
+			case ELF_DT_INIT_ARRAY:
 				return "DT_INIT_ARRAY";
-			case 26:
+			case ELF_DT_FINI_ARRAY:
 				return "DT_FINI_ARRAY";
-			case 27:
+			case ELF_DT_INIT_ARRAYSZ:
 				return "DT_INIT_ARRAYSZ";
-			case 28:
+			case ELF_DT_FINI_ARRAYSZ:
 				return "DT_FINI_ARRAYSZ";
-			case 29:
+			case ELF_DT_RUNPATH:
 				return "DT_RUNPATH";
-			case 30:
+			case ELF_DT_FLAGS:
 				return "DT_FLAGS";
-			case 0x6ffffffb:
+			case ELF_DT_ENCODING:
+				return "DT_ENCODING";
+			case ELF_DT_PREINIT_ARRAY:
+				return "DT_PREINIT_ARRAY";
+			case ELF_DT_PREINIT_ARRAYSZ:
+				return "DT_PREINIT_ARRAYSZ";
+			case ELF_DT_LOOS:
+				return "DT_LOOS";
+			case ELF_DT_SUNW_RTLDINF:
+				return "DT_SUNW_RTLDINF";
+			case ELF_DT_HIOS:
+				return "DT_HIOS";
+			case ELF_DT_VALRNGLO:
+				return "DT_VALRNGLO";
+			case ELF_DT_CHECKSUM:
+				return "DT_CHECKSUM";
+			case ELF_DT_PLTPADSZ:
+				return "DT_PLTPADSZ";
+			case ELF_DT_MOVEEN:
+				return "DT_MOVEENT";
+			case ELF_DT_MOVES:
+				return "DT_MOVESZ";
+			case ELF_DT_FEATURE_1:
+				return "DT_FEATURE_1";
+			case ELF_DT_POSFLAG_1:
+				return "DT_POSFLAG_1";
+			case ELF_DT_SYMINSZ:
+				return "DT_SYMINSZ";
+			case ELF_DT_SYMINENT:
+				return "DT_SYMINENT";
+			case ELF_DT_ADDRRNGLO:
+				return "DT_ADDRRNGLO";
+			case ELF_DT_GNU_HASH:
+				return "DT_GNU_HASH";
+			case ELF_DT_CONFIG:
+				return "DT_CONFIG";
+			case ELF_DT_DEPAUDIT:
+				return "DT_DEPAUDIT";
+			case ELF_DT_AUDIT:
+				return "DT_AUDIT";
+			case ELF_DT_PLTPAD:
+				return "DT_PLTPAD";
+			case ELF_DT_MOVETAB:
+				return "DT_MOVETAB";
+			case ELF_DT_SYMINFO:
+				return "DT_SYMINFO";
+			case ELF_DT_VERSYM:
+				return "DT_VERSYM";
+			case ELF_DT_RELACOUNT:
+				return "DT_RELACOUNT";
+			case ELF_DT_RELCOUNT:
+				return "DT_RELCOUNT";
+			case ELF_DT_FLAGS_1:
 				return "DT_FLAGS_1";
+			case ELF_DT_VERDEF:
+				return "DT_VERDEF";
+			case ELF_DT_VERDEFNUM:
+				return "DT_VERDEFNUM";
+			case ELF_DT_VERNEED:
+				return "DT_VERNEED";
+			case ELF_DT_VERNEEDNUM:
+				return "DT_VERNEEDNUM";
+			case ELF_DT_LOPROC:
+				return "DT_LOPROC";
+			case ELF_DT_MIPS_TIME_STAMP:
+				return "DT_MIPS_TIME_STAMP";
+			case ELF_DT_MIPS_ICHECKSUM:
+				return "DT_MIPS_ICHECKSUM";
+			case ELF_DT_MIPS_IVERSION:
+				return "DT_MIPS_IVERSION";
+			case ELF_DT_MIPS_FLAGS:
+				return "DT_MIPS_FLAGS";
+			case ELF_DT_MIPS_BASE_ADDRESS:
+				return "DT_MIPS_BASE_ADDRESS";
+			case ELF_DT_MIPS_CONFLICT:
+				return "DT_MIPS_CONFLICT";
+			case ELF_DT_MIPS_LIBLIST:
+				return "DT_MIPS_LIBLIST";
+			case ELF_DT_MIPS_LOCAL_GOTNO:
+				return "DT_MIPS_LOCAL_GOTNO";
+			case ELF_DT_MIPS_CONFLICTNO:
+				return "DT_MIPS_CONFLICTNO";
+			case ELF_DT_MIPS_LIBLISTNO:
+				return "DT_MIPS_LIBLISTNO";
+			case ELF_DT_MIPS_SYMTABNO:
+				return "DT_MIPS_SYMTABNO";
+			case ELF_DT_MIPS_UNREFEXTNO:
+				return "DT_MIPS_UNREFEXTNO";
+			case ELF_DT_MIPS_GOTSYM:
+				return "DT_MIPS_GOTSYM";
+			case ELF_DT_MIPS_HIPAGENO:
+				return "DT_MIPS_HIPAGENO";
+			case ELF_DT_MIPS_RLD_MAP:
+				return "DT_MIPS_RLD_MAP";
+			case ELF_DT_MIPS_RLD_MAP_REL:
+				return "DT_MIPS_RLD_MAP_REL";
+			case ELF_DT_AUXILIARY:
+				return "DT_AUXILIARY";
+			case ELF_DT_USED:
+				return "DT_USED";
+			case ELF_DT_FILTER:
+				return "DT_FILTER";
 			default:
 				return "UNKNOWN";
 			}
@@ -616,7 +727,9 @@ namespace binjad {
 
 		bool ElfDynamicStringTag(std::int64_t tag)
 		{
-			return tag == 1 || tag == 14 || tag == 15 || tag == 29;
+			return tag == ELF_DT_NEEDED || tag == ELF_DT_SONAME || tag == ELF_DT_RPATH || tag == ELF_DT_RUNPATH
+				|| tag == ELF_DT_CONFIG || tag == ELF_DT_DEPAUDIT || tag == ELF_DT_AUDIT || tag == ELF_DT_MIPS_IVERSION
+				|| tag == ELF_DT_AUXILIARY || tag == ELF_DT_FILTER;
 		}
 
 		std::vector<ElfDynamicEntry> ElfDynamicEntries(BinaryNinja::BinaryView* view, const ElfHeader& header)
@@ -1260,12 +1373,14 @@ namespace binjad {
 			const auto header = ParseElfHeader(view);
 			return WritePaginated(
 				"dynamicEntries", ElfDynamicEntries(view, header), ParseListArguments(command.arguments),
-				[](const auto& item) { return std::string(ElfDynamicTag(item.tag)) + ' ' + item.text; },
-				[](auto& writer, const auto& item) {
+				[&header](const auto& item) {
+					return std::string(ElfDynamicTag(item.tag, header.machine)) + ' ' + item.text;
+				},
+				[&header](auto& writer, const auto& item) {
 					writer.StartObject();
 					writer.Key("index");
 					writer.Uint64(item.index);
-					WriteText(writer, "tag", ElfDynamicTag(item.tag));
+					WriteText(writer, "tag", ElfDynamicTag(item.tag, header.machine));
 					writer.Key("tagValue");
 					writer.Int64(item.tag);
 					writer.Key("value");

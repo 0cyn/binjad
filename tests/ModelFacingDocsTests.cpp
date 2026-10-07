@@ -17,7 +17,7 @@ int main()
 	try
 	{
 		const auto& tools = binjad::mcp::docs::Tools();
-		Require(tools.size() == 205, "model-facing tool registry count changed");
+		Require(tools.size() == 207, "model-facing tool registry count changed");
 		for (const auto& [name, documentation] : tools)
 		{
 			Require(name.starts_with("bn_"), "model-facing tool name is invalid");

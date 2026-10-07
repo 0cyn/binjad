@@ -70,7 +70,7 @@ namespace binjad::session {
 
 		JobResult Create(std::string ownerTokenId, std::optional<std::string> analysisSession,
 			std::optional<std::string> binaryView, std::string operation, std::uint64_t nowUnix, Clock::time_point now,
-			CancelCallback cancel = {});
+			CancelCallback cancel = {}, ProgressCallback completionProgress = {});
 		bool Start(std::string_view ownerTokenId, std::string_view job, std::uint64_t nowUnix);
 		bool ReportProgress(std::string_view ownerTokenId, std::string_view job, std::string phase,
 			std::uint64_t completed, std::uint64_t total, std::string message, std::uint64_t nowUnix);
@@ -96,6 +96,7 @@ namespace binjad::session {
 		{
 			JobRecord record;
 			CancelCallback cancel;
+			ProgressCallback completionProgress;
 			bool sessionRetained = false;
 		};
 

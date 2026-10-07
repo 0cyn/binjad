@@ -547,11 +547,38 @@ namespace binjad::mcp {
 					writer.RawValue(view->effectiveLoadSettingsJson.data(), view->effectiveLoadSettingsJson.size(),
 						rapidjson::kObjectType);
 				}
+				if (view->viewType == "Mapped")
+				{
+					writer.Key("coordinateSemantics");
+					writer.StartObject();
+					writer.Key("loader.imageBase");
+					writer.String("absolute");
+					writer.Key("loader.entryPointOffset");
+					writer.String("imageBaseRelative");
+					writer.Key("loader.segments[].start");
+					writer.String("imageBaseRelative");
+					writer.Key("loader.sections[].start");
+					writer.String("imageBaseRelative");
+					writer.Key("loader.segments[].data_offset");
+					writer.String("fileRelative");
+					writer.Key("mappedAddressFormula");
+					writer.String("loader.imageBase + descriptor.start");
+					writer.Key("entryPointFormula");
+					writer.String("loader.imageBase + loader.entryPointOffset");
+					writer.Key("example");
+					writer.String("imageBase 0x400000 and start 0 map at 0x400000");
+					writer.EndObject();
+				}
 				writer.Key("nextAction");
 				if (view->viewType == "Raw")
 					writer.String(
 						"Raw does not accept loader settings. Select the Mapped candidate for raw firmware, inspect "
 						"its schema, and pass fully qualified loader.* settings to bn_binary_view_open.");
+				else if (view->viewType == "Mapped" && !view->created)
+					writer.String(
+						"Pass only keys from schema.settings to bn_binary_view_open options. loader.segments and "
+						"loader.sections use serialized JSON strings. Descriptor starts are image-base-relative. "
+						"loader.entryPointOffset is also base-relative. Use start 0 for a mapping at the image base.");
 				else if (!view->created)
 					writer.String(
 						"Pass only keys from schema.settings to bn_binary_view_open options. loader.segments and "
@@ -569,15 +596,48 @@ namespace binjad::mcp {
 					return ToolCallSuccess(context, detail::ErrorJson("file-child service is unavailable"), true);
 				const auto openItemMember = context.arguments.FindMember("openItem");
 				const std::string openItem(openItemMember->value.GetString(), openItemMember->value.GetStringLength());
-				std::string_view save = "prompt";
-				if (const auto member = context.arguments.FindMember("save"); member != context.arguments.MemberEnd())
-					save = {member->value.GetString(), member->value.GetStringLength()};
-				if (save == "save")
-					return ToolCallSuccess(context,
-						detail::ErrorJson("save an explicit BinaryView with bn_binary_view_save before closing"), true);
-				const auto error = context.fileCoordinator->Close(context.principal.id, openItem, save == "discard");
+				std::string_view unsavedChanges = "requireClean";
+				if (const auto member = context.arguments.FindMember("unsavedChanges");
+					member != context.arguments.MemberEnd())
+					unsavedChanges = {member->value.GetString(), member->value.GetStringLength()};
+				const bool discard = unsavedChanges == "discard";
+				const auto error = context.fileCoordinator->Close(context.principal.id, openItem, discard);
 				if (!error.empty())
-					return ToolCallSuccess(context, detail::ErrorJson(error), true);
+				{
+					std::string nextAction;
+					if (error.find("active transaction") != std::string::npos)
+					{
+						nextAction = "Commit or roll back the active transaction.";
+						nextAction +=
+							" Save remaining changes with bn_binary_view_save, then retry with "
+							"unsavedChanges:'requireClean'.";
+						nextAction += " Use unsavedChanges:'discard' only to discard them.";
+					}
+					else if (error.find("uncommitted database save") != std::string::npos)
+					{
+						nextAction = "Retry bn_binary_view_save until the commit succeeds.";
+						nextAction += " Then retry with unsavedChanges:'requireClean'.";
+						nextAction += " Use unsavedChanges:'discard' only to discard the pending save.";
+					}
+					else if (error.find("uncommitted state") != std::string::npos)
+					{
+						nextAction = "Save the intended BinaryView with bn_binary_view_save and wait for completion.";
+						nextAction += " Then retry with unsavedChanges:'requireClean'.";
+						nextAction += " Use unsavedChanges:'discard' only to discard the changes.";
+					}
+					StringBuffer errorBuffer;
+					Writer<StringBuffer> errorWriter(errorBuffer);
+					errorWriter.StartObject();
+					errorWriter.Key("error");
+					errorWriter.String(error.data(), static_cast<rapidjson::SizeType>(error.size()));
+					if (!nextAction.empty())
+					{
+						errorWriter.Key("nextAction");
+						errorWriter.String(nextAction.data(), static_cast<rapidjson::SizeType>(nextAction.size()));
+					}
+					errorWriter.EndObject();
+					return ToolCallSuccess(context, {errorBuffer.GetString(), errorBuffer.GetSize()}, true);
+				}
 				StringBuffer buffer;
 				Writer<StringBuffer> writer(buffer);
 				writer.StartObject();
@@ -585,6 +645,8 @@ namespace binjad::mcp {
 				writer.String(openItem.data(), static_cast<rapidjson::SizeType>(openItem.size()));
 				writer.Key("closed");
 				writer.Bool(true);
+				writer.Key("disposition");
+				writer.String(discard ? "discarded" : "clean");
 				writer.EndObject();
 				return ToolCallSuccess(context, {buffer.GetString(), buffer.GetSize()});
 			}
@@ -683,8 +745,8 @@ namespace binjad::mcp {
 				const bool async = context.request.name == "bn_binary_view_save_async";
 				const auto owner = context.principal.id;
 				const auto analysisSession = context.currentSession->reference;
-				const auto created = context.jobs->Create(
-					owner, analysisSession, binaryView, "binary_view_save", context.unixNow, context.now);
+				const auto created = context.jobs->Create(owner, analysisSession, binaryView, "binary_view_save",
+					context.unixNow, context.now, {}, async ? Foundation::JobProgressCallback {} : context.progress);
 				if (!created.job)
 					return ToolCallSuccess(context, detail::ErrorJson(created.error), true);
 				const auto job = created.job->reference;
@@ -833,7 +895,7 @@ namespace binjad::mcp {
 					"Return at most 50 items by default; continue with the response nextOffset."));
 			BINJAD_ANALYSIS_TOOL(OpenItemCloseTool, "bn_open_item_close", "Close an open item.", Core,
 				"Files and views", ToolCallAvailability::None, OpenItemClose, schema::String("openItem", true),
-				schema::Enum("save", false, {"prompt", "save", "discard"}));
+				schema::EnumWithDefault("unsavedChanges", false, {"requireClean", "discard"}, "requireClean"));
 			BINJAD_ANALYSIS_TOOL(BinaryViewListTool, "bn_binary_view_list",
 				"List BinaryView candidates in the current analysis session.", Core, "Files and views",
 				ToolCallAvailability::None, BinaryViewList, schema::Integer("offset", false, 0),
@@ -1071,15 +1133,16 @@ namespace binjad::mcp {
 					return ToolCallSuccess(context, detail::ErrorJson("job service is unavailable"), true);
 				const auto owner = context.principal.id;
 				const auto analysisSession = context.currentSession->reference;
-				const auto created = context.jobs->Create(owner, analysisSession, target->view, "analysis_update",
-					context.unixNow, context.now,
+				const auto created = context.jobs->Create(
+					owner, analysisSession, target->view, "analysis_update", context.unixNow, context.now,
 					[coordinator = context.fileCoordinator, scheduler = context.scheduler, owner, analysisSession,
 						view = target->view, openItem = target->openItem] {
 						if (scheduler && scheduler->CancelQueued(owner, analysisSession, openItem) != 0)
 							return std::string {};
 						const auto error = coordinator->AbortAnalysis(owner, analysisSession, view);
 						return error.find("no analysis is active") != std::string::npos ? std::string {} : error;
-					});
+					},
+					detachImmediately ? Foundation::JobProgressCallback {} : context.progress);
 				if (!created.job)
 					return ToolCallSuccess(context, detail::ErrorJson(created.error), true);
 				const auto job = created.job->reference;
@@ -1242,7 +1305,8 @@ namespace binjad::mcp {
 				"Render 200 disassembly lines by default; continue with nextOffset.", Core, "Functions",
 				ToolCallAvailability::None, ExecuteForwardedAnalysisTool, schema::String("binaryView", true),
 				schema::String("function", true), schema::String("arch"), schema::Integer("offset", false, 0),
-				schema::Integer("limit", false, 1, 1000, 50, "Defaults to 50; continue with nextOffset."));
+				schema::Integer(
+					"limit", false, 1, 1000, 200, "Defaults to 200 rendered lines; continue with nextOffset."));
 			BINJAD_ANALYSIS_TOOL(FunctionDecompileTool, "bn_function_decompile",
 				"Render an exact analyzed function, default 200 lines; language auto-selects Pseudo Objective-C or "
 				"Pseudo Rust when applicable; confirm targets with function_list first.",
@@ -1544,17 +1608,52 @@ namespace binjad::mcp {
 				"Sections and segments", ToolCallAvailability::None, ExecuteForwardedAnalysisTool,
 				schema::String("binaryView", true), schema::Integer("offset", false, 0),
 				schema::Integer("limit", false, 1, 1000));
-			BINJAD_ANALYSIS_TOOL(DataVariableListTool, "bn_data_variable_list",
-				"List typed data variables with compact rows.", BinaryData, "Data and references",
-				ToolCallAvailability::None, ExecuteForwardedAnalysisTool, schema::String("binaryView", true),
-				schema::String("address"), schema::String("start"), schema::String("end"),
-				schema::StringOrInteger("length"), schema::Integer("offset", false, 0),
-				schema::Integer("limit", false, 1, 1000));
-			BINJAD_ANALYSIS_TOOL(RelocationListTool, "bn_relocation_list", "List full relocation metadata.", BinaryData,
-				"Data and references", ToolCallAvailability::None, ExecuteForwardedAnalysisTool,
-				schema::String("binaryView", true), schema::String("address"), schema::String("start"),
-				schema::String("end"), schema::StringOrInteger("length"), schema::Integer("offset", false, 0),
-				schema::Integer("limit", false, 1, 1000));
+			class DataVariableListTool final : public ToolCall
+			{
+			public:
+				DataVariableListTool() : ToolCall("bn_data_variable_list", ToolCallCategory::BinaryData) {}
+				FoundationResult Execute(const ToolCallContext& context) const override
+				{
+					return ExecuteForwardedAnalysisTool(context);
+				}
+
+			private:
+				void WriteInputSchema(ToolCallSchemaWriter& writer) const override
+				{
+					schema::WriteObjectAlternatives(writer, "bn_data_variable_list",
+						{schema::String("binaryView", true), schema::String("address"), schema::String("start"),
+							schema::String("end"), schema::StringOrInteger("length"),
+							schema::Integer("offset", false, 0), schema::Integer("limit", false, 1, 1000)},
+						{{{}, {"binaryView", "offset", "limit"}},
+							{{"address"}, {"binaryView", "address", "offset", "limit"}},
+							{{"start"}, {"binaryView", "start", "offset", "limit"}},
+							{{"start", "end"}, {"binaryView", "start", "end", "offset", "limit"}},
+							{{"start", "length"}, {"binaryView", "start", "length", "offset", "limit"}}});
+				}
+			};
+			class RelocationListTool final : public ToolCall
+			{
+			public:
+				RelocationListTool() : ToolCall("bn_relocation_list", ToolCallCategory::BinaryData) {}
+				FoundationResult Execute(const ToolCallContext& context) const override
+				{
+					return ExecuteForwardedAnalysisTool(context);
+				}
+
+			private:
+				void WriteInputSchema(ToolCallSchemaWriter& writer) const override
+				{
+					schema::WriteObjectAlternatives(writer, "bn_relocation_list",
+						{schema::String("binaryView", true), schema::String("address"), schema::String("start"),
+							schema::String("end"), schema::StringOrInteger("length"),
+							schema::Integer("offset", false, 0), schema::Integer("limit", false, 1, 1000)},
+						{{{}, {"binaryView", "offset", "limit"}},
+							{{"address"}, {"binaryView", "address", "offset", "limit"}},
+							{{"start"}, {"binaryView", "start", "offset", "limit"}},
+							{{"start", "end"}, {"binaryView", "start", "end", "offset", "limit"}},
+							{{"start", "length"}, {"binaryView", "start", "length", "offset", "limit"}}});
+				}
+			};
 			BINJAD_ANALYSIS_TOOL(DataXrefsFromTool, "bn_data_xrefs_from",
 				"List addresses referenced by data values stored at an address or range; code instruction references "
 				"are excluded.",
@@ -1667,9 +1766,14 @@ namespace binjad::mcp {
 				schema::String("query", true), schema::Integer("offset", false, 0),
 				schema::Integer("limit", false, 1, 200, 50));
 			BINJAD_ANALYSIS_TOOL(MemorySearchTool, "bn_memory_search",
-				"Search mapped bytes with Binary Ninja advanced binary-search syntax.", Search, "Data and references",
-				ToolCallAvailability::None, ExecuteForwardedAnalysisTool, schema::String("binaryView", true),
-				schema::String("pattern", true), schema::String("start"), schema::String("end"),
+				"Search mapped bytes with Binary Ninja auto-detected FlexHex, byte-regex, or raw-string modes.", Search,
+				"Data and references", ToolCallAvailability::None, ExecuteForwardedAnalysisTool,
+				schema::String("binaryView", true),
+				schema::StringWithExamples(
+					"pattern", true, {"deadbeef", "de ad be ef", "E8 ? ? ? ?", "50 ?4", "[\\x20-\\x25][\\x60-\\x67]"}),
+				schema::String("start"), schema::String("end"), schema::BooleanWithDefault("raw", false, false),
+				schema::BooleanWithDefault("caseSensitive", false, false),
+				schema::BooleanWithDefault("overlap", false, false), schema::Integer("alignment", false, 1, {}, 1),
 				schema::Integer("offset", false, 0), schema::Integer("limit", false, 1, 200, 50));
 			BINJAD_ANALYSIS_TOOL(InstructionSearchTool, "bn_instruction_search",
 				"Search rendered disassembly text across an explicit address range or the whole view.", Search,
@@ -1688,6 +1792,7 @@ namespace binjad::mcp {
 				"Search globally for rendered uses of one constant or address value.", Search, "Data and references",
 				ToolCallAvailability::None, ExecuteForwardedAnalysisTool, schema::String("binaryView", true),
 				schema::String("value", true), schema::String("start"), schema::String("end"),
+				schema::EnumWithDefault("level", false, {"all", "disassembly", "llil", "mlil", "hlil"}, "llil"),
 				schema::Integer("offset", false, 0), schema::Integer("limit", false, 1, 200, 50));
 			BINJAD_ANALYSIS_TOOL(ProjectAnalysisSearchTool, "bn_project_analysis_search",
 				"Search functions, symbols, strings, and comments across materialized BinaryViews currently open from "
@@ -1887,8 +1992,12 @@ namespace binjad::mcp {
 			BINJAD_ANALYSIS_TOOL(SectionCreateTool, "bn_section_create", "Create a user-defined section.",
 				BinaryEditing, "Sections and segments", ToolCallAvailability::None, ExecuteForwardedAnalysisTool,
 				schema::String("binaryView", true), schema::String("section", true), schema::String("start", true),
-				schema::String("semantics"), schema::String("typeName"), schema::String("linkedSection"),
-				schema::String("infoSection"), schema::StringOrInteger("length", true),
+				schema::EnumWithDefault("semantics", false,
+					{"DefaultSectionSemantics", "ReadOnlyCodeSectionSemantics", "ReadOnlyDataSectionSemantics",
+						"ReadWriteDataSectionSemantics", "ExternalSectionSemantics"},
+					"DefaultSectionSemantics"),
+				schema::StringWithExamples("typeName", false, {"PROGBITS", "NOBITS", "REGULAR"}),
+				schema::String("linkedSection"), schema::String("infoSection"), schema::StringOrInteger("length", true),
 				schema::Integer("alignment", false, 1), schema::Integer("entrySize", false, 0),
 				schema::Integer("infoData", false, 0));
 			BINJAD_ANALYSIS_TOOL(SectionDeleteTool, "bn_section_delete",
@@ -1899,20 +2008,30 @@ namespace binjad::mcp {
 				"Modify an exact auto- or user-defined section.", BinaryEditing, "Sections and segments",
 				ToolCallAvailability::None, ExecuteForwardedAnalysisTool, schema::String("binaryView", true),
 				schema::String("section", true), schema::String("newSection"), schema::String("start"),
-				schema::String("semantics"), schema::String("typeName"), schema::String("linkedSection"),
-				schema::String("infoSection"), schema::StringOrInteger("length"),
+				schema::Enum("semantics", false,
+					{"DefaultSectionSemantics", "ReadOnlyCodeSectionSemantics", "ReadOnlyDataSectionSemantics",
+						"ReadWriteDataSectionSemantics", "ExternalSectionSemantics"}),
+				schema::StringWithExamples("typeName", false, {"PROGBITS", "NOBITS", "REGULAR"}),
+				schema::String("linkedSection"), schema::String("infoSection"), schema::StringOrInteger("length"),
 				schema::Integer("alignment", false, 1), schema::Integer("entrySize", false, 0),
 				schema::Integer("infoData", false, 0));
 			BINJAD_ANALYSIS_TOOL(SegmentCreateTool, "bn_segment_create", "Create a user mapped segment.", BinaryEditing,
 				"Sections and segments", ToolCallAvailability::None, ExecuteForwardedAnalysisTool,
 				schema::String("binaryView", true), schema::String("start", true), schema::String("length", true),
 				schema::String("dataOffset", true), schema::String("dataLength", true),
-				schema::Integer("flags", true, 0, 15));
+				schema::IntegerBitmask("flags", true, 127,
+					{{"SegmentExecutable", 1}, {"SegmentWritable", 2}, {"SegmentReadable", 4},
+						{"SegmentContainsData", 8}, {"SegmentContainsCode", 16}, {"SegmentDenyWrite", 32},
+						{"SegmentDenyExecute", 64}}));
 			BINJAD_ANALYSIS_TOOL(SegmentModifyTool, "bn_segment_modify", "Replace one exact user mapped segment.",
 				BinaryEditing, "Sections and segments", ToolCallAvailability::None, ExecuteForwardedAnalysisTool,
 				schema::String("binaryView", true), schema::String("start", true), schema::String("length", true),
 				schema::String("newStart"), schema::String("newLength"), schema::String("dataOffset", true),
-				schema::String("dataLength", true), schema::Integer("flags", true, 0, 15));
+				schema::String("dataLength", true),
+				schema::IntegerBitmask("flags", true, 127,
+					{{"SegmentExecutable", 1}, {"SegmentWritable", 2}, {"SegmentReadable", 4},
+						{"SegmentContainsData", 8}, {"SegmentContainsCode", 16}, {"SegmentDenyWrite", 32},
+						{"SegmentDenyExecute", 64}}));
 			BINJAD_ANALYSIS_TOOL(SegmentDeleteTool, "bn_segment_delete", "Delete one exact user mapped segment.",
 				BinaryEditing, "Sections and segments", ToolCallAvailability::None, ExecuteForwardedAnalysisTool,
 				schema::String("binaryView", true), schema::String("start", true), schema::String("length", true));
@@ -1920,13 +2039,38 @@ namespace binjad::mcp {
 				"Rebase an explicit BinaryView to a new base address.", BinaryEditing, "Files and views",
 				ToolCallAvailability::None, ExecuteForwardedAnalysisTool, schema::String("binaryView", true),
 				schema::String("address", true));
-			BINJAD_ANALYSIS_TOOL(MemoryMapPreviewTool, "bn_memory_map_preview",
-				"Preview a segment or rebase operation without mutating the BinaryView.", BinaryEditing,
-				"Memory and strings", ToolCallAvailability::None, ExecuteForwardedAnalysisTool,
-				schema::String("binaryView", true), schema::String("operation", true), schema::String("start"),
-				schema::String("length"), schema::String("newStart"), schema::String("newLength"),
-				schema::String("dataOffset"), schema::String("dataLength"), schema::String("address"),
-				schema::Integer("flags", false, 0, 15));
+			class MemoryMapPreviewTool final : public ToolCall
+			{
+			public:
+				MemoryMapPreviewTool() : ToolCall("bn_memory_map_preview", ToolCallCategory::BinaryEditing) {}
+				FoundationResult Execute(const ToolCallContext& context) const override
+				{
+					return ExecuteForwardedAnalysisTool(context);
+				}
+
+			private:
+				void WriteInputSchema(ToolCallSchemaWriter& writer) const override
+				{
+					schema::WriteObject(writer, "bn_memory_map_preview",
+						{schema::String("binaryView", true),
+							schema::Enum("operation", true, {"create", "modify", "delete", "rebase"}),
+							schema::String("start"), schema::String("length"), schema::String("newStart"),
+							schema::String("newLength"), schema::String("dataOffset"), schema::String("dataLength"),
+							schema::String("address"),
+							schema::IntegerBitmask("flags", false, 127,
+								{{"SegmentExecutable", 1}, {"SegmentWritable", 2}, {"SegmentReadable", 4},
+									{"SegmentContainsData", 8}, {"SegmentContainsCode", 16}, {"SegmentDenyWrite", 32},
+									{"SegmentDenyExecute", 64}})},
+						"operation",
+						{{"create", {"start", "length", "dataOffset", "dataLength", "flags"},
+							 {"binaryView", "operation", "start", "length", "dataOffset", "dataLength", "flags"}},
+							{"modify", {"start", "length", "dataOffset", "dataLength", "flags"},
+								{"binaryView", "operation", "start", "length", "newStart", "newLength", "dataOffset",
+									"dataLength", "flags"}},
+							{"delete", {"start", "length"}, {"binaryView", "operation", "start", "length"}},
+							{"rebase", {"address"}, {"binaryView", "operation", "address"}}});
+				}
+			};
 			BINJAD_ANALYSIS_TOOL(StringDefineTool, "bn_string_define",
 				"Define a typed user string data object at an address.", BinaryEditing, "Memory and strings",
 				ToolCallAvailability::None, ExecuteForwardedAnalysisTool, schema::String("binaryView", true),
@@ -1973,8 +2117,8 @@ namespace binjad::mcp {
 				const auto argumentsJson = detail::Serialize(context.arguments);
 				const auto owner = context.principal.id;
 				const auto analysisSession = context.currentSession->reference;
-				const auto created = context.jobs->Create(
-					owner, analysisSession, binaryView, context.request.name, context.unixNow, context.now);
+				const auto created = context.jobs->Create(owner, analysisSession, binaryView, context.request.name,
+					context.unixNow, context.now, {}, context.progress);
 				if (!created.job)
 					return ToolCallSuccess(context, detail::ErrorJson(created.error), true);
 				const auto job = created.job->reference;

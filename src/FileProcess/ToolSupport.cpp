@@ -260,6 +260,19 @@ namespace binjad::file_process {
 		throw std::invalid_argument("unknown section semantics");
 	}
 
+	std::vector<std::string_view> SegmentFlagNames(std::uint32_t flags)
+	{
+		std::vector<std::string_view> result;
+		for (const auto& [flag, name] :
+			{std::pair {SegmentExecutable, "SegmentExecutable"}, std::pair {SegmentWritable, "SegmentWritable"},
+				std::pair {SegmentReadable, "SegmentReadable"}, std::pair {SegmentContainsData, "SegmentContainsData"},
+				std::pair {SegmentContainsCode, "SegmentContainsCode"},
+				std::pair {SegmentDenyWrite, "SegmentDenyWrite"}, std::pair {SegmentDenyExecute, "SegmentDenyExecute"}})
+			if ((flags & flag) != 0)
+				result.emplace_back(name);
+		return result;
+	}
+
 	const char* TypeClassName(BNTypeClass type)
 	{
 		switch (type)

@@ -645,7 +645,7 @@ namespace binjad::mcp {
 				const auto owner = context.principal.id;
 				const auto created = context.jobs->Create(owner,
 					context.currentSession ? std::optional(context.currentSession->reference) : std::nullopt, {},
-					"project_directory_import", context.unixNow, context.now);
+					"project_directory_import", context.unixNow, context.now, {}, context.progress);
 				if (!created.job)
 					return ToolCallSuccess(context, detail::ErrorJson(created.error), true);
 				const auto job = created.job->reference;
@@ -941,7 +941,7 @@ namespace binjad::mcp {
 				const auto owner = context.principal.id;
 				const auto created = context.jobs->Create(owner,
 					context.currentSession ? std::optional(context.currentSession->reference) : std::nullopt, {},
-					"project_relocate", context.unixNow, context.now);
+					"project_relocate", context.unixNow, context.now, {}, context.progress);
 				if (!created.job)
 					return ToolCallSuccess(context, detail::ErrorJson(created.error), true);
 				const auto job = created.job->reference;
@@ -2084,8 +2084,8 @@ namespace binjad::mcp {
 				const auto owner = context.principal.id;
 				const auto analysisSession = context.currentSession->reference;
 				const auto operation = std::string(context.request.name);
-				const auto created =
-					context.jobs->Create(owner, analysisSession, {}, operation, context.unixNow, context.now);
+				const auto created = context.jobs->Create(
+					owner, analysisSession, {}, operation, context.unixNow, context.now, {}, context.progress);
 				if (!created.job)
 					return ToolCallSuccess(context, detail::ErrorJson(created.error), true);
 				const auto job = created.job->reference;
@@ -2613,8 +2613,8 @@ namespace binjad::mcp {
 				}
 				const auto owner = context.principal.id;
 				const auto analysisSession = context.currentSession->reference;
-				const auto created =
-					context.jobs->Create(owner, analysisSession, {}, "upload_commit", context.unixNow, context.now);
+				const auto created = context.jobs->Create(
+					owner, analysisSession, {}, "upload_commit", context.unixNow, context.now, {}, context.progress);
 				if (!created.job)
 				{
 					context.uploads->CommitFailed(owner, id);
