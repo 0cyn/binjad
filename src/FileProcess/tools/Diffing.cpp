@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cctype>
 #include <limits>
+#include <optional>
 #include <tuple>
 #include <unordered_map>
 #include <unordered_set>
@@ -26,6 +27,30 @@ namespace binjad {
 			std::string secondaryName;
 			std::uint8_t similarity = 0;
 			std::uint8_t confidence = 0;
+		};
+
+		struct SymbolSnapshot
+		{
+			bool present = false;
+			std::string shortName;
+			std::string fullName;
+			std::string rawName;
+			std::string nameSpace;
+			BNSymbolType type = FunctionSymbol;
+			BNSymbolBinding binding = NoBinding;
+			std::uint64_t ordinal = 0;
+			bool autoDefined = false;
+
+			bool operator==(const SymbolSnapshot&) const = default;
+		};
+
+		struct FunctionTypeSnapshot
+		{
+			std::string prototype;
+			bool hasUserType = false;
+			std::optional<std::string> callingConvention;
+
+			bool operator==(const FunctionTypeSnapshot&) const = default;
 		};
 
 		std::vector<Match> CollectMatches(const binary_ninja::DiffTools::State& state)
@@ -104,6 +129,102 @@ namespace binjad {
 			writer.Uint(match.similarity);
 			writer.Key("confidence");
 			writer.Uint(match.confidence);
+			writer.EndObject();
+		}
+
+		SymbolSnapshot CaptureSymbol(const BinaryNinja::Ref<BinaryNinja::Function>& function)
+		{
+			const auto symbol = function ? function->GetSymbol() : nullptr;
+			if (!symbol)
+				return {};
+			return {true, symbol->GetShortName(), symbol->GetFullName(), symbol->GetRawName(),
+				symbol->GetNameSpace().GetString(), symbol->GetType(), symbol->GetBinding(), symbol->GetOrdinal(),
+				symbol->IsAutoDefined()};
+		}
+
+		FunctionTypeSnapshot CaptureFunctionType(const BinaryNinja::Ref<BinaryNinja::Function>& function)
+		{
+			FunctionTypeSnapshot result;
+			if (!function)
+				return result;
+			const auto type = function->GetType();
+			const auto platform = function->GetPlatform();
+			if (type)
+				result.prototype = type->GetString(platform.GetPtr());
+			result.hasUserType = function->HasUserType();
+			if (const auto callingConvention = function->GetCallingConvention().GetValue())
+				result.callingConvention = callingConvention->GetName();
+			return result;
+		}
+
+		void WriteSymbolSnapshot(
+			rapidjson::Writer<rapidjson::StringBuffer>& writer, std::string_view key, const SymbolSnapshot& snapshot)
+		{
+			writer.Key(key.data(), static_cast<rapidjson::SizeType>(key.size()));
+			writer.StartObject();
+			writer.Key("present");
+			writer.Bool(snapshot.present);
+			if (snapshot.present)
+			{
+				writer.Key("shortName");
+				writer.String(snapshot.shortName.data(), snapshot.shortName.size());
+				writer.Key("fullName");
+				writer.String(snapshot.fullName.data(), snapshot.fullName.size());
+				writer.Key("rawName");
+				writer.String(snapshot.rawName.data(), snapshot.rawName.size());
+				writer.Key("namespace");
+				writer.String(snapshot.nameSpace.data(), snapshot.nameSpace.size());
+				writer.Key("type");
+				writer.String(SymbolTypeName(snapshot.type));
+				writer.Key("binding");
+				writer.String(SymbolBindingName(snapshot.binding));
+				writer.Key("ordinal");
+				writer.Uint64(snapshot.ordinal);
+				writer.Key("autoDefined");
+				writer.Bool(snapshot.autoDefined);
+			}
+			writer.EndObject();
+		}
+
+		void WriteFunctionTypeSnapshot(rapidjson::Writer<rapidjson::StringBuffer>& writer, std::string_view key,
+			const FunctionTypeSnapshot& snapshot)
+		{
+			writer.Key(key.data(), static_cast<rapidjson::SizeType>(key.size()));
+			writer.StartObject();
+			writer.Key("prototype");
+			writer.String(snapshot.prototype.data(), snapshot.prototype.size());
+			writer.Key("hasUserType");
+			writer.Bool(snapshot.hasUserType);
+			writer.Key("callingConvention");
+			if (snapshot.callingConvention)
+				writer.String(snapshot.callingConvention->data(), snapshot.callingConvention->size());
+			else
+				writer.Null();
+			writer.EndObject();
+		}
+
+		void WriteScoreMetadata(rapidjson::Writer<rapidjson::StringBuffer>& writer, std::size_t minimumSimilarity,
+			std::size_t minimumConfidence)
+		{
+			writer.Key("scoreRange");
+			writer.StartObject();
+			writer.Key("minimum");
+			writer.Uint(0);
+			writer.Key("maximum");
+			writer.Uint(255);
+			writer.Key("higherIsStronger");
+			writer.Bool(true);
+			writer.Key("exactSimilarity");
+			writer.Uint(255);
+			writer.Key("thresholdsInclusive");
+			writer.Bool(true);
+			writer.EndObject();
+			writer.Key("thresholds");
+			writer.StartObject();
+			writer.Key("minSimilarity");
+			writer.Uint64(minimumSimilarity);
+			writer.Key("minConfidence");
+			writer.Uint64(minimumConfidence);
 			writer.EndObject();
 		}
 
@@ -275,11 +396,14 @@ namespace binjad {
 			rapidjson::StringBuffer buffer;
 			rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
 			writer.StartObject();
+			WriteScoreMetadata(writer, minimumSimilarity, minimumConfidence);
 			writer.Key("matches");
 			writer.StartArray();
 			for (std::size_t index = offset; index < finish; ++index)
 				WriteMatch(writer, matches[index]);
 			writer.EndArray();
+			writer.Key("count");
+			writer.Uint64(finish - offset);
 			writer.Key("total");
 			writer.Uint64(matches.size());
 			writer.Key("nextOffset");
@@ -287,6 +411,8 @@ namespace binjad {
 				writer.Uint64(finish);
 			else
 				writer.Null();
+			writer.Key("truncated");
+			writer.Bool(finish < matches.size());
 			writer.EndObject();
 			return JsonReply(buffer);
 		};
@@ -340,6 +466,8 @@ namespace binjad {
 				writer.EndObject();
 			}
 			writer.EndArray();
+			writer.Key("count");
+			writer.Uint64(finish - offset);
 			writer.Key("total");
 			writer.Uint64(unmatched.size());
 			writer.Key("nextOffset");
@@ -347,6 +475,8 @@ namespace binjad {
 				writer.Uint64(finish);
 			else
 				writer.Null();
+			writer.Key("truncated");
+			writer.Bool(finish < unmatched.size());
 			writer.EndObject();
 			return JsonReply(buffer);
 		};
@@ -400,6 +530,8 @@ namespace binjad {
 				writer.EndObject();
 			}
 			writer.EndArray();
+			writer.Key("count");
+			writer.Uint64(finish - offset);
 			writer.Key("total");
 			writer.Uint64(unmatched.size());
 			writer.Key("nextOffset");
@@ -407,6 +539,8 @@ namespace binjad {
 				writer.Uint64(finish);
 			else
 				writer.Null();
+			writer.Key("truncated");
+			writer.Bool(finish < unmatched.size());
 			writer.EndObject();
 			return JsonReply(buffer);
 		};
@@ -464,11 +598,14 @@ namespace binjad {
 			rapidjson::StringBuffer buffer;
 			rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
 			writer.StartObject();
+			WriteScoreMetadata(writer, minimumSimilarity, minimumConfidence);
 			writer.Key("matches");
 			writer.StartArray();
 			for (std::size_t index = offset; index < finish; ++index)
 				WriteMatch(writer, matches[index]);
 			writer.EndArray();
+			writer.Key("count");
+			writer.Uint64(finish - offset);
 			writer.Key("total");
 			writer.Uint64(matches.size());
 			writer.Key("nextOffset");
@@ -476,6 +613,8 @@ namespace binjad {
 				writer.Uint64(finish);
 			else
 				writer.Null();
+			writer.Key("truncated");
+			writer.Bool(finish < matches.size());
 			writer.EndObject();
 			return JsonReply(buffer);
 		};
@@ -543,15 +682,81 @@ namespace binjad {
 			if (matches.size() != 1)
 				throw std::invalid_argument(matches.empty() ? "diff match not found" : "diff match is ambiguous");
 			const auto& match = matches.front();
+			const auto primaryFunction = state->primaryNode->GetEntityFunction(match.primaryEntity);
+			const auto secondaryFunction = state->secondaryNode->GetEntityFunction(match.secondaryEntity);
+			if (!primaryFunction || !secondaryFunction)
+				throw std::runtime_error("matched function metadata is unavailable");
+			const auto symbolBefore = CaptureSymbol(primaryFunction);
+			const auto symbolSource = CaptureSymbol(secondaryFunction);
+			const auto functionTypeBefore = CaptureFunctionType(primaryFunction);
+			const auto functionTypeSource = CaptureFunctionType(secondaryFunction);
 			const auto status = state->provider->Apply(*state->primaryNode, match.primaryEntity, match.result);
 			if (status != SimilarityApplySuccess)
 				throw std::runtime_error("Google BinDiff metadata apply failed with status "
 					+ std::to_string(static_cast<unsigned>(status)));
+			const auto symbolAfter = CaptureSymbol(primaryFunction);
+			const auto functionTypeAfter = CaptureFunctionType(primaryFunction);
+			const bool symbolChanged = symbolBefore != symbolAfter;
+			const bool functionTypeChanged = functionTypeBefore != functionTypeAfter;
 			rapidjson::StringBuffer buffer;
 			rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
 			writer.StartObject();
 			writer.Key("applied");
 			writer.Bool(true);
+			writer.Key("provider");
+			writer.String("Google BinDiff");
+			writer.Key("match");
+			WriteMatch(writer, match);
+			writer.Key("transferScope");
+			writer.StartObject();
+			writer.Key("supported");
+			writer.StartArray();
+			writer.String("symbol");
+			writer.String("functionType");
+			writer.EndArray();
+			writer.Key("excluded");
+			writer.StartArray();
+			writer.String("addressComments");
+			writer.String("tags");
+			writer.String("bookmarks");
+			writer.String("customMetadata");
+			writer.EndArray();
+			writer.EndObject();
+			writer.Key("transferred");
+			writer.StartObject();
+			writer.Key("symbol");
+			writer.StartObject();
+			writer.Key("changed");
+			writer.Bool(symbolChanged);
+			WriteSymbolSnapshot(writer, "before", symbolBefore);
+			WriteSymbolSnapshot(writer, "after", symbolAfter);
+			WriteSymbolSnapshot(writer, "source", symbolSource);
+			writer.EndObject();
+			writer.Key("functionType");
+			writer.StartObject();
+			writer.Key("changed");
+			writer.Bool(functionTypeChanged);
+			WriteFunctionTypeSnapshot(writer, "before", functionTypeBefore);
+			WriteFunctionTypeSnapshot(writer, "after", functionTypeAfter);
+			WriteFunctionTypeSnapshot(writer, "source", functionTypeSource);
+			writer.EndObject();
+			writer.EndObject();
+			writer.Key("changedFields");
+			writer.StartArray();
+			if (symbolChanged)
+				writer.String("symbol");
+			if (functionTypeChanged)
+				writer.String("functionType");
+			writer.EndArray();
+			const bool needsUpdate = primaryFunction->NeedsUpdate();
+			writer.Key("needsUpdate");
+			writer.Bool(needsUpdate);
+			if (needsUpdate)
+			{
+				writer.Key("nextAction");
+				writer.String(
+					"Call bn_analysis_update_and_wait before dependent function, variable, or type readback.");
+			}
 			writer.EndObject();
 			return JsonReply(buffer);
 		};
@@ -583,6 +788,7 @@ namespace binjad {
 			rapidjson::StringBuffer buffer;
 			rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
 			writer.StartObject();
+			WriteScoreMetadata(writer, minimumSimilarity, minimumConfidence);
 			writer.Key("functions");
 			writer.StartArray();
 			for (const auto& match : selected)
@@ -610,6 +816,10 @@ namespace binjad {
 				writer.String(match.secondaryName.data(), static_cast<rapidjson::SizeType>(match.secondaryName.size()));
 				writer.Key("applied");
 				writer.Bool(apply);
+				writer.Key("similarity");
+				writer.Uint(match.similarity);
+				writer.Key("confidence");
+				writer.Uint(match.confidence);
 				writer.EndObject();
 			}
 			writer.EndArray();

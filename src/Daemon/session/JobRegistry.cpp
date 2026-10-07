@@ -4,6 +4,29 @@
 #include <utility>
 
 namespace binjad::session {
+	namespace {
+		std::string CompletionMessage(std::string_view operation)
+		{
+			if (operation == "binary_view_save")
+				return "save completed";
+			if (operation == "analysis_update")
+				return "analysis completed";
+			if (operation.starts_with("bn_diff_run_"))
+				return "diff completed";
+			if (operation == "project_directory_import")
+				return "directory import completed";
+			if (operation == "project_relocate")
+				return "project relocation completed";
+			if (operation == "upload_commit")
+				return "upload commit completed";
+			if (operation.find("download") != std::string_view::npos)
+				return "download preparation completed";
+			if (operation.starts_with("bn_debugger_"))
+				return "debugger operation completed";
+			return "operation completed";
+		}
+	}  // namespace
+
 	JobRegistry::JobRegistry(reference::FriendlyReferencePool& references, AnalysisSessionRegistry& sessions) :
 		references_(references), sessions_(sessions)
 	{}
@@ -27,7 +50,7 @@ namespace binjad::session {
 
 	JobResult JobRegistry::Create(std::string ownerTokenId, std::optional<std::string> analysisSession,
 		std::optional<std::string> binaryView, std::string operation, std::uint64_t nowUnix, Clock::time_point now,
-		CancelCallback cancel)
+		CancelCallback cancel, ProgressCallback completionProgress)
 	{
 		bool retained = false;
 		if (analysisSession)
@@ -48,7 +71,7 @@ namespace binjad::session {
 		ChangedCallback changed;
 		{
 			std::lock_guard lock(mutex_);
-			jobs_.emplace(record.reference, Entry {record, std::move(cancel), retained});
+			jobs_.emplace(record.reference, Entry {record, std::move(cancel), std::move(completionProgress), retained});
 			changed = changedCallback_;
 		}
 		if (changed)
@@ -281,6 +304,8 @@ namespace binjad::session {
 	bool JobRegistry::Finish(std::string_view ownerTokenId, std::string_view job, JobState state,
 		std::string resultJson, std::uint64_t nowUnix)
 	{
+		ProgressCallback completionProgress;
+		ProgressCallback progressCallback;
 		ChangedCallback changed;
 		JobRecord record;
 		{
@@ -290,15 +315,42 @@ namespace binjad::session {
 				|| (entry->second.record.state != JobState::Queued && entry->second.record.state != JobState::Running))
 				return false;
 			entry->second.record.state = state;
+			if (state == JobState::Complete)
+			{
+				const auto sequence = entry->second.record.progress ? entry->second.record.progress->sequence + 1 : 1;
+				entry->second.record.progress = JobProgress {
+					sequence, nowUnix, "complete", 1, 1, CompletionMessage(entry->second.record.operation)};
+				completionProgress = std::move(entry->second.completionProgress);
+				progressCallback = progressCallback_;
+			}
 			entry->second.record.resultJson = std::move(resultJson);
 			entry->second.record.updatedAtUnix = nowUnix;
 			record = entry->second.record;
 			changed = changedCallback_;
 			ReleaseSession(entry->second);
-			condition_.notify_all();
 		}
-		if (changed)
-			changed(record);
+		try
+		{
+			if (completionProgress)
+				completionProgress(record);
+		}
+		catch (...)
+		{}
+		try
+		{
+			if (progressCallback)
+				progressCallback(record);
+		}
+		catch (...)
+		{}
+		try
+		{
+			if (changed)
+				changed(record);
+		}
+		catch (...)
+		{}
+		condition_.notify_all();
 		return true;
 	}
 
