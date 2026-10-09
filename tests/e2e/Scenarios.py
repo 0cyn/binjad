@@ -293,6 +293,8 @@ class Workflows(unittest.TestCase):
         self.function(view, "packet_dispatch")
         report = "# Findings\npacket checksum confirmed\nUTF-8 café 日本\npacket dispatch confirmed\n"
         self.upload(project, "report.md", report.encode(), folder="reports/nested", multipart=True)
+        notes = "plain text reader\nUTF-8 café 日本\n"
+        self.upload(project, "notes.txt", notes.encode(), folder="reports", multipart=True)
         lines = self.agent.pages("bn_project_text_read", "lines", project=project, path="reports/nested/report.md", limit=1)
         require([row["text"] for row in lines] == report.splitlines(), "project text pagination changed the report")
         matches = self.agent.pages("bn_project_text_read", "lines", project=project, path="reports/nested/report.md", query="PACKET", limit=1)
@@ -302,11 +304,98 @@ class Workflows(unittest.TestCase):
         leaf = self.agent.call("bn_project_json_read", project=project, path="reports/inventory.json", pointer="/a~1b/~0entry/1")
         require(leaf["value"] == {"type": "number", "value": 42}, f"JSON Pointer did not select its value: {leaf}")
         files = self.agent.pages("bn_local_project_file_list", "files", project=project, limit=1)
-        require({row["path"] for row in files} == {"inputs/packet café.elf", "reports/nested/report.md", "reports/inventory.json"},
+        require({row["path"] for row in files} == {"inputs/packet café.elf", "reports/nested/report.md",
+                                                       "reports/notes.txt", "reports/inventory.json"},
                 "upload retry or folder creation changed project contents")
         self.agent.call("bn_local_project_file_update", project=project, path="reports/inventory.json", description="checked inventory")
         row = self.agent.call("bn_local_project_file_list", project=project, query="inventory")["files"][0]
         require(row["description"] == "checked inventory", "project description was not stored")
+        portal_base = "/projects/" + project + "/documents"
+        text_document = self.service.portal("POST", portal_base, {"path": "reports/notes.txt"})
+        require(text_document["kind"] == "text" and text_document["content"] == notes,
+                f"portal text reader changed the document: {text_document}")
+        markdown_document = self.service.portal("POST", portal_base, {"path": "reports/nested/report.md"})
+        require(markdown_document["kind"] == "markdown" and markdown_document["content"] == report,
+                f"portal Markdown reader changed the document: {markdown_document}")
+        json_document = self.service.portal("POST", portal_base, {"path": "reports/inventory.json"})
+        require(json_document["kind"] == "json" and json.loads(json_document["content"]) == inventory
+                and "\n  " in json_document["content"],
+                f"portal JSON reader did not return formatted JSON: {json_document}")
+        self.service.portal("POST", portal_base, {"path": "inputs/packet café.elf"}, expected=400)
+
+    def test_portal_session_recovery(self):
+        project = self.project()
+        self.agent.call("bn_local_project_file_import", project=project,
+                        source=str(self.fixtures["macho"]), name="recovery.macho")
+        item, view = self.open("recovery.macho", project=project)
+        dispatch = self.function(view, "packet_dispatch")
+        self.agent.call("bn_comment_set", binaryView=view, address=dispatch, text="portal recovery version one")
+
+        sessions = self.service.portal("GET", "/sessions")
+        summary = next(row for row in sessions if row["analysis_session"] == self.agent.session)
+        require(summary["open_items"] == 1, f"portal session list lost its open item: {summary}")
+        session_base = "/sessions/" + self.agent.session
+        details = self.service.portal("GET", session_base)
+        recovered_view = next(candidate for opened in details["open_items"]
+                              for candidate in opened["binary_views"] if candidate["binary_view"] == view)
+        require(recovered_view["created"] and recovered_view["status_available"]
+                and (recovered_view["modified"] or recovered_view["analysis_changed"]),
+                f"portal session detail did not expose recoverable changes: {recovered_view}")
+
+        saved = self.service.portal("POST", session_base + "/save", {"binary_view": view})
+        require(saved["destination"] == "recovery.macho.bndb" and saved["created_database"],
+                f"portal default save used the wrong destination: {saved}")
+        self.agent.call("bn_comment_set", binaryView=view, address=dispatch, text="portal recovery version two")
+        saved_as = self.service.portal("POST", session_base + "/save", {
+            "binary_view": view, "destination": "recovery-copy.bndb",
+        })
+        require(saved_as["destination"] == "recovery-copy.bndb",
+                f"portal Save As used the wrong destination: {saved_as}")
+        require(self.service.portal("POST", session_base + "/items/close", {
+            "open_item": item, "discard": False,
+        }) is True, "portal could not close a clean recovered item")
+
+        reopened_item, reopened = self.open("recovery-copy.bndb", project=project, analyze=False)
+        require(self.agent.call("bn_comment_get", binaryView=reopened, address=dispatch)["text"]
+                == "portal recovery version two", "portal Save As lost the latest annotation")
+        require(self.service.portal("POST", session_base + "/items/close", {
+            "open_item": reopened_item, "discard": False,
+        }) is True, "portal could not close the recovered database")
+
+        self.agent.call("bn_local_project_file_import", project=project,
+                        source=str(self.fixtures["elf"]), name="batch.elf")
+        batch_item, batch_view = self.open("batch.elf", project=project)
+        batch_dispatch = self.function(batch_view, "packet_dispatch")
+        self.agent.call("bn_comment_set", binaryView=batch_view, address=batch_dispatch, text="batch recovery")
+        batch = self.service.portal("POST", session_base + "/save-all", {})
+        require(any(saved_item["destination"] == "batch.elf.bndb" for saved_item in batch["saved"])
+                and not batch["failed"], f"portal batch recovery failed: {batch}")
+        require(self.service.portal("POST", session_base + "/items/close", {
+            "open_item": batch_item, "discard": False,
+        }) is True, "portal could not close the batch-recovered item")
+
+        self.agent.call("bn_local_project_file_import", project=project,
+                        source=str(self.fixtures["busy"]), name="busy.bin")
+        _, busy_view = self.open("busy.bin", project=project, analyze=False)
+        job = self.agent.call("bn_analysis_update_async", binaryView=busy_view)
+        details = self.service.portal("GET", session_base)
+        recovery_job = next(row for row in details["jobs"] if row["job"] == job["job"])
+        require(recovery_job["state"] in {"queued", "running"},
+                f"portal did not expose the active recovery job: {recovery_job}")
+        require(self.service.portal("POST", session_base + "/jobs/cancel", {
+            "job": job["job"],
+        }) is True, "portal did not request job cancellation")
+        terminal = self.agent.call("bn_job_info", job=job["job"])
+        self.agent.finish_job(terminal, allowed=("cancelled", "complete"))
+
+        self.agent.call("bn_metadata_set", binaryView=busy_view, key="recovery",
+                        value={"discard": "on force close"})
+        require(self.service.portal("DELETE", session_base, {"force": True}) is True,
+                "portal force-close did not close the recovery session")
+        self.agent.session = None
+        sessions = self.service.portal("GET", "/sessions")
+        require(not any(row["analysis_session"] == summary["analysis_session"] for row in sessions),
+                f"force-closed session remained in the portal: {sessions}")
 
     def test_persistence_across_daemon_restart(self):
         project = self.project()
@@ -522,6 +611,105 @@ class Workflows(unittest.TestCase):
         require(self.fixtures["raw"].read_bytes() in project_files.values()
                 and self.fixtures["elf"].read_bytes() in project_files.values(),
                 "complete project download omitted project file data")
+
+        portal_base = "/projects/" + project
+        portal_created = self.service.portal("POST", "/projects", {
+            "name": project_name + "-portal", "path": "", "description": "Portal lifecycle project",
+        }, expected=201)
+        portal_created_base = "/projects/" + portal_created["project"]
+        empty_portal_project = self.service.portal("GET", portal_created_base + "/contents")
+        require(not empty_portal_project["folders"] and not empty_portal_project["files"],
+                f"new portal project was not empty: {empty_portal_project}")
+        deleted_portal_project = self.service.portal("DELETE", portal_created_base, {"delete": True})
+        require(deleted_portal_project["deleted"] is True, f"portal project deletion failed: {deleted_portal_project}")
+
+        portal_contents = self.service.portal("GET", portal_base + "/contents")
+        require({folder["path"] for folder in portal_contents["folders"]}
+                == {"bundle", "bundle/nested", "bundle/nested/empty"},
+                f"portal project browser lost folders: {portal_contents}")
+        require({file["path"] for file in portal_contents["files"]}
+                == {"firmware.bin", "bundle/nested/packet.elf"},
+                f"portal project browser lost files: {portal_contents}")
+        portal_batch = self.service.portal("POST", portal_base + "/downloads", {
+            "kind": "files", "paths": ["firmware.bin", "bundle/nested/packet.elf"],
+        }, expected=201)
+        _, portal_batch_files = self.archive_entries(self.download({
+            **portal_batch, "contentType": portal_batch["content_type"],
+        }))
+        require(portal_batch_files["firmware.bin"] == self.fixtures["raw"].read_bytes()
+                and portal_batch_files["bundle/nested/packet.elf"] == self.fixtures["elf"].read_bytes(),
+                "portal batch download changed project files")
+        portal_project = self.service.portal("POST", portal_base + "/downloads", {
+            "kind": "project", "paths": [],
+        }, expected=201)
+        portal_project_names, _ = self.archive_entries(self.download({
+            **portal_project, "contentType": portal_project["content_type"],
+        }))
+        require(any(name.endswith("/project.bnpm") for name in portal_project_names),
+                f"portal complete-project download omitted project metadata: {portal_project_names}")
+
+        updated_project = self.service.portal("PATCH", portal_base, {
+            "name": project_name + "-managed", "description": "Managed through the portal",
+        })
+        require(updated_project["name"] == project_name + "-managed"
+                and updated_project["description"] == "Managed through the portal",
+                f"portal project metadata update failed: {updated_project}")
+        self.service.portal("PATCH", portal_base, {
+            "name": project_name, "description": "End-to-end agent workspace",
+        })
+
+        created_folder = self.service.portal("POST", portal_base + "/folders", {
+            "parent": None, "name": "portal", "description": "Portal-managed files",
+        }, expected=201)
+        require(created_folder["path"] == "portal", f"portal folder creation failed: {created_folder}")
+        upload_bytes = self.fixtures["raw"].read_bytes()
+        issued_upload = self.service.portal("POST", portal_base + "/uploads", {
+            "filename": "portal.bndb",
+        }, expected=201)
+        upload_status, _, upload_result, _ = self.service.http.request(
+            "PUT", issued_upload["url"], upload_bytes, {"Content-Type": "application/octet-stream"})
+        require(upload_status == 201 and upload_result["sha256"] == hashlib.sha256(upload_bytes).hexdigest(),
+                f"portal upload transfer failed: HTTP {upload_status}: {upload_result}")
+        committed_upload = self.service.portal("POST", portal_base + "/uploads/commit", {
+            "id": issued_upload["id"], "folder": "portal", "description": "Portal BNDB fixture",
+        }, expected=201)
+        require(committed_upload["path"] == "portal/portal.bndb",
+                f"portal upload commit used the wrong project path: {committed_upload}")
+
+        renamed_folder = self.service.portal("PATCH", portal_base + "/folders", {
+            "path": "portal", "name": "managed", "description": "Renamed folder", "parent": None,
+        })
+        require(renamed_folder["path"] == "managed", f"portal folder rename failed: {renamed_folder}")
+        portal_folder_download = self.service.portal("POST", portal_base + "/downloads", {
+            "kind": "folder", "paths": ["managed"],
+        }, expected=201)
+        folder_names, folder_files = self.archive_entries(self.download({
+            **portal_folder_download, "contentType": portal_folder_download["content_type"],
+        }))
+        require("managed/" in folder_names and folder_files["managed/portal.bndb"] == upload_bytes,
+                f"portal folder download changed its contents: {folder_names}")
+
+        updated_file = self.service.portal("PATCH", portal_base + "/files", {
+            "path": "managed/portal.bndb", "name": "managed.bndb",
+            "description": "Moved to project root", "folder": None,
+        })
+        require(updated_file["path"] == "managed.bndb" and updated_file["description"] == "Moved to project root",
+                f"portal file update failed: {updated_file}")
+        portal_file_download = self.service.portal("POST", portal_base + "/downloads", {
+            "kind": "file", "paths": ["managed.bndb"],
+        }, expected=201)
+        require(self.download({**portal_file_download, "contentType": portal_file_download["content_type"]})
+                == upload_bytes, "portal file download changed bytes")
+        self.service.portal("DELETE", portal_base + "/files", {
+            "path": "managed.bndb", "delete": True,
+        })
+        self.service.portal("DELETE", portal_base + "/folders", {
+            "path": "managed", "recursive": True,
+        })
+        final_portal_contents = self.service.portal("GET", portal_base + "/contents")
+        require("managed.bndb" not in {file["path"] for file in final_portal_contents["files"]}
+                and "managed" not in {folder["path"] for folder in final_portal_contents["folders"]},
+                f"portal project deletion left catalog entries: {final_portal_contents}")
 
         configuration = json.loads(json.dumps(original_configuration))
         configuration["projects"] = {

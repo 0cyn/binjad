@@ -133,10 +133,24 @@ namespace binjad::upload {
 	UploadIssueResult UploadRegistry::Issue(std::string ownerTokenId, std::string analysisSession, std::string project,
 		std::string filename, std::uint64_t nowUnix, Clock::time_point now)
 	{
-		if (!ValidFilename(filename))
-			return {{}, {}, "filename must be one safe filename component"};
 		if (!sessions_.Find(analysisSession, ownerTokenId, now))
 			return {{}, {}, "analysis session not found"};
+		return IssueValidated(
+			std::move(ownerTokenId), std::move(analysisSession), std::move(project), std::move(filename), nowUnix, now);
+	}
+
+	UploadIssueResult UploadRegistry::IssuePortal(
+		std::string project, std::string filename, std::uint64_t nowUnix, Clock::time_point now)
+	{
+		return IssueValidated(
+			std::string(kPortalUploadOwner), {}, std::move(project), std::move(filename), nowUnix, now);
+	}
+
+	UploadIssueResult UploadRegistry::IssueValidated(std::string ownerTokenId, std::string analysisSession,
+		std::string project, std::string filename, std::uint64_t nowUnix, Clock::time_point now)
+	{
+		if (!ValidFilename(filename))
+			return {{}, {}, "filename must be one safe filename component"};
 		if (!projects_.Find(project))
 			return {{}, {}, "project not found"};
 		auto reference = references_.Acquire();
@@ -327,7 +341,8 @@ namespace binjad::upload {
 		std::lock_guard lock(mutex_);
 		const auto upload = uploads_.find(std::string(id));
 		if (upload == uploads_.end() || upload->second.record.ownerTokenId != ownerTokenId
-			|| upload->second.record.state != UploadState::Completed)
+			|| (upload->second.record.state != UploadState::Completed
+				&& upload->second.record.state != UploadState::Committed))
 			return false;
 		RemoveEntry(upload);
 		return true;
@@ -362,7 +377,11 @@ namespace binjad::upload {
 		std::lock_guard lock(mutex_);
 		for (auto upload = uploads_.begin(); upload != uploads_.end();)
 		{
-			if (now >= upload->second.expiresAt && upload->second.record.state == UploadState::Ready)
+			const bool inactivePortalUpload = upload->second.record.ownerTokenId == kPortalUploadOwner
+				&& upload->second.record.state != UploadState::Receiving
+				&& upload->second.record.state != UploadState::Committing;
+			if (now >= upload->second.expiresAt
+				&& (upload->second.record.state == UploadState::Ready || inactivePortalUpload))
 				RemoveEntry(upload++);
 			else
 				++upload;
