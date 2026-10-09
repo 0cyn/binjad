@@ -3,11 +3,14 @@
 #include "binjad/Config.hpp"
 #include "binjad/http/McpAdmission.hpp"
 #include "binjad/mcp/Protocol.hpp"
+#include "binjad/portal/ProjectManager.hpp"
+#include "binjad/portal/SessionManager.hpp"
 #include "binjad/portal/Service.hpp"
 
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -16,13 +19,6 @@
 #include <vector>
 
 namespace binjad::portal {
-	struct ProjectSummary
-	{
-		std::string reference;
-		std::string name;
-		std::string description;
-	};
-
 	struct RuntimeStatus
 	{
 		std::size_t analysisSessions = 0;
@@ -54,10 +50,6 @@ namespace binjad::portal {
 	class Api
 	{
 	public:
-		using ProjectCreate =
-			std::function<Result<ProjectSummary>(std::string, std::optional<std::string>, std::string)>;
-		using ProjectDelete = std::function<Result<bool>(std::string_view)>;
-		using ProjectList = std::function<std::vector<ProjectSummary>()>;
 		using RuntimeStatusProvider = std::function<RuntimeStatus()>;
 		using ToolConfigApply = std::function<void(const ToolConfig&)>;
 		using RestartCallback = std::function<void()>;
@@ -67,9 +59,8 @@ namespace binjad::portal {
 		static constexpr std::size_t kMaxBodyBytes = 1024 * 1024;
 
 		Api(Config config, Service& service, std::filesystem::path configPath = {});
-		void SetProjectCreateCallback(ProjectCreate callback);
-		void SetProjectDeleteCallback(ProjectDelete callback);
-		void SetProjectListCallback(ProjectList callback);
+		void SetProjectManager(std::shared_ptr<ProjectManager> manager);
+		void SetSessionManager(std::shared_ptr<SessionManager> manager);
 		void SetRuntimeStatusProvider(RuntimeStatusProvider callback);
 		void SetToolConfigCallback(ToolConfigApply callback);
 		void SetRestartCallback(RestartCallback callback);
@@ -91,9 +82,8 @@ namespace binjad::portal {
 		Service& service_;
 		std::string apiPath_;
 		std::filesystem::path configPath_;
-		ProjectCreate projectCreate_;
-		ProjectDelete projectDelete_;
-		ProjectList projectList_;
+		std::shared_ptr<ProjectManager> projectManager_;
+		std::shared_ptr<SessionManager> sessionManager_;
 		RuntimeStatusProvider runtimeStatus_;
 		ToolConfigApply toolConfigApply_;
 		RestartCallback restartCallback_;

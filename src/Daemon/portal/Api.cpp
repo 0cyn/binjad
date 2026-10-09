@@ -170,6 +170,69 @@ namespace binjad::portal {
 			return true;
 		}
 
+		bool OptionalStringField(
+			const Value& object, const char* name, std::optional<std::string>& output, std::string& error)
+		{
+			const auto member = object.FindMember(name);
+			if (member == object.MemberEnd())
+				return true;
+			if (!member->value.IsString())
+			{
+				error = std::string(name) + " must be a string";
+				return false;
+			}
+			output = std::string(member->value.GetString(), member->value.GetStringLength());
+			return true;
+		}
+
+		bool NullableStringField(const Value& object, const char* name,
+			std::optional<std::optional<std::string>>& output, std::string& error)
+		{
+			const auto member = object.FindMember(name);
+			if (member == object.MemberEnd())
+				return true;
+			if (member->value.IsNull())
+			{
+				output = std::optional<std::string> {};
+				return true;
+			}
+			if (!member->value.IsString())
+			{
+				error = std::string(name) + " must be a string or null";
+				return false;
+			}
+			output =
+				std::optional<std::string>(std::string(member->value.GetString(), member->value.GetStringLength()));
+			return true;
+		}
+
+		bool StringArrayField(
+			const Value& object, const char* name, std::vector<std::string>& output, bool required, std::string& error)
+		{
+			const auto member = object.FindMember(name);
+			if (member == object.MemberEnd())
+			{
+				if (required)
+					error = std::string(name) + " is required";
+				return !required;
+			}
+			if (!member->value.IsArray())
+			{
+				error = std::string(name) + " must be an array";
+				return false;
+			}
+			for (const auto& item : member->value.GetArray())
+			{
+				if (!item.IsString())
+				{
+					error = std::string(name) + " must contain only strings";
+					return false;
+				}
+				output.emplace_back(item.GetString(), item.GetStringLength());
+			}
+			return true;
+		}
+
 		bool BoolField(const Value& object, const char* name, bool& output, bool required, std::string& error)
 		{
 			const auto member = object.FindMember(name);
@@ -599,6 +662,310 @@ namespace binjad::portal {
 			writer.String(project.description.data(), static_cast<rapidjson::SizeType>(project.description.size()));
 			writer.EndObject();
 		}
+
+		template <typename WriterType>
+		void WriteProjectFolder(WriterType& writer, const ProjectFolder& folder)
+		{
+			writer.StartObject();
+			writer.Key("path");
+			writer.String(folder.path.data(), static_cast<rapidjson::SizeType>(folder.path.size()));
+			writer.Key("name");
+			writer.String(folder.name.data(), static_cast<rapidjson::SizeType>(folder.name.size()));
+			writer.Key("description");
+			writer.String(folder.description.data(), static_cast<rapidjson::SizeType>(folder.description.size()));
+			if (folder.parent)
+			{
+				writer.Key("parent");
+				writer.String(folder.parent->data(), static_cast<rapidjson::SizeType>(folder.parent->size()));
+			}
+			writer.EndObject();
+		}
+
+		template <typename WriterType>
+		void WriteProjectFile(WriterType& writer, const ProjectFile& file)
+		{
+			writer.StartObject();
+			writer.Key("path");
+			writer.String(file.path.data(), static_cast<rapidjson::SizeType>(file.path.size()));
+			writer.Key("name");
+			writer.String(file.name.data(), static_cast<rapidjson::SizeType>(file.name.size()));
+			writer.Key("description");
+			writer.String(file.description.data(), static_cast<rapidjson::SizeType>(file.description.size()));
+			writer.Key("created_at");
+			writer.Int64(file.createdAt);
+			if (file.folder)
+			{
+				writer.Key("folder");
+				writer.String(file.folder->data(), static_cast<rapidjson::SizeType>(file.folder->size()));
+			}
+			writer.EndObject();
+		}
+
+		template <typename WriterType>
+		void WriteProjectContents(WriterType& writer, const ProjectContents& contents)
+		{
+			writer.StartObject();
+			writer.Key("project");
+			WriteProject(writer, contents.project);
+			writer.Key("folders");
+			writer.StartArray();
+			for (const auto& folder : contents.folders)
+				WriteProjectFolder(writer, folder);
+			writer.EndArray();
+			writer.Key("files");
+			writer.StartArray();
+			for (const auto& file : contents.files)
+				WriteProjectFile(writer, file);
+			writer.EndArray();
+			writer.EndObject();
+		}
+
+		template <typename WriterType>
+		void WriteProjectDocument(WriterType& writer, const ProjectDocument& document)
+		{
+			writer.StartObject();
+			writer.Key("path");
+			writer.String(document.path.data(), static_cast<rapidjson::SizeType>(document.path.size()));
+			writer.Key("kind");
+			switch (document.kind)
+			{
+			case ProjectDocumentKind::Text:
+				writer.String("text");
+				break;
+			case ProjectDocumentKind::Markdown:
+				writer.String("markdown");
+				break;
+			case ProjectDocumentKind::Json:
+				writer.String("json");
+				break;
+			}
+			writer.Key("content");
+			writer.String(document.content.data(), static_cast<rapidjson::SizeType>(document.content.size()));
+			writer.Key("size");
+			writer.Uint64(document.size);
+			writer.EndObject();
+		}
+
+		template <typename WriterType>
+		void WriteRecoverySession(WriterType& writer, const RecoverySessionSummary& session)
+		{
+			writer.StartObject();
+			writer.Key("analysis_session");
+			writer.String(session.reference.data(), static_cast<rapidjson::SizeType>(session.reference.size()));
+			writer.Key("created_at");
+			writer.Uint64(session.createdAt);
+			writer.Key("inactive_seconds");
+			writer.Uint64(session.inactiveSeconds);
+			writer.Key("legacy");
+			writer.Bool(session.legacy);
+			writer.Key("retainers");
+			writer.Uint64(session.retainers);
+			writer.Key("open_items");
+			writer.Uint64(session.openItems);
+			writer.Key("jobs");
+			writer.Uint64(session.jobs);
+			writer.Key("active_jobs");
+			writer.Uint64(session.activeJobs);
+			writer.EndObject();
+		}
+
+		template <typename WriterType>
+		void WriteRecoveryView(WriterType& writer, const RecoveryView& view)
+		{
+			writer.StartObject();
+			writer.Key("binary_view");
+			writer.String(view.reference.data(), static_cast<rapidjson::SizeType>(view.reference.size()));
+			writer.Key("open_item");
+			writer.String(view.openItem.data(), static_cast<rapidjson::SizeType>(view.openItem.size()));
+			writer.Key("view_type");
+			writer.String(view.viewType.data(), static_cast<rapidjson::SizeType>(view.viewType.size()));
+			writer.Key("recommended");
+			writer.Bool(view.recommended);
+			writer.Key("created");
+			writer.Bool(view.created);
+			if (!view.architecture.empty())
+			{
+				writer.Key("architecture");
+				writer.String(view.architecture.data(), static_cast<rapidjson::SizeType>(view.architecture.size()));
+			}
+			if (!view.platform.empty())
+			{
+				writer.Key("platform");
+				writer.String(view.platform.data(), static_cast<rapidjson::SizeType>(view.platform.size()));
+			}
+			writer.Key("status_available");
+			writer.Bool(view.statusAvailable);
+			if (view.statusAvailable)
+			{
+				writer.Key("analysis_state");
+				writer.String(view.analysisState.data(), static_cast<rapidjson::SizeType>(view.analysisState.size()));
+				writer.Key("modified");
+				writer.Bool(view.modified);
+				writer.Key("analysis_changed");
+				writer.Bool(view.analysisChanged);
+				writer.Key("completed");
+				writer.Uint64(view.completed);
+				writer.Key("total");
+				writer.Uint64(view.total);
+			}
+			if (!view.error.empty())
+			{
+				writer.Key("error");
+				writer.String(view.error.data(), static_cast<rapidjson::SizeType>(view.error.size()));
+			}
+			writer.EndObject();
+		}
+
+		template <typename WriterType>
+		void WriteRecoveryItem(WriterType& writer, const RecoveryOpenItem& item)
+		{
+			writer.StartObject();
+			writer.Key("open_item");
+			writer.String(item.reference.data(), static_cast<rapidjson::SizeType>(item.reference.size()));
+			writer.Key("source_kind");
+			writer.String(item.sourceKind.data(), static_cast<rapidjson::SizeType>(item.sourceKind.size()));
+			writer.Key("source");
+			writer.String(item.source.data(), static_cast<rapidjson::SizeType>(item.source.size()));
+			if (item.project)
+			{
+				writer.Key("project");
+				writer.String(item.project->data(), static_cast<rapidjson::SizeType>(item.project->size()));
+			}
+			writer.Key("binary_views");
+			writer.StartArray();
+			for (const auto& view : item.views)
+				WriteRecoveryView(writer, view);
+			writer.EndArray();
+			writer.EndObject();
+		}
+
+		template <typename WriterType>
+		void WriteRecoveryJob(WriterType& writer, const RecoveryJob& job)
+		{
+			writer.StartObject();
+			writer.Key("job");
+			writer.String(job.reference.data(), static_cast<rapidjson::SizeType>(job.reference.size()));
+			writer.Key("operation");
+			writer.String(job.operation.data(), static_cast<rapidjson::SizeType>(job.operation.size()));
+			writer.Key("state");
+			writer.String(job.state.data(), static_cast<rapidjson::SizeType>(job.state.size()));
+			writer.Key("created_at");
+			writer.Uint64(job.createdAt);
+			writer.Key("updated_at");
+			writer.Uint64(job.updatedAt);
+			writer.Key("cancel_requested");
+			writer.Bool(job.cancelRequested);
+			if (job.binaryView)
+			{
+				writer.Key("binary_view");
+				writer.String(job.binaryView->data(), static_cast<rapidjson::SizeType>(job.binaryView->size()));
+			}
+			if (!job.phase.empty())
+			{
+				writer.Key("progress");
+				writer.StartObject();
+				writer.Key("phase");
+				writer.String(job.phase.data(), static_cast<rapidjson::SizeType>(job.phase.size()));
+				writer.Key("completed");
+				writer.Uint64(job.completed);
+				writer.Key("total");
+				writer.Uint64(job.total);
+				writer.Key("message");
+				writer.String(job.message.data(), static_cast<rapidjson::SizeType>(job.message.size()));
+				writer.EndObject();
+			}
+			writer.EndObject();
+		}
+
+		template <typename WriterType>
+		void WriteRecoveryDetails(WriterType& writer, const RecoverySessionDetails& details)
+		{
+			writer.StartObject();
+			writer.Key("session");
+			WriteRecoverySession(writer, details.session);
+			writer.Key("open_items");
+			writer.StartArray();
+			for (const auto& item : details.openItems)
+				WriteRecoveryItem(writer, item);
+			writer.EndArray();
+			writer.Key("jobs");
+			writer.StartArray();
+			for (const auto& job : details.jobs)
+				WriteRecoveryJob(writer, job);
+			writer.EndArray();
+			writer.EndObject();
+		}
+
+		template <typename WriterType>
+		void WriteRecoverySave(WriterType& writer, const RecoverySave& saved)
+		{
+			writer.StartObject();
+			writer.Key("binary_view");
+			writer.String(saved.binaryView.data(), static_cast<rapidjson::SizeType>(saved.binaryView.size()));
+			writer.Key("open_item");
+			writer.String(saved.openItem.data(), static_cast<rapidjson::SizeType>(saved.openItem.size()));
+			writer.Key("destination");
+			writer.String(saved.destination.data(), static_cast<rapidjson::SizeType>(saved.destination.size()));
+			writer.Key("source_kind");
+			writer.String(saved.sourceKind.data(), static_cast<rapidjson::SizeType>(saved.sourceKind.size()));
+			writer.Key("created_database");
+			writer.Bool(saved.createdDatabase);
+			writer.EndObject();
+		}
+
+		template <typename WriterType>
+		void WriteRecoveryBatchSave(WriterType& writer, const RecoveryBatchSave& batch)
+		{
+			writer.StartObject();
+			writer.Key("saved");
+			writer.StartArray();
+			for (const auto& item : batch.saved)
+				WriteRecoverySave(writer, item);
+			writer.EndArray();
+			writer.Key("failed");
+			writer.StartArray();
+			for (const auto& failure : batch.failed)
+			{
+				writer.StartObject();
+				writer.Key("binary_view");
+				writer.String(failure.binaryView.data(), static_cast<rapidjson::SizeType>(failure.binaryView.size()));
+				writer.Key("source");
+				writer.String(failure.source.data(), static_cast<rapidjson::SizeType>(failure.source.size()));
+				writer.Key("error");
+				writer.String(failure.error.data(), static_cast<rapidjson::SizeType>(failure.error.size()));
+				writer.EndObject();
+			}
+			writer.EndArray();
+			writer.Key("skipped");
+			writer.Uint64(batch.skipped);
+			writer.EndObject();
+		}
+
+		int ProjectErrorStatus(std::string_view error)
+		{
+			if (error.find("exceeds the 8 MiB") != std::string_view::npos)
+				return 413;
+			if (error.find("not found") != std::string_view::npos)
+				return 404;
+			if (error.find("open analysis handle") != std::string_view::npos)
+				return 409;
+			if (error.find("unavailable") != std::string_view::npos
+				|| error.find("services are required") != std::string_view::npos)
+				return 503;
+			return 400;
+		}
+
+		int RecoveryErrorStatus(std::string_view error)
+		{
+			if (error.find("not found") != std::string_view::npos)
+				return 404;
+			if (error.find("active") != std::string_view::npos || error.find("uncommitted") != std::string_view::npos
+				|| error.find("cannot save while") != std::string_view::npos)
+				return 409;
+			if (error.find("unavailable") != std::string_view::npos)
+				return 503;
+			return 400;
+		}
 	}  // namespace
 
 	Api::Api(Config config, Service& service, std::filesystem::path configPath) :
@@ -615,19 +982,14 @@ namespace binjad::portal {
 			activeConfiguration_ = NormalizeJson(DefaultConfigJson());
 	}
 
-	void Api::SetProjectDeleteCallback(ProjectDelete callback)
+	void Api::SetProjectManager(std::shared_ptr<ProjectManager> manager)
 	{
-		projectDelete_ = std::move(callback);
+		projectManager_ = std::move(manager);
 	}
 
-	void Api::SetProjectCreateCallback(ProjectCreate callback)
+	void Api::SetSessionManager(std::shared_ptr<SessionManager> manager)
 	{
-		projectCreate_ = std::move(callback);
-	}
-
-	void Api::SetProjectListCallback(ProjectList callback)
-	{
-		projectList_ = std::move(callback);
+		sessionManager_ = std::move(manager);
 	}
 
 	void Api::SetRuntimeStatusProvider(RuntimeStatusProvider callback)
@@ -954,7 +1316,7 @@ namespace binjad::portal {
 			const auto token = service_.Token(*actor);
 			if (!token.value)
 				return Error(500, token.error);
-			auto projects = projectList_ ? projectList_() : std::vector<ProjectSummary> {};
+			auto projects = projectManager_ ? projectManager_->List() : std::vector<ProjectSummary> {};
 			std::sort(projects.begin(), projects.end(), [](const auto& left, const auto& right) {
 				return left.name < right.name || (left.name == right.name && left.reference < right.reference);
 			});
@@ -1253,18 +1615,18 @@ namespace binjad::portal {
 			if (!StringField(*body, "name", name, true, error) || !StringField(*body, "path", path, false, error)
 				|| !StringField(*body, "description", description, false, error))
 				return Error(400, error);
-			if (!projectCreate_)
+			if (!projectManager_)
 				return Error(503, "local project creation is unavailable");
-			const auto created = projectCreate_(std::move(name),
+			const auto created = projectManager_->Create(std::move(name),
 				path.empty() ? std::nullopt : std::optional<std::string>(std::move(path)), std::move(description));
 			if (!created.value)
-				return Error(400, created.error);
+				return Error(ProjectErrorStatus(created.error), created.error);
 			return Json(201, JsonResult([&](auto& writer) { WriteProject(writer, *created.value); }));
 		}
 
 		if (request.path == apiPath_ + "/projects" && request.method == http::Method::Get)
 		{
-			auto projects = projectList_ ? projectList_() : std::vector<ProjectSummary> {};
+			auto projects = projectManager_ ? projectManager_->List() : std::vector<ProjectSummary> {};
 			std::sort(projects.begin(), projects.end(), [](const auto& left, const auto& right) {
 				return left.name < right.name || (left.name == right.name && left.reference < right.reference);
 			});
@@ -1298,12 +1660,428 @@ namespace binjad::portal {
 			return Json(200, JsonResult([&](auto& writer) { WriteAccount(writer, *updated.value); }));
 		}
 
-		const auto projectsPrefix = apiPath_ + "/projects/";
-		if (request.path.starts_with(projectsPrefix) && request.method == http::Method::Delete)
+		const auto sessionsPath = apiPath_ + "/sessions";
+		const auto sessionsPrefix = sessionsPath + "/";
+		if (request.path == sessionsPath || request.path.starts_with(sessionsPrefix))
 		{
-			const auto project = SegmentAfter(request.path, projectsPrefix);
-			if (project.empty() || project.find('/') != std::string_view::npos)
+			if (!sessionManager_)
+				return Error(503, "session recovery service is unavailable");
+			const auto token = service_.Token(*actor);
+			if (!token.value)
+				return Error(500, token.error);
+			if (!token.value->token)
+				return Error(409, "an MCP token is required for session recovery");
+			const auto& owner = token.value->token->id;
+			if (request.path == sessionsPath)
+			{
+				if (request.method != http::Method::Get)
+					return Error(404, "not found");
+				const auto listed = sessionManager_->List(owner);
+				if (!listed.value)
+					return Error(RecoveryErrorStatus(listed.error), listed.error);
+				return Json(200, JsonResult([&](auto& writer) {
+					writer.StartArray();
+					for (const auto& session : *listed.value)
+						WriteRecoverySession(writer, session);
+					writer.EndArray();
+				}));
+			}
+
+			const auto suffix = SegmentAfter(request.path, sessionsPrefix);
+			const auto separator = suffix.find('/');
+			const auto analysisSession = suffix.substr(0, separator);
+			const auto operation =
+				separator == std::string_view::npos ? std::string_view {} : suffix.substr(separator + 1);
+			if (analysisSession.empty())
+				return Error(404, "session not found");
+			if (operation.empty() && request.method == http::Method::Get)
+			{
+				const auto details = sessionManager_->Details(owner, analysisSession);
+				if (!details.value)
+					return Error(RecoveryErrorStatus(details.error), details.error);
+				return Json(200, JsonResult([&](auto& writer) { WriteRecoveryDetails(writer, *details.value); }));
+			}
+			if (operation == "save" && request.method == http::Method::Post)
+			{
+				std::string error;
+				const auto body = ParseObject(request.body, error);
+				if (!body || !OnlyFields(*body, {"binary_view", "destination"}, error))
+					return Error(400, error);
+				std::string binaryView;
+				std::optional<std::string> destination;
+				if (!StringField(*body, "binary_view", binaryView, true, error)
+					|| !OptionalStringField(*body, "destination", destination, error))
+					return Error(400, error);
+				if (destination && destination->empty())
+					destination.reset();
+				const auto saved = sessionManager_->Save(owner, analysisSession, binaryView, std::move(destination));
+				if (!saved.value)
+					return Error(RecoveryErrorStatus(saved.error), saved.error);
+				return Json(200, JsonResult([&](auto& writer) { WriteRecoverySave(writer, *saved.value); }));
+			}
+			if (operation == "save-all" && request.method == http::Method::Post)
+			{
+				std::string error;
+				const auto body = ParseObject(request.body, error);
+				if (!body || !OnlyFields(*body, {}, error))
+					return Error(400, error);
+				const auto saved = sessionManager_->SaveAll(owner, analysisSession);
+				if (!saved.value)
+					return Error(RecoveryErrorStatus(saved.error), saved.error);
+				return Json(200, JsonResult([&](auto& writer) { WriteRecoveryBatchSave(writer, *saved.value); }));
+			}
+			if (operation == "abort" && request.method == http::Method::Post)
+			{
+				std::string error;
+				const auto body = ParseObject(request.body, error);
+				if (!body || !OnlyFields(*body, {"binary_view"}, error))
+					return Error(400, error);
+				std::string binaryView;
+				if (!StringField(*body, "binary_view", binaryView, true, error))
+					return Error(400, error);
+				const auto aborted = sessionManager_->Abort(owner, analysisSession, binaryView);
+				if (!aborted.value)
+					return Error(RecoveryErrorStatus(aborted.error), aborted.error);
+				return Json(200, JsonResult([&](auto& writer) { writer.Bool(*aborted.value); }));
+			}
+			if (operation == "jobs/cancel" && request.method == http::Method::Post)
+			{
+				std::string error;
+				const auto body = ParseObject(request.body, error);
+				if (!body || !OnlyFields(*body, {"job"}, error))
+					return Error(400, error);
+				std::string job;
+				if (!StringField(*body, "job", job, true, error))
+					return Error(400, error);
+				const auto cancelled = sessionManager_->CancelJob(owner, analysisSession, job);
+				if (!cancelled.value)
+					return Error(RecoveryErrorStatus(cancelled.error), cancelled.error);
+				return Json(200, JsonResult([&](auto& writer) { writer.Bool(*cancelled.value); }));
+			}
+			if (operation == "items/close" && request.method == http::Method::Post)
+			{
+				std::string error;
+				const auto body = ParseObject(request.body, error);
+				if (!body || !OnlyFields(*body, {"open_item", "discard"}, error))
+					return Error(400, error);
+				std::string openItem;
+				bool discard = false;
+				if (!StringField(*body, "open_item", openItem, true, error)
+					|| !BoolField(*body, "discard", discard, true, error))
+					return Error(400, error);
+				const auto closed = sessionManager_->CloseItem(owner, analysisSession, openItem, discard);
+				if (!closed.value)
+					return Error(RecoveryErrorStatus(closed.error), closed.error);
+				return Json(200, JsonResult([&](auto& writer) { writer.Bool(*closed.value); }));
+			}
+			if (operation.empty() && request.method == http::Method::Delete)
+			{
+				std::string error;
+				const auto body = ParseObject(request.body, error);
+				if (!body || !OnlyFields(*body, {"force"}, error))
+					return Error(400, error);
+				bool force = false;
+				if (!BoolField(*body, "force", force, true, error) || !force)
+					return Error(400, "force must be true");
+				const auto closed = sessionManager_->ForceClose(owner, analysisSession);
+				if (!closed.value)
+					return Error(RecoveryErrorStatus(closed.error), closed.error);
+				return Json(200, JsonResult([&](auto& writer) { writer.Bool(*closed.value); }));
+			}
+			return Error(404, "not found");
+		}
+
+		const auto projectsPrefix = apiPath_ + "/projects/";
+		if (request.path.starts_with(projectsPrefix))
+		{
+			const auto suffix = SegmentAfter(request.path, projectsPrefix);
+			const auto separator = suffix.find('/');
+			const auto project = suffix.substr(0, separator);
+			const auto operation =
+				separator == std::string_view::npos ? std::string_view {} : suffix.substr(separator + 1);
+			if (project.empty() || !projectManager_)
+				return project.empty() ?
+					Error(404, "project not found") :
+					Error(503, "local project service is unavailable");
+
+			if (operation.empty() && request.method == http::Method::Patch)
+			{
+				std::string error;
+				const auto body = ParseObject(request.body, error);
+				if (!body || !OnlyFields(*body, {"name", "description"}, error))
+					return Error(400, error);
+				std::optional<std::string> name;
+				std::optional<std::string> description;
+				if (!OptionalStringField(*body, "name", name, error)
+					|| !OptionalStringField(*body, "description", description, error))
+					return Error(400, error);
+				if (!name && !description)
+					return Error(400, "a project update is required");
+				if (name && name->empty())
+					return Error(400, "name must not be empty");
+				const auto updated = projectManager_->Update(project, std::move(name), std::move(description));
+				if (!updated.value)
+					return Error(ProjectErrorStatus(updated.error), updated.error);
+				return Json(200, JsonResult([&](auto& writer) { WriteProject(writer, *updated.value); }));
+			}
+
+			if (operation == "contents" && request.method == http::Method::Get)
+			{
+				const auto contents = projectManager_->Contents(project);
+				if (!contents.value)
+					return Error(ProjectErrorStatus(contents.error), contents.error);
+				return Json(200, JsonResult([&](auto& writer) { WriteProjectContents(writer, *contents.value); }));
+			}
+
+			if (operation == "documents" && request.method == http::Method::Post)
+			{
+				std::string error;
+				const auto body = ParseObject(request.body, error);
+				if (!body || !OnlyFields(*body, {"path"}, error))
+					return Error(400, error);
+				std::string path;
+				if (!StringField(*body, "path", path, true, error))
+					return Error(400, error);
+				const auto document = projectManager_->ReadDocument(project, path);
+				if (!document.value)
+					return Error(ProjectErrorStatus(document.error), document.error);
+				return Json(200, JsonResult([&](auto& writer) { WriteProjectDocument(writer, *document.value); }));
+			}
+
+			if (operation == "folders" && request.method == http::Method::Post)
+			{
+				std::string error;
+				const auto body = ParseObject(request.body, error);
+				if (!body || !OnlyFields(*body, {"parent", "name", "description"}, error))
+					return Error(400, error);
+				std::string name;
+				std::string description;
+				std::optional<std::optional<std::string>> requestedParent;
+				if (!StringField(*body, "name", name, true, error)
+					|| !StringField(*body, "description", description, false, error)
+					|| !NullableStringField(*body, "parent", requestedParent, error))
+					return Error(400, error);
+				if (name.empty())
+					return Error(400, "name must not be empty");
+				std::optional<std::string> parent;
+				if (requestedParent && *requestedParent)
+					parent = **requestedParent;
+				const auto created =
+					projectManager_->CreateFolder(project, std::move(parent), std::move(name), std::move(description));
+				if (!created.value)
+					return Error(ProjectErrorStatus(created.error), created.error);
+				return Json(201, JsonResult([&](auto& writer) { WriteProjectFolder(writer, *created.value); }));
+			}
+
+			if (operation == "folders" && request.method == http::Method::Patch)
+			{
+				std::string error;
+				const auto body = ParseObject(request.body, error);
+				if (!body || !OnlyFields(*body, {"path", "name", "description", "parent"}, error))
+					return Error(400, error);
+				std::string path;
+				std::optional<std::string> name;
+				std::optional<std::string> description;
+				std::optional<std::optional<std::string>> parent;
+				if (!StringField(*body, "path", path, true, error) || !OptionalStringField(*body, "name", name, error)
+					|| !OptionalStringField(*body, "description", description, error)
+					|| !NullableStringField(*body, "parent", parent, error))
+					return Error(400, error);
+				if (!name && !description && !parent)
+					return Error(400, "a folder update is required");
+				if (name && name->empty())
+					return Error(400, "name must not be empty");
+				const auto updated = projectManager_->UpdateFolder(
+					project, path, std::move(name), std::move(description), std::move(parent));
+				if (!updated.value)
+					return Error(ProjectErrorStatus(updated.error), updated.error);
+				return Json(200, JsonResult([&](auto& writer) { WriteProjectFolder(writer, *updated.value); }));
+			}
+
+			if (operation == "folders" && request.method == http::Method::Delete)
+			{
+				std::string error;
+				const auto body = ParseObject(request.body, error);
+				if (!body || !OnlyFields(*body, {"path", "recursive"}, error))
+					return Error(400, error);
+				std::string path;
+				bool recursive = false;
+				if (!StringField(*body, "path", path, true, error)
+					|| !BoolField(*body, "recursive", recursive, true, error))
+					return Error(400, error);
+				if (!recursive)
+					return Error(400, "recursive must be true");
+				const auto deleted = projectManager_->DeleteFolder(project, path);
+				if (!deleted.value)
+					return Error(ProjectErrorStatus(deleted.error), deleted.error);
+				return Json(200, JsonResult([&](auto& writer) {
+					writer.StartObject();
+					writer.Key("path");
+					writer.String(path.data(), static_cast<rapidjson::SizeType>(path.size()));
+					writer.Key("deleted");
+					writer.Bool(*deleted.value);
+					writer.EndObject();
+				}));
+			}
+
+			if (operation == "files" && request.method == http::Method::Patch)
+			{
+				std::string error;
+				const auto body = ParseObject(request.body, error);
+				if (!body || !OnlyFields(*body, {"path", "name", "description", "folder"}, error))
+					return Error(400, error);
+				std::string path;
+				std::optional<std::string> name;
+				std::optional<std::string> description;
+				std::optional<std::optional<std::string>> folder;
+				if (!StringField(*body, "path", path, true, error) || !OptionalStringField(*body, "name", name, error)
+					|| !OptionalStringField(*body, "description", description, error)
+					|| !NullableStringField(*body, "folder", folder, error))
+					return Error(400, error);
+				if (!name && !description && !folder)
+					return Error(400, "a file update is required");
+				if (name && name->empty())
+					return Error(400, "name must not be empty");
+				const auto updated = projectManager_->UpdateFile(
+					project, path, std::move(name), std::move(description), std::move(folder));
+				if (!updated.value)
+					return Error(ProjectErrorStatus(updated.error), updated.error);
+				return Json(200, JsonResult([&](auto& writer) { WriteProjectFile(writer, *updated.value); }));
+			}
+
+			if (operation == "files" && request.method == http::Method::Delete)
+			{
+				std::string error;
+				const auto body = ParseObject(request.body, error);
+				if (!body || !OnlyFields(*body, {"path", "delete"}, error))
+					return Error(400, error);
+				std::string path;
+				bool confirmed = false;
+				if (!StringField(*body, "path", path, true, error)
+					|| !BoolField(*body, "delete", confirmed, true, error))
+					return Error(400, error);
+				if (!confirmed)
+					return Error(400, "delete must be true");
+				const auto deleted = projectManager_->DeleteFile(project, path);
+				if (!deleted.value)
+					return Error(ProjectErrorStatus(deleted.error), deleted.error);
+				return Json(200, JsonResult([&](auto& writer) {
+					writer.StartObject();
+					writer.Key("path");
+					writer.String(path.data(), static_cast<rapidjson::SizeType>(path.size()));
+					writer.Key("deleted");
+					writer.Bool(*deleted.value);
+					writer.EndObject();
+				}));
+			}
+
+			if (operation == "downloads" && request.method == http::Method::Post)
+			{
+				std::string error;
+				const auto body = ParseObject(request.body, error);
+				if (!body || !OnlyFields(*body, {"kind", "paths"}, error))
+					return Error(400, error);
+				std::string kindName;
+				std::vector<std::string> paths;
+				if (!StringField(*body, "kind", kindName, true, error)
+					|| !StringArrayField(*body, "paths", paths, false, error))
+					return Error(400, error);
+				ProjectDownloadKind kind;
+				if (kindName == "file")
+					kind = ProjectDownloadKind::File;
+				else if (kindName == "files")
+					kind = ProjectDownloadKind::Files;
+				else if (kindName == "folder")
+					kind = ProjectDownloadKind::Folder;
+				else if (kindName == "project")
+					kind = ProjectDownloadKind::Project;
+				else
+					return Error(400, "kind must be file, files, folder, or project");
+				const auto downloaded = projectManager_->Download(project, kind, paths);
+				if (!downloaded.value)
+					return Error(ProjectErrorStatus(downloaded.error), downloaded.error);
+				return Json(201, JsonResult([&](auto& writer) {
+					writer.StartObject();
+					writer.Key("url");
+					writer.String(
+						downloaded.value->url.data(), static_cast<rapidjson::SizeType>(downloaded.value->url.size()));
+					writer.Key("filename");
+					writer.String(downloaded.value->filename.data(),
+						static_cast<rapidjson::SizeType>(downloaded.value->filename.size()));
+					writer.Key("content_type");
+					writer.String(downloaded.value->contentType.data(),
+						static_cast<rapidjson::SizeType>(downloaded.value->contentType.size()));
+					writer.Key("size");
+					writer.Uint64(downloaded.value->size);
+					writer.Key("sha256");
+					writer.String(downloaded.value->sha256.data(),
+						static_cast<rapidjson::SizeType>(downloaded.value->sha256.size()));
+					writer.Key("expires_at");
+					writer.Uint64(downloaded.value->expiresAt);
+					writer.Key("archive");
+					writer.Bool(downloaded.value->archive);
+					writer.Key("files");
+					writer.Uint64(downloaded.value->files);
+					writer.Key("directories");
+					writer.Uint64(downloaded.value->directories);
+					writer.EndObject();
+				}));
+			}
+
+			if (operation == "uploads" && request.method == http::Method::Post)
+			{
+				std::string error;
+				const auto body = ParseObject(request.body, error);
+				if (!body || !OnlyFields(*body, {"filename"}, error))
+					return Error(400, error);
+				std::string filename;
+				if (!StringField(*body, "filename", filename, true, error))
+					return Error(400, error);
+				const auto upload = projectManager_->StartUpload(project, std::move(filename));
+				if (!upload.value)
+					return Error(ProjectErrorStatus(upload.error), upload.error);
+				return Json(201, JsonResult([&](auto& writer) {
+					writer.StartObject();
+					writer.Key("id");
+					writer.String(upload.value->id.data(), static_cast<rapidjson::SizeType>(upload.value->id.size()));
+					writer.Key("url");
+					writer.String(upload.value->url.data(), static_cast<rapidjson::SizeType>(upload.value->url.size()));
+					writer.Key("filename");
+					writer.String(
+						upload.value->filename.data(), static_cast<rapidjson::SizeType>(upload.value->filename.size()));
+					writer.Key("expires_at");
+					writer.Uint64(upload.value->expiresAt);
+					writer.EndObject();
+				}));
+			}
+
+			if (operation == "uploads/commit" && request.method == http::Method::Post)
+			{
+				std::string error;
+				const auto body = ParseObject(request.body, error);
+				if (!body || !OnlyFields(*body, {"id", "folder", "description"}, error))
+					return Error(400, error);
+				std::string id;
+				std::string description;
+				std::optional<std::optional<std::string>> requestedFolder;
+				if (!StringField(*body, "id", id, true, error)
+					|| !StringField(*body, "description", description, false, error)
+					|| !NullableStringField(*body, "folder", requestedFolder, error))
+					return Error(400, error);
+				std::optional<std::string> folder;
+				if (requestedFolder && *requestedFolder)
+					folder = **requestedFolder;
+				const auto committed =
+					projectManager_->CommitUpload(project, id, std::move(folder), std::move(description));
+				if (!committed.value)
+					return Error(ProjectErrorStatus(committed.error), committed.error);
+				return Json(201, JsonResult([&](auto& writer) { WriteProjectFile(writer, *committed.value); }));
+			}
+
+			if (!operation.empty())
 				return Error(404, "project not found");
+			if (request.method != http::Method::Delete)
+				return Error(404, "not found");
 			std::string error;
 			const auto body = ParseObject(request.body, error);
 			if (!body || !OnlyFields(*body, {"delete"}, error))
@@ -1311,18 +2089,9 @@ namespace binjad::portal {
 			const auto confirmed = body->FindMember("delete");
 			if (confirmed == body->MemberEnd() || !confirmed->value.IsBool() || !confirmed->value.GetBool())
 				return Error(400, "delete must be true");
-			if (!projectDelete_)
-				return Error(400, "local project deletion is unavailable");
-			const auto deleted = projectDelete_(project);
+			const auto deleted = projectManager_->Delete(project);
 			if (!deleted.value)
-			{
-				const auto status = deleted.error == "project not found" ?
-					404 :
-					deleted.error == "project has open analysis handles" ?
-					409 :
-					400;
-				return Error(status, deleted.error);
-			}
+				return Error(ProjectErrorStatus(deleted.error), deleted.error);
 			return Json(200, JsonResult([&](auto& writer) {
 				writer.StartObject();
 				writer.Key("project");
