@@ -9,6 +9,78 @@
   <script src="{{PORTAL_PATH}}/app.js" defer></script>
 </head>
 <body>
+  <!-- Selected Ionicons from ionic-team/ionicons commit d1e2c48641fd5f4910ee42a144dc1c84b1a9a4ee. -->
+  <svg class="ionicon-sprite" aria-hidden="true" focusable="false">
+    <defs>
+      <symbol id="ion-refresh-outline" viewBox="0 0 512 512">
+        <path d="M320,146s24.36-12-64-12A160,160,0,1,0,416,294" fill="none" stroke="currentColor" stroke-linecap="round" stroke-miterlimit="10" stroke-width="32"></path>
+        <polyline points="256 58 336 138 256 218" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="32"></polyline>
+      </symbol>
+      <symbol id="ion-trash-outline" viewBox="0 0 512 512">
+        <path d="M112,112l20,320c.95,18.49,14.4,32,32,32H348c17.67,0,30.87-13.51,32-32l20-320" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="32"></path>
+        <line x1="80" y1="112" x2="432" y2="112" fill="none" stroke="currentColor" stroke-linecap="round" stroke-miterlimit="10" stroke-width="32"></line>
+        <path d="M192,112V72h0a23.93,23.93,0,0,1,24-24h80a23.93,23.93,0,0,1,24,24h0v40" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="32"></path>
+        <line x1="256" y1="176" x2="256" y2="400" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="32"></line>
+        <line x1="184" y1="176" x2="192" y2="400" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="32"></line>
+        <line x1="328" y1="176" x2="320" y2="400" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="32"></line>
+      </symbol>
+      <symbol id="ion-create-outline" viewBox="0 0 512 512">
+        <path d="M384,224V408a40,40,0,0,1-40,40H104a40,40,0,0,1-40-40V168a40,40,0,0,1,40-40H271.48" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="32"></path>
+        <path d="M459.94,53.25a16.06,16.06,0,0,0-23.22-.56L424.35,65a8,8,0,0,0,0,11.31l11.34,11.32a8,8,0,0,0,11.34,0l12.06-12C465.19,69.54,465.76,59.62,459.94,53.25Z" fill="currentColor"></path>
+        <path d="M399.34,90,218.82,270.2a9,9,0,0,0-2.31,3.93L208.16,299a3.91,3.91,0,0,0,4.86,4.86l24.85-8.35a9,9,0,0,0,3.93-2.31L422,112.66A9,9,0,0,0,422,100L412.05,90A9,9,0,0,0,399.34,90Z" fill="currentColor"></path>
+      </symbol>
+      <symbol id="ion-download-outline" viewBox="0 0 512 512">
+        <path d="M336,176h40a40,40,0,0,1,40,40V424a40,40,0,0,1-40,40H136a40,40,0,0,1-40-40V216a40,40,0,0,1,40-40h40" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="32"></path>
+        <polyline points="176 272 256 352 336 272" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="32"></polyline>
+        <line x1="256" y1="48" x2="256" y2="336" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="32"></line>
+      </symbol>
+      <symbol id="ion-add-outline" viewBox="0 0 512 512">
+        <line x1="256" y1="112" x2="256" y2="400" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="32"></line>
+        <line x1="400" y1="256" x2="112" y2="256" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="32"></line>
+      </symbol>
+      <symbol id="ion-folder-open-outline" viewBox="0 0 512 512">
+        <path d="M64,192V120a40,40,0,0,1,40-40h75.89a40,40,0,0,1,22.19,6.72l27.84,18.56A40,40,0,0,0,252.11,112H408a40,40,0,0,1,40,40v40" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="32"></path>
+        <path d="M479.9,226.55,463.68,392a40,40,0,0,1-39.93,40H88.25a40,40,0,0,1-39.93-40L32.1,226.55A32,32,0,0,1,64,192h384.1A32,32,0,0,1,479.9,226.55Z" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="32"></path>
+      </symbol>
+      <symbol id="ion-file-tray-full-outline" viewBox="0 0 512 512">
+        <path d="M384,80H128c-26,0-43,14-48,40L48,272V384a48.14,48.14,0,0,0,48,48H416a48.14,48.14,0,0,0,48-48V272L432,120C427,93,409,80,384,80Z" fill="none" stroke="currentColor" stroke-linejoin="round" stroke-width="32"></path>
+        <line x1="48" y1="272" x2="192" y2="272" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="32"></line>
+        <line x1="320" y1="272" x2="464" y2="272" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="32"></line>
+        <path d="M192,272a64,64,0,0,0,128,0" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="32"></path>
+        <line x1="144" y1="144" x2="368" y2="144" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="32"></line>
+        <line x1="128" y1="208" x2="384" y2="208" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="32"></line>
+      </symbol>
+      <symbol id="ion-reader-outline" viewBox="0 0 512 512">
+        <rect x="96" y="48" width="320" height="416" rx="48" ry="48" fill="none" stroke="currentColor" stroke-linejoin="round" stroke-width="32"></rect>
+        <line x1="176" y1="128" x2="336" y2="128" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="32"></line>
+        <line x1="176" y1="208" x2="336" y2="208" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="32"></line>
+        <line x1="176" y1="288" x2="256" y2="288" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="32"></line>
+      </symbol>
+      <symbol id="ion-document-outline" viewBox="0 0 512 512">
+        <path d="M416,221.25V416a48,48,0,0,1-48,48H144a48,48,0,0,1-48-48V96a48,48,0,0,1,48-48h98.75a32,32,0,0,1,22.62,9.37L406.63,198.63A32,32,0,0,1,416,221.25Z" fill="none" stroke="currentColor" stroke-linejoin="round" stroke-width="32"></path>
+        <path d="M256,56V176a32,32,0,0,0,32,32H408" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="32"></path>
+      </symbol>
+      <symbol id="ion-cloud-upload-outline" viewBox="0 0 512 512">
+        <path d="M320,367.79h76c55,0,100-29.21,100-83.6s-53-81.47-96-83.6c-8.89-85.06-71-136.8-144-136.8-69,0-113.44,45.79-128,91.2-60,5.7-112,43.88-112,106.4s54,106.4,120,106.4h56" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="32"></path>
+        <polyline points="320 255.79 256 191.79 192 255.79" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="32"></polyline>
+        <line x1="256" y1="448.21" x2="256" y2="207.79" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="32"></line>
+      </symbol>
+      <symbol id="ion-close-outline" viewBox="0 0 512 512">
+        <line x1="368" y1="368" x2="144" y2="144" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="32"></line>
+        <line x1="368" y1="144" x2="144" y2="368" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="32"></line>
+      </symbol>
+      <symbol id="ion-checkmark-outline" viewBox="0 0 512 512">
+        <polyline points="416 128 192 384 96 288" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="32"></polyline>
+      </symbol>
+      <symbol id="ion-save-outline" viewBox="0 0 512 512">
+        <path d="M380.93,57.37A32,32,0,0,0,358.3,48H94.22A46.21,46.21,0,0,0,48,94.22V417.78A46.21,46.21,0,0,0,94.22,464H417.78A46.36,46.36,0,0,0,464,417.78V153.7a32,32,0,0,0-9.37-22.63ZM256,416a64,64,0,1,1,64-64A63.92,63.92,0,0,1,256,416Zm48-224H112a16,16,0,0,1-16-16V112a16,16,0,0,1,16-16H304a16,16,0,0,1,16,16v64A16,16,0,0,1,304,192Z" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="32"></path>
+      </symbol>
+      <symbol id="ion-stop-circle-outline" viewBox="0 0 512 512">
+        <path d="M448,256c0-106-86-192-192-192S64,150,64,256s86,192,192,192S448,362,448,256Z" fill="none" stroke="currentColor" stroke-miterlimit="10" stroke-width="32"></path>
+        <path d="M310.4,336H201.6A25.62,25.62,0,0,1,176,310.4V201.6A25.62,25.62,0,0,1,201.6,176H310.4A25.62,25.62,0,0,1,336,201.6V310.4A25.62,25.62,0,0,1,310.4,336Z" fill="currentColor"></path>
+      </symbol>
+    </defs>
+  </svg>
   <div id="gate" class="gate">
     <div class="gate-box">
       <div class="brand">binja'd</div>
@@ -40,28 +112,29 @@
     </header>
     <aside class="side">
       <nav class="nav">
-        <details class="nav-group" open>
-          <summary>System</summary>
+        <section class="nav-group" aria-labelledby="nav-system-title">
+          <div id="nav-system-title" class="nav-group-title">System</div>
           <div class="nav-items">
             <button class="on" data-action="show-view" data-view="overview">Overview</button>
             <button data-action="show-view" data-view="access">Access</button>
             <button data-action="show-view" data-view="configuration">Configuration</button>
           </div>
-        </details>
-        <details class="nav-group">
-          <summary>Services</summary>
+        </section>
+        <section class="nav-group" aria-labelledby="nav-services-title">
+          <div id="nav-services-title" class="nav-group-title">Services</div>
           <div class="nav-items">
             <button data-action="show-view" data-view="projects">Projects</button>
+            <button data-action="show-view" data-view="sessions">Sessions</button>
           </div>
-        </details>
-        <details class="nav-group">
-          <summary>MCP</summary>
+        </section>
+        <section class="nav-group" aria-labelledby="nav-mcp-title">
+          <div id="nav-mcp-title" class="nav-group-title">MCP</div>
           <div class="nav-items">
             <button data-action="show-view" data-view="enabled-tools">Enabled Tools</button>
             <button data-action="show-view" data-view="context">Context View</button>
             <button data-action="show-view" data-view="tools">Tool Calls</button>
           </div>
-        </details>
+        </section>
       </nav>
     </aside>
 
@@ -175,28 +248,213 @@
       </section>
 
       <section id="projects" class="view hidden">
-        <article id="project-create" class="block hidden">
-          <div class="block-head"><h2>Create project</h2></div>
-          <div class="project-form">
-            <label>Name <input id="project-name" maxlength="255"></label>
-            <label>Project path <input id="project-path" placeholder="Optional path ending in .bnpr"></label>
-            <label>Description <input id="project-description"></label>
-          </div>
-          <div class="form-actions">
-            <button class="quiet" data-action="toggle-project-create">Cancel</button>
-            <button class="primary" data-action="create-project">Create</button>
-          </div>
-        </article>
-        <article class="block">
-          <div class="block-head">
-            <div>
-              <h2>Local project catalog</h2>
-              <div class="meta">Projects are stored in configured roots, see System/Configuration</div>
+        <div class="project-workspace">
+          <div class="project-manager">
+            <div id="project-empty" class="project-empty">Select a project from the right.</div>
+            <div id="project-loading" class="project-empty hidden">Loading project…</div>
+            <div id="project-detail" class="hidden">
+              <div class="project-detail-head">
+                <div class="project-detail-copy">
+                  <h2 id="project-detail-name"></h2>
+                  <p id="project-detail-description"></p>
+                </div>
+                <div class="project-actions">
+                  <button class="icon-button" data-action="import-project-file" aria-label="Import file" data-tooltip="Import file">
+                    <svg class="ion-icon" aria-hidden="true"><use href="#ion-cloud-upload-outline"></use></svg>
+                  </button>
+                  <button class="icon-button" data-action="download-project" aria-label="Download project" data-tooltip="Download project">
+                    <svg class="ion-icon" aria-hidden="true"><use href="#ion-download-outline"></use></svg>
+                  </button>
+                  <button class="icon-button" data-action="edit-project" aria-label="Edit project" data-tooltip="Edit project">
+                    <svg class="ion-icon" aria-hidden="true"><use href="#ion-create-outline"></use></svg>
+                  </button>
+                  <button class="icon-button" data-action="delete-project" aria-label="Delete project" data-tooltip="Delete project">
+                    <svg class="ion-icon" aria-hidden="true"><use href="#ion-trash-outline"></use></svg>
+                  </button>
+                </div>
+              </div>
+              <div class="project-browser-bar">
+                <nav id="project-breadcrumbs" class="project-breadcrumbs" aria-label="Project folder"></nav>
+                <div class="project-actions">
+                  <button class="icon-button" data-action="refresh-project" aria-label="Refresh project" data-tooltip="Refresh project">
+                    <svg class="ion-icon" aria-hidden="true"><use href="#ion-refresh-outline"></use></svg>
+                  </button>
+                  <button id="download-selected-files" class="icon-button" data-action="download-selected-files" aria-label="Download selected files" data-tooltip="Download selected files" disabled>
+                    <svg class="ion-icon" aria-hidden="true"><use href="#ion-download-outline"></use></svg>
+                  </button>
+                  <button class="icon-button" data-action="create-project-folder" aria-label="New folder" data-tooltip="New folder">
+                    <svg class="ion-icon" aria-hidden="true"><use href="#ion-folder-open-outline"></use></svg>
+                  </button>
+                </div>
+              </div>
+              <div id="project-entries" class="project-entries"></div>
             </div>
-            <button class="primary" data-action="toggle-project-create">Create Project</button>
           </div>
-          <div id="projects-list"></div>
-        </article>
+          <aside class="project-sidebar" aria-label="Projects">
+            <div class="project-sidebar-actions">
+              <button class="icon-button project-create-button" data-action="create-project" aria-label="New project" data-tooltip="New project">
+                <svg class="ion-icon" aria-hidden="true"><use href="#ion-add-outline"></use></svg>
+              </button>
+            </div>
+            <div id="projects-list" class="project-list"></div>
+          </aside>
+        </div>
+
+        <dialog id="project-create-dialog" class="portal-dialog">
+          <form id="project-create-form">
+            <h2>Create project</h2>
+            <label>Name <input id="project-name" maxlength="255" required></label>
+            <label>Project path <input id="project-path" placeholder="Optional path ending in .bnpr"></label>
+            <label>Description <textarea id="project-description"></textarea></label>
+            <div class="form-actions">
+              <button class="icon-button" type="button" data-action="close-dialog" aria-label="Cancel" data-tooltip="Cancel">
+                <svg class="ion-icon" aria-hidden="true"><use href="#ion-close-outline"></use></svg>
+              </button>
+              <button class="icon-button" type="submit" aria-label="Create project" data-tooltip="Create project">
+                <svg class="ion-icon" aria-hidden="true"><use href="#ion-checkmark-outline"></use></svg>
+              </button>
+            </div>
+          </form>
+        </dialog>
+
+        <dialog id="project-edit-dialog" class="portal-dialog">
+          <form id="project-edit-form">
+            <h2>Edit project</h2>
+            <label>Name <input id="project-edit-name" maxlength="255" required></label>
+            <label>Description <textarea id="project-edit-description"></textarea></label>
+            <div class="form-actions">
+              <button class="icon-button" type="button" data-action="close-dialog" aria-label="Cancel" data-tooltip="Cancel">
+                <svg class="ion-icon" aria-hidden="true"><use href="#ion-close-outline"></use></svg>
+              </button>
+              <button class="icon-button" type="submit" aria-label="Save project" data-tooltip="Save project">
+                <svg class="ion-icon" aria-hidden="true"><use href="#ion-checkmark-outline"></use></svg>
+              </button>
+            </div>
+          </form>
+        </dialog>
+
+        <dialog id="project-folder-dialog" class="portal-dialog">
+          <form id="project-folder-form">
+            <h2 id="project-folder-dialog-title">New folder</h2>
+            <label>Name <input id="project-folder-name" maxlength="255" required></label>
+            <label>Location <select id="project-folder-parent"></select></label>
+            <label>Description <textarea id="project-folder-description"></textarea></label>
+            <div class="form-actions">
+              <button class="icon-button" type="button" data-action="close-dialog" aria-label="Cancel" data-tooltip="Cancel">
+                <svg class="ion-icon" aria-hidden="true"><use href="#ion-close-outline"></use></svg>
+              </button>
+              <button class="icon-button" type="submit" aria-label="Save folder" data-tooltip="Save folder">
+                <svg class="ion-icon" aria-hidden="true"><use href="#ion-checkmark-outline"></use></svg>
+              </button>
+            </div>
+          </form>
+        </dialog>
+
+        <dialog id="project-file-dialog" class="portal-dialog">
+          <form id="project-file-form">
+            <h2>Edit file</h2>
+            <label>Name <input id="project-file-name" maxlength="255" required></label>
+            <label>Location <select id="project-file-folder"></select></label>
+            <label>Description <textarea id="project-file-description"></textarea></label>
+            <div class="form-actions">
+              <button class="icon-button" type="button" data-action="close-dialog" aria-label="Cancel" data-tooltip="Cancel">
+                <svg class="ion-icon" aria-hidden="true"><use href="#ion-close-outline"></use></svg>
+              </button>
+              <button class="icon-button" type="submit" aria-label="Save file" data-tooltip="Save file">
+                <svg class="ion-icon" aria-hidden="true"><use href="#ion-checkmark-outline"></use></svg>
+              </button>
+            </div>
+          </form>
+        </dialog>
+
+        <dialog id="project-import-dialog" class="portal-dialog">
+          <form id="project-import-form">
+            <h2>Import file</h2>
+            <label>Local file <input id="project-import-source" type="file" required></label>
+            <label>Project name <input id="project-import-name" maxlength="255" required></label>
+            <label>Location <select id="project-import-folder"></select></label>
+            <label>Description <textarea id="project-import-description"></textarea></label>
+            <div class="form-actions">
+              <button class="icon-button" type="button" data-action="close-dialog" aria-label="Cancel" data-tooltip="Cancel">
+                <svg class="ion-icon" aria-hidden="true"><use href="#ion-close-outline"></use></svg>
+              </button>
+              <button id="project-import-submit" class="icon-button" type="submit" aria-label="Import file" data-tooltip="Import file">
+                <svg class="ion-icon" aria-hidden="true"><use href="#ion-cloud-upload-outline"></use></svg>
+              </button>
+            </div>
+          </form>
+        </dialog>
+
+        <dialog id="project-reader-dialog" class="portal-dialog project-reader-dialog">
+          <div class="project-reader-shell">
+            <header class="project-reader-head">
+              <div class="project-reader-heading">
+                <h2 id="project-reader-title"></h2>
+                <div id="project-reader-meta" class="meta"></div>
+              </div>
+              <button class="icon-button" type="button" data-action="close-dialog" aria-label="Close document" data-tooltip="Close document">
+                <svg class="ion-icon" aria-hidden="true"><use href="#ion-close-outline"></use></svg>
+              </button>
+            </header>
+            <div id="project-reader-main" class="project-reader-main">
+              <aside id="project-reader-toc" class="project-reader-toc hidden" aria-label="Table of contents"></aside>
+              <div id="project-reader-content" class="project-reader-content" aria-live="polite"></div>
+            </div>
+          </div>
+        </dialog>
+      </section>
+
+      <section id="sessions" class="view hidden">
+        <div class="project-workspace session-workspace">
+          <div class="project-manager">
+            <div id="session-empty" class="project-empty">Select a session from the right.</div>
+            <div id="session-loading" class="project-empty hidden">Loading session…</div>
+            <div id="session-detail" class="hidden">
+              <div class="project-detail-head">
+                <div class="project-detail-copy">
+                  <h2 id="session-detail-name"></h2>
+                  <p id="session-detail-description"></p>
+                </div>
+                <div class="project-actions">
+                  <button class="icon-button" data-action="refresh-session" aria-label="Refresh session" data-tooltip="Refresh session">
+                    <svg class="ion-icon" aria-hidden="true"><use href="#ion-refresh-outline"></use></svg>
+                  </button>
+                  <button id="save-session-views" class="icon-button" data-action="save-session-views" aria-label="Save all changed files" data-tooltip="Save all changed files">
+                    <svg class="ion-icon" aria-hidden="true"><use href="#ion-save-outline"></use></svg>
+                  </button>
+                  <button class="icon-button" data-action="force-close-session" aria-label="Force close session" data-tooltip="Force close session">
+                    <svg class="ion-icon" aria-hidden="true"><use href="#ion-trash-outline"></use></svg>
+                  </button>
+                </div>
+              </div>
+              <div id="session-recovery-content" class="session-recovery-content"></div>
+            </div>
+          </div>
+          <aside class="project-sidebar" aria-label="Analysis sessions">
+            <div class="project-sidebar-actions">
+              <button class="icon-button project-create-button" data-action="refresh-sessions" aria-label="Refresh sessions" data-tooltip="Refresh sessions">
+                <svg class="ion-icon" aria-hidden="true"><use href="#ion-refresh-outline"></use></svg>
+              </button>
+            </div>
+            <div id="sessions-list" class="project-list"></div>
+          </aside>
+        </div>
+
+        <dialog id="session-save-as-dialog" class="portal-dialog">
+          <form id="session-save-as-form">
+            <h2>Save BinaryView as</h2>
+            <div id="session-save-as-source" class="session-save-as-source meta"></div>
+            <label>Destination <input id="session-save-as-destination" required></label>
+            <div class="form-actions">
+              <button class="icon-button" type="button" data-action="close-dialog" aria-label="Cancel" data-tooltip="Cancel">
+                <svg class="ion-icon" aria-hidden="true"><use href="#ion-close-outline"></use></svg>
+              </button>
+              <button class="icon-button" type="submit" aria-label="Save BinaryView" data-tooltip="Save BinaryView">
+                <svg class="ion-icon" aria-hidden="true"><use href="#ion-save-outline"></use></svg>
+              </button>
+            </div>
+          </form>
+        </dialog>
       </section>
 
       <section id="configuration" class="view hidden">

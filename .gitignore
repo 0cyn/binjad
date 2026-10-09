@@ -1,5 +1,6 @@
 /build*/
 /out/
+/cmake-build*/
 # you will not like working with what I have set up here, I promise.
 AGENTS.md
 # personal dev notes gathered from testing this

@@ -151,6 +151,48 @@ class LaunchdService:
             require('id="restart-daemon"' in page and 'data-action="restart-daemon"' in page
                     and 'id="restart-badge"' not in page and 'id="config-warning"' not in page,
                     "portal page did not contain the single daemon restart control")
+            require('<details class="nav-group"' not in page
+                    and 'id="nav-system-title"' in page and 'id="nav-services-title"' in page
+                    and 'id="nav-mcp-title"' in page and 'data-view="sessions"' in page,
+                    "portal navigation groups remained collapsible")
+            require('id="sessions-list"' in page and 'id="session-recovery-content"' in page
+                    and 'id="session-save-as-dialog"' in page,
+                    "portal session recovery surface was incomplete")
+            require('class="project-manager"' in page and 'class="project-sidebar"' in page
+                    and page.index('class="project-manager"') < page.index('class="project-sidebar"')
+                    and 'id="project-entries"' in page and 'data-action="import-project-file"' in page
+                    and "Local project catalog" not in page,
+                    "portal page did not contain the right-side project manager layout")
+            require('id="ion-refresh-outline"' in page and 'id="ion-trash-outline"' in page
+                    and 'id="ion-create-outline"' in page and 'id="ion-download-outline"' in page
+                    and 'class="icon-button danger-icon"' not in page and 'data-tooltip="Delete project"' in page,
+                    "portal page did not contain the local Ionicons project controls")
+            require('id="ion-file-tray-full-outline"' in page and 'id="ion-reader-outline"' in page
+                    and 'id="ion-document-outline"' in page,
+                    "portal page did not contain the Ionicons file-format symbols")
+            status, headers, portal_script, _ = self.http.request("GET", "/portal/app.js")
+            require(status == 200 and headers.get("content-type", "").startswith("text/javascript")
+                    and 'endsWith(".bndb")' in portal_script and 'icon: "file-tray-full-outline"' in portal_script
+                    and 'endsWith(".md")' in portal_script and 'icon: "reader-outline"' in portal_script
+                    and 'icon: "document-outline"' in portal_script and 'className: "document"' not in portal_script
+                    and 'data-format="${escapeHtml(presentation.format)}"' in portal_script,
+                    "portal script did not map file formats to the required Ionicons")
+            require('id="project-reader-dialog"' in page and 'open-project-document' in portal_script
+                    and "function renderMarkdown(" in portal_script and "function highlightJson(" in portal_script
+                    and "function highlightCode(" in portal_script and 'class="markdown-toc"' in portal_script
+                    and 'parsed.protocol === "binaryninja:"' in portal_script
+                    and "function updateProjectReaderToc(" in portal_script
+                    and 'event.target !== dialog' in portal_script,
+                    "portal document reader assets were incomplete")
+            status, headers, portal_style, _ = self.http.request("GET", "/portal/app.css")
+            require(status == 200 and headers.get("content-type", "").startswith("text/css")
+                    and "width: 85vw" in portal_style and "height: 85vh" in portal_style
+                    and ".project-reader-json .json-key" in portal_style
+                    and ".project-reader-markdown .code-keyword" in portal_style
+                    and ".project-reader-main.has-toc" in portal_style
+                    and ".project-reader-toc" in portal_style and ".markdown-toc a.active" in portal_style
+                    and "scrollbar-width: thin" in portal_style,
+                    "portal document reader sizing or JSON highlighting styles were missing")
             require('id="setup-user"' not in page and 'data-action="setup"' not in page,
                     "the login page still contained the old setup form")
             persisted = self.portal("GET", "/config")["configuration"]
