@@ -20,6 +20,8 @@
 #endif
 #include "binjad/platform/Paths.hpp"
 #include "binjad/portal/Api.hpp"
+#include "binjad/portal/LocalProjectManager.hpp"
+#include "binjad/portal/LocalSessionManager.hpp"
 #include "binjad/portal/Service.hpp"
 #include "binjad/process/Role.hpp"
 #include "binjad/process/Supervisor.hpp"
@@ -58,14 +60,6 @@ namespace {
 	{
 		binjad::Log(binjad::LogLevel::Error, message);
 		std::cerr << message << '\n';
-	}
-
-	bool SafeProjectFilename(std::string_view value)
-	{
-		return !value.empty() && value != "." && value != ".."
-			&& std::none_of(value.begin(), value.end(), [](unsigned char character) {
-				   return character < 0x20 || character == 0x7f || character == '/' || character == '\\';
-			   });
 	}
 
 	struct SessionRuntime
@@ -280,69 +274,12 @@ namespace {
 			});
 			sessionRuntime->ConfigureDispatcher(
 				*result.config, fileRuntime->coordinator.get(), fileRuntime->projectCoordinator.get());
-			authenticationRuntime->portalApi.SetProjectCreateCallback(
-				[fileRuntime, config = *result.config](
-					std::string name, std::optional<std::string> requestedPath, std::string description) {
-					if (!requestedPath)
-					{
-						if (!config.projects.defaultRoot)
-							return binjad::portal::Result<binjad::portal::ProjectSummary> {
-								{}, "project creation requires a configured default project root"};
-						if (!SafeProjectFilename(name))
-							return binjad::portal::Result<binjad::portal::ProjectSummary> {
-								{}, "project name cannot be used as a filename; provide a path"};
-						requestedPath = name + ".bnpr";
-					}
-
-					const std::filesystem::path supplied(*requestedPath);
-					const auto normalized = supplied.lexically_normal();
-					std::filesystem::path destination;
-					if (supplied.is_absolute())
-					{
-						if (!config.projects.allowProjectRegistration)
-							return binjad::portal::Result<binjad::portal::ProjectSummary> {
-								{}, "outside-root project creation is disabled"};
-						if (normalized.extension() != ".bnpr")
-							return binjad::portal::Result<binjad::portal::ProjectSummary> {
-								{}, "absolute project path must end in .bnpr"};
-						destination = normalized;
-					}
-					else
-					{
-						if (!config.projects.defaultRoot || normalized.empty() || normalized == "."
-							|| *normalized.begin() == ".." || normalized.extension() != ".bnpr")
-							return binjad::portal::Result<binjad::portal::ProjectSummary> {
-								{}, "project path must stay inside the default root and end in .bnpr"};
-						destination = (*config.projects.defaultRoot / normalized).lexically_normal();
-					}
-					const auto created = fileRuntime->projectCoordinator->CreateProject(
-						destination, std::move(name), std::move(description));
-					if (!created.value)
-						return binjad::portal::Result<binjad::portal::ProjectSummary> {{}, created.error};
-					return binjad::portal::Result<binjad::portal::ProjectSummary> {
-						binjad::portal::ProjectSummary {
-							created.value->reference, created.value->name, created.value->description},
-						{}};
-				});
-			authenticationRuntime->portalApi.SetProjectDeleteCallback(
-				[sessionRuntime, fileRuntime](std::string_view project) {
-					if (!sessionRuntime->projects->Find(project))
-						return binjad::portal::Result<bool> {{}, "project not found"};
-					if (sessionRuntime->openItems->HasProject(project))
-						return binjad::portal::Result<bool> {{}, "project has open analysis handles"};
-					if (!fileRuntime->projectCoordinator)
-						return binjad::portal::Result<bool> {{}, "local project deletion is unavailable"};
-					const auto error = fileRuntime->projectCoordinator->DeleteProject(project);
-					return error.empty() ?
-						binjad::portal::Result<bool> {true, {}} :
-						binjad::portal::Result<bool> {{}, error};
-				});
-			authenticationRuntime->portalApi.SetProjectListCallback([sessionRuntime] {
-				std::vector<binjad::portal::ProjectSummary> result;
-				for (const auto& project : sessionRuntime->projects->List())
-					result.push_back({project.reference, project.name, project.description});
-				return result;
-			});
+			authenticationRuntime->portalApi.SetProjectManager(std::make_shared<binjad::portal::LocalProjectManager>(
+				*result.config, sessionRuntime->projects, sessionRuntime->openItems, fileRuntime->projectCoordinator,
+				sessionRuntime->downloads, sessionRuntime->uploads));
+			authenticationRuntime->portalApi.SetSessionManager(std::make_shared<binjad::portal::LocalSessionManager>(
+				sessionRuntime->sessions, sessionRuntime->openItems, sessionRuntime->jobs, fileRuntime->coordinator,
+				fileRuntime->projectCoordinator));
 			authenticationRuntime->portalApi.SetRuntimeStatusProvider([sessionRuntime, fileRuntime] {
 				const auto compute = sessionRuntime->scheduler->Status();
 				return binjad::portal::RuntimeStatus {sessionRuntime->sessions->Size(),
