@@ -43,6 +43,24 @@ namespace binjad::download {
 	{
 		if (!sessions_.Find(analysisSession, ownerTokenId, now))
 			return {{}, {}, "analysis session not found"};
+		return IssueValidated(std::move(ownerTokenId), std::move(analysisSession), std::move(project),
+			std::move(artifactPath), std::move(workingDirectory), std::move(attachmentName), std::move(contentType),
+			size, std::move(sha256), nowUnix, now);
+	}
+
+	DownloadIssueResult DownloadRegistry::IssuePortal(std::string project, std::filesystem::path artifactPath,
+		std::filesystem::path workingDirectory, std::string attachmentName, std::string contentType, std::uint64_t size,
+		std::string sha256, std::uint64_t nowUnix, Clock::time_point now)
+	{
+		return IssueValidated("portal", {}, std::move(project), std::move(artifactPath), std::move(workingDirectory),
+			std::move(attachmentName), std::move(contentType), size, std::move(sha256), nowUnix, now);
+	}
+
+	DownloadIssueResult DownloadRegistry::IssueValidated(std::string ownerTokenId, std::string analysisSession,
+		std::string project, std::filesystem::path artifactPath, std::filesystem::path workingDirectory,
+		std::string attachmentName, std::string contentType, std::uint64_t size, std::string sha256,
+		std::uint64_t nowUnix, Clock::time_point now)
+	{
 		if (!projects_.Find(project))
 			return {{}, {}, "project not found"};
 		if (!SafeAttachmentName(attachmentName))

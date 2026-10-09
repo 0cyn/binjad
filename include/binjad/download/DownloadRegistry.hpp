@@ -54,6 +54,9 @@ namespace binjad::download {
 			std::filesystem::path artifactPath, std::filesystem::path workingDirectory, std::string attachmentName,
 			std::string contentType, std::uint64_t size, std::string sha256, std::uint64_t nowUnix,
 			Clock::time_point now);
+		DownloadIssueResult IssuePortal(std::string project, std::filesystem::path artifactPath,
+			std::filesystem::path workingDirectory, std::string attachmentName, std::string contentType,
+			std::uint64_t size, std::string sha256, std::uint64_t nowUnix, Clock::time_point now);
 		std::optional<DownloadRecord> Claim(std::string_view capability, Clock::time_point now);
 		void RemoveByAnalysisSession(std::string_view analysisSession);
 		void RemoveByToken(std::string_view ownerTokenId);
@@ -68,6 +71,10 @@ namespace binjad::download {
 		};
 
 		using EntryMap = std::unordered_map<std::string, Entry>;
+		DownloadIssueResult IssueValidated(std::string ownerTokenId, std::string analysisSession, std::string project,
+			std::filesystem::path artifactPath, std::filesystem::path workingDirectory, std::string attachmentName,
+			std::string contentType, std::uint64_t size, std::string sha256, std::uint64_t nowUnix,
+			Clock::time_point now);
 		void RemoveEntry(EntryMap::iterator entry);
 
 		Config config_;
