@@ -4,7 +4,7 @@ if(APPLE AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)
     set(CMAKE_OSX_DEPLOYMENT_TARGET "14.0" CACHE STRING "Minimum macOS version")
 endif()
 
-project(binjad VERSION 0.2.3 LANGUAGES C CXX)
+project(binjad VERSION 0.3.0 LANGUAGES C CXX)
 
 if(APPLE)
     set(BINJAD_USE_KEYCHAIN_DEFAULT ON)
@@ -294,6 +294,7 @@ if(APPLE)
 endif()
 
 add_library(binjad_http STATIC
+    src/Daemon/download/ProjectDownload.cpp
     src/Daemon/http/DownloadRoutes.cpp
     src/Daemon/http/DrogonRoutes.cpp
     src/Daemon/http/McpAdmission.cpp
@@ -309,7 +310,9 @@ add_library(binjad_http STATIC
     src/Daemon/mcp/tools/KernelCache.cpp
     src/Daemon/mcp/tools/Projects.cpp
     src/Daemon/mcp/tools/SharedCache.cpp
-    src/Daemon/mcp/tools/UrlGeneration.cpp)
+    src/Daemon/mcp/tools/UrlGeneration.cpp
+    src/Daemon/portal/LocalProjectManager.cpp
+    src/Daemon/portal/LocalSessionManager.cpp)
 target_include_directories(binjad_http PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
 target_link_libraries(binjad_http
     PUBLIC binjad_security Drogon::Drogon
@@ -462,6 +465,7 @@ target_link_libraries(binjad_binaryninja PRIVATE
 
 add_library(binjad_overseer STATIC
     src/Daemon/overseer/AnalysisScheduler.cpp
+    src/Daemon/overseer/BinaryViewPersistence.cpp
     src/Daemon/overseer/FileChildCoordinator.cpp
     src/Daemon/overseer/ProjectChildCoordinator.cpp)
 target_include_directories(binjad_overseer
@@ -592,6 +596,9 @@ install(FILES vendor/debugger/LICENSE
 install(FILES vendor/zlib/contrib/minizip/MiniZip64_info.txt
     DESTINATION "${CMAKE_INSTALL_DATAROOTDIR}/doc/binjad"
     RENAME MiniZip-LICENSE.txt)
+install(FILES resources/IONICONS-LICENSE.txt
+    DESTINATION "${CMAKE_INSTALL_DATAROOTDIR}/doc/binjad"
+    RENAME Ionicons-LICENSE.txt)
 install(DIRECTORY resources/portal/
     DESTINATION "${CMAKE_INSTALL_DATADIR}/binjad/portal")
 install(CODE [[
