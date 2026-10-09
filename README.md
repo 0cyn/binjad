@@ -10,9 +10,7 @@ trying to work with the official one. It's designed for fully autonomous paralle
 single agent guided analysis.
 
 > "ALPHA": This is currently in the process of being shaped and I want feedback from other people's workflows. I do a few specific 
-> things with my tooling and want to make this also good for other people's use cases. Reach out in the issues even if it's a stretch. 
-
-> This is probably a little buggy right now :P bear with me.
+> things with my tooling and want to make this also good for other people's use cases. Reach out in the issues even if it's a stretch.
 
 > I am not currently an employee or affiliate of Vector 35 and this project is not associated with them in any way.
 
@@ -82,12 +80,7 @@ brew services start binjad
 open http://127.0.0.1:8712/portal  # macOS
 ```
 
-There is a rube-goldberg set of github actions scripts set up to try and get dev builds out automatically
-as soon as they're published on binaryninja-api. If anything changes on API that requires updating actual
-code in this project presumably something will break and it'll require manual intervention, but for most
-dev versions a build should be available within about an hour. 
-
-installing for any dev including/after this one: 
+installing for any dev including/after this one (these are built automatically and should be out ~an hour after a dev build drops assuming no breakage): 
 ``` 
 brew install 0cyn/tap/binjad@6.1.10811
 brew services start binjad
@@ -110,9 +103,12 @@ brew services start binjad
 # technically, uninstalling is optional; you could `stop binjad@<OLD_VERSION>` and 
 # then `start binjad@<NEW_VERSION>` but it'd require you to qualify the version every time,
 # :p better to just do this
+
+# your chosen project director(y|ies) are not intrinsically tied to this tool and won't be touched
+# by install/uninstall
 ```
 
-!!! `brew upgrade binjad` is for binjad bugfixes, not updating the linked build. 
+!!! `brew upgrade binjad` is for binjad updates, not updating the linked build. 
 
 ### update binjad 
 
@@ -163,9 +159,6 @@ brew services start 0cyn/tap/binjad
   "enabled": true
 }
 ```
-
-
-
 
 ### exposing on LAN
 

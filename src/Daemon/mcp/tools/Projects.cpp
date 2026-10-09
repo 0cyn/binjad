@@ -5,7 +5,7 @@
 #include "binjad/overseer/FileChildCoordinator.hpp"
 #include "binjad/overseer/ProjectChildCoordinator.hpp"
 #include "binjad/download/DownloadRegistry.hpp"
-#include "binjad/download/ZipArchive.hpp"
+#include "binjad/download/ProjectDownload.hpp"
 #include "binjad/platform/Paths.hpp"
 #include "binjad/project/LocalProjectRegistry.hpp"
 #include "binjad/security/Crypto.hpp"
@@ -1938,31 +1938,6 @@ namespace binjad::mcp {
 			using rapidjson::StringBuffer;
 			using rapidjson::Writer;
 
-			struct ArtifactDigest
-			{
-				std::uint64_t size = 0;
-				std::string sha256;
-				std::string error;
-				bool cancelled = false;
-			};
-
-			std::string SafeAttachmentName(std::string_view requested, std::string_view fallback)
-			{
-				std::string result;
-				result.reserve(std::min<std::size_t>(requested.size(), 200));
-				for (const unsigned char character : requested)
-				{
-					if (result.size() == 200)
-						break;
-					const bool punctuation = character == '.' || character == '_' || character == '-';
-					const bool safe = character < 0x80 && (std::isalnum(character) != 0 || punctuation);
-					result.push_back(safe ? static_cast<char>(character) : '_');
-				}
-				if (result.empty() || result == "." || result == "..")
-					result = std::string(fallback);
-				return result;
-			}
-
 			void PublishProgress(session::JobRegistry& jobs, std::string_view owner, std::string_view job,
 				std::string phase, std::uint64_t completed, std::uint64_t total, std::string message,
 				const Foundation::JobProgressCallback& progress)
@@ -1975,50 +1950,6 @@ namespace binjad::mcp {
 					if (current.job)
 						progress(*current.job);
 				}
-			}
-
-			ArtifactDigest HashArtifact(const std::filesystem::path& path, session::JobRegistry& jobs,
-				std::string_view owner, std::string_view job, const Foundation::JobProgressCallback& progress)
-			{
-				ArtifactDigest result;
-				std::error_code error;
-				result.size = std::filesystem::file_size(path, error);
-				if (error)
-				{
-					result.error = "cannot inspect prepared download: " + error.message();
-					return result;
-				}
-				std::ifstream input(path, std::ios::binary);
-				if (!input)
-				{
-					result.error = "cannot open prepared download";
-					return result;
-				}
-				security::Sha256Hasher hasher;
-				std::vector<char> buffer(1024 * 1024);
-				std::uint64_t completed = 0;
-				while (input)
-				{
-					if (management_tools::JobCancelled(jobs, owner, job))
-					{
-						result.cancelled = true;
-						return result;
-					}
-					input.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
-					const auto count = input.gcount();
-					if (count > 0)
-						hasher.Update(std::string_view(buffer.data(), static_cast<std::size_t>(count)));
-					completed += static_cast<std::uint64_t>(count);
-					PublishProgress(
-						jobs, owner, job, "hash", completed, result.size, path.filename().string(), progress);
-				}
-				if (input.bad())
-				{
-					result.error = "cannot read prepared download";
-					return result;
-				}
-				result.sha256 = hasher.FinalHex();
-				return result;
 			}
 
 			std::string DownloadJson(const download::DownloadIssueResult& issued, bool archive, std::uint64_t files,
@@ -2115,74 +2046,28 @@ namespace binjad::mcp {
 						};
 						try
 						{
-							PublishProgress(*jobs, owner, job, "export", 0, 1, "Exporting project content", progress);
-							const auto prepared = coordinator->PrepareDownload(project, kind, paths);
-							if (!prepared.value)
+							const auto prepared = download::PrepareProjectArtifact(*coordinator, project, kind, paths,
+								std::move(attachmentSeed),
+								[&](std::string_view phase, std::uint64_t completed, std::uint64_t total,
+									std::string_view message) {
+									PublishProgress(*jobs, owner, job, std::string(phase), completed, total,
+										std::string(message), progress);
+									return !management_tools::JobCancelled(*jobs, owner, job);
+								});
+							if (prepared.cancelled)
+							{
+								cancel();
+								return;
+							}
+							if (!prepared.artifact)
 							{
 								fail(prepared.error);
 								return;
 							}
-							workingDirectory = prepared.value->workingDirectory;
-							PublishProgress(*jobs, owner, job, "export", 1, 1, "Project content exported", progress);
-							if (management_tools::JobCancelled(*jobs, owner, job))
-							{
-								cancel();
-								return;
-							}
-
-							const bool archive = kind != overseer::ProjectDownloadKind::File;
-							std::filesystem::path artifact;
-							std::string attachment;
-							std::string contentType;
-							std::uint64_t files = prepared.value->files;
-							std::uint64_t directories = prepared.value->directories;
-							if (archive)
-							{
-								artifact = workingDirectory / "download.zip";
-								if (kind == overseer::ProjectDownloadKind::Project)
-									attachmentSeed = prepared.value->rootName;
-								attachment = SafeAttachmentName(attachmentSeed, "project") + ".zip";
-								const download::ZipProgress archiveProgress =
-									[&](std::uint64_t completed, std::uint64_t total, std::string_view current) {
-										PublishProgress(*jobs, owner, job, "archive", completed, total,
-											std::string(current), progress);
-										return !management_tools::JobCancelled(*jobs, owner, job);
-									};
-								const auto zipped = download::CreateZipArchive(
-									prepared.value->contentDirectory, artifact, archiveProgress);
-								if (!zipped.created)
-								{
-									if (zipped.cancelled)
-										cancel();
-									else
-										fail(zipped.error);
-									return;
-								}
-								files = zipped.files;
-								directories = zipped.directories;
-								contentType = "application/zip";
-							}
-							else
-							{
-								artifact = prepared.value->contentDirectory / std::filesystem::path(paths.front());
-								attachment = SafeAttachmentName(
-									std::filesystem::path(paths.front()).filename().string(), "project-file");
-								contentType = "application/octet-stream";
-							}
-
-							const auto digest = HashArtifact(artifact, *jobs, owner, job, progress);
-							if (digest.cancelled)
-							{
-								cancel();
-								return;
-							}
-							if (!digest.error.empty())
-							{
-								fail(digest.error);
-								return;
-							}
-							const auto issued = downloads->Issue(owner, analysisSession, project, artifact,
-								workingDirectory, attachment, contentType, digest.size, digest.sha256,
+							workingDirectory = prepared.artifact->workingDirectory;
+							const auto issued = downloads->Issue(owner, analysisSession, project,
+								prepared.artifact->path, workingDirectory, prepared.artifact->attachmentName,
+								prepared.artifact->contentType, prepared.artifact->size, prepared.artifact->sha256,
 								detail::CurrentUnixSeconds(), download::DownloadRegistry::Clock::now());
 							if (!issued.download)
 							{
@@ -2190,7 +2075,9 @@ namespace binjad::mcp {
 								return;
 							}
 							workingDirectory.clear();
-							jobs->Complete(owner, job, DownloadJson(issued, archive, files, directories),
+							jobs->Complete(owner, job,
+								DownloadJson(issued, prepared.artifact->archive, prepared.artifact->files,
+									prepared.artifact->directories),
 								detail::CurrentUnixSeconds());
 						}
 						catch (const std::exception& exception)
@@ -2228,7 +2115,7 @@ namespace binjad::mcp {
 				const auto project = context.projects ?
 					context.projects->Find(detail::RequiredString(context.arguments, "project")) :
 					std::nullopt;
-				const auto attachment = SafeAttachmentName(project ? project->name : "project", "project") + "-files";
+				const auto attachment = (project ? project->name : "project") + "-files";
 				return StartDownload(context, overseer::ProjectDownloadKind::Files, std::move(paths), attachment);
 			}
 
@@ -2238,7 +2125,7 @@ namespace binjad::mcp {
 				if (!path)
 					return ToolCallInvalidArguments(context, "path must be a safe contained project-relative path");
 				return StartDownload(context, overseer::ProjectDownloadKind::Folder, {*path},
-					SafeAttachmentName(std::filesystem::path(*path).filename().string(), "project-folder"));
+					std::filesystem::path(*path).filename().string());
 			}
 
 			FoundationResult LocalProjectDownload(const ToolCallContext& context)

@@ -19,6 +19,8 @@
 #include <vector>
 
 namespace binjad::upload {
+	inline constexpr std::string_view kPortalUploadOwner = "portal";
+
 	enum class UploadState
 	{
 		Ready,
@@ -100,6 +102,8 @@ namespace binjad::upload {
 
 		UploadIssueResult Issue(std::string ownerTokenId, std::string analysisSession, std::string project,
 			std::string filename, std::uint64_t nowUnix, Clock::time_point now);
+		UploadIssueResult IssuePortal(
+			std::string project, std::string filename, std::uint64_t nowUnix, Clock::time_point now);
 		std::pair<std::unique_ptr<UploadTransfer>, std::string> Begin(
 			std::string_view capability, Clock::time_point now);
 		std::optional<UploadRecord> FindCompleted(std::string_view ownerTokenId, std::string_view analysisSession,
@@ -133,6 +137,8 @@ namespace binjad::upload {
 
 		std::optional<UploadRecord> Complete(std::string_view id, std::vector<char> memory, std::filesystem::path path,
 			std::uint64_t size, std::string sha256, std::string& error);
+		UploadIssueResult IssueValidated(std::string ownerTokenId, std::string analysisSession, std::string project,
+			std::string filename, std::uint64_t nowUnix, Clock::time_point now);
 		void Abort(std::string_view id, const std::filesystem::path& spoolDirectory);
 		void RemoveEntry(std::unordered_map<std::string, Entry>::iterator entry);
 		static bool ValidFilename(std::string_view filename);

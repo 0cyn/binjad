@@ -2,6 +2,7 @@
 #include "../ToolSchema.hpp"
 
 #include "binjad/overseer/AnalysisScheduler.hpp"
+#include "binjad/overseer/BinaryViewPersistence.hpp"
 #include "binjad/overseer/FileChildCoordinator.hpp"
 #include "binjad/overseer/ProjectChildCoordinator.hpp"
 #include "binjad/platform/Cpu.hpp"
@@ -764,7 +765,7 @@ namespace binjad::mcp {
 				const auto workerError = context.jobs->StartWorker(
 					[jobs = context.jobs, fileCoordinator = context.fileCoordinator,
 						projectCoordinator = context.projectCoordinator, openItems = context.openItems, owner,
-						analysisSession, binaryView, item = *item, destination, job,
+						analysisSession, binaryView, destination, job,
 						progress = async ? Foundation::JobProgressCallback {} : context.progress] {
 						const auto cancelled = [&] {
 							const auto info = jobs->Info(owner, job);
@@ -776,7 +777,9 @@ namespace binjad::mcp {
 								owner, job, detail::ErrorJson("job cancelled"), detail::CurrentUnixSeconds());
 							return;
 						}
-						const auto saved = fileCoordinator->SaveBinaryView(owner, analysisSession, binaryView, {},
+						const auto saved = overseer::SaveAndCommitBinaryView(
+							*fileCoordinator, projectCoordinator, *openItems, owner, analysisSession, binaryView,
+							destination,
 							[jobs, owner, job, progress](const ipc::Progress& update) {
 								jobs->ReportProgress(owner, job, update.phase(), update.completed(), update.total(),
 									update.message(), detail::CurrentUnixSeconds());
@@ -786,73 +789,22 @@ namespace binjad::mcp {
 									if (info.job)
 										progress(*info.job);
 								}
-							});
-						if (!saved.value)
-						{
-							jobs->Fail(owner, job, detail::ErrorJson(saved.error), detail::CurrentUnixSeconds());
-							return;
-						}
-						if (cancelled())
+							},
+							cancelled);
+						if (saved.cancelled)
 						{
 							jobs->MarkCancelled(owner, job, detail::ErrorJson("job cancelled before commit"),
 								detail::CurrentUnixSeconds());
 							return;
 						}
-
-						std::string committedDestination;
-						if (item.sourceKind == session::OpenItemSourceKind::ArbitraryPath)
+						if (!saved.value)
 						{
-							const auto target = destination ?
-								std::filesystem::absolute(*destination).lexically_normal() :
-								saved.value->created_database() ?
-								std::filesystem::path(item.source + ".bndb") :
-								std::filesystem::path(item.source);
-							const auto original = std::filesystem::path(item.source).lexically_normal();
-							const auto installed = platform::InstallRegularFileAtomically(
-								saved.value->path(), target, !saved.value->created_database() && target == original);
-							if (!installed.installed)
-							{
-								jobs->Fail(
-									owner, job, detail::ErrorJson(installed.error), detail::CurrentUnixSeconds());
-								return;
-							}
-							committedDestination = target.string();
-							openItems->UpdateSource(owner, item.reference, session::OpenItemSourceKind::ArbitraryPath,
-								committedDestination, {});
-						}
-						else if (item.sourceKind == session::OpenItemSourceKind::LocalProject)
-						{
-							if (!item.project || !projectCoordinator)
-							{
-								jobs->Fail(owner, job, detail::ErrorJson("local project service is unavailable"),
-									detail::CurrentUnixSeconds());
-								return;
-							}
-							const auto target = destination.value_or(
-								saved.value->created_database() ? item.source + ".bndb" : item.source);
-							const auto committed = projectCoordinator->CommitFile(*item.project, target,
-								saved.value->path(), !saved.value->created_database() && target == item.source, false,
-								"Saved analysis database");
-							if (!committed.value)
-							{
-								jobs->Fail(
-									owner, job, detail::ErrorJson(committed.error), detail::CurrentUnixSeconds());
-								return;
-							}
-							committedDestination = committed.value->path;
-							openItems->UpdateSource(owner, item.reference, session::OpenItemSourceKind::LocalProject,
-								committedDestination, item.project);
-						}
-						const auto promoted = fileCoordinator->PromoteSavedBinaryView(
-							owner, analysisSession, binaryView, saved.value->path());
-						if (!promoted.empty())
-						{
-							jobs->Fail(owner, job, detail::ErrorJson(promoted), detail::CurrentUnixSeconds());
+							jobs->Fail(owner, job, detail::ErrorJson(saved.error), detail::CurrentUnixSeconds());
 							return;
 						}
 						jobs->Complete(owner, job,
-							SaveResultJson(binaryView, item.reference, committedDestination,
-								saved.value->created_database(), item.sourceKind),
+							SaveResultJson(binaryView, saved.value->openItem, saved.value->destination,
+								saved.value->createdDatabase, saved.value->sourceKind),
 							detail::CurrentUnixSeconds());
 					});
 				if (!workerError.empty())
